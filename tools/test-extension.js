@@ -670,6 +670,61 @@ function cdpClient(WS, url) {
   ok('_br.clearFinished never touches a group the owner made himself',
      stub.groupOf(ownGroup)?.title === 'My own research', JSON.stringify(stub.groupOf(ownGroup)));
 
+  // === a tabless session must be DRIVABLE, not merely mintable ===============
+  // Everything above reaches the extension through relay.ext.request(), which
+  // skips the agent lane. That is exactly how the first real-Chrome run got
+  // through a green suite and then could not take one step: the agent lane's
+  // connect handshake eagerly asked the extension to attach, the extension
+  // answered "no active task tab: call _br.openTarget first", and the relay
+  // closed the socket -- before the agent could send _br.openTarget, the one
+  // call that creates the tab. Chicken and egg, and no site was reachable.
+  //
+  // So drive it the way the agent really does: zero tabs -> /json/list -> CDP
+  // socket -> _br.openTarget -> a page-touching command. Asserting the lease is
+  // minted and carries a webSocketDebuggerUrl (test-chat-bridge) is not enough;
+  // that passed throughout.
+  await fetch(`${BASE}/lease/${leaseRes.leaseId}`, { method: 'DELETE' });
+  const tabless = await (await fetch(`${BASE}/json/list`)).json();
+  ok('with no tab, /json/list still offers a session to connect to',
+     tabless.length === 1 && tabless[0].zylosHasTab === false && Boolean(tabless[0].webSocketDebuggerUrl),
+     JSON.stringify(tabless));
+
+  const fresh = cdpClient(WS, tabless[0].webSocketDebuggerUrl);
+  await fresh.ready;
+  // If the handshake deadlocks, the relay closes the socket and nothing ever
+  // answers -- so time out rather than hang the suite for good.
+  const timeout = (p, ms = 4000) =>
+    Promise.race([p, sleep(ms).then(() => ({ error: { message: `timed out after ${ms}ms` } }))]);
+
+  const createdBefore = stub.calls.created.length;
+  const firstOpen = await timeout(fresh.send('_br.openTarget', { url: 'https://fresh.example.net/start' }));
+  ok('an agent that connects with no tab open can still call _br.openTarget',
+     !firstOpen.error && firstOpen.result?.tabId != null, JSON.stringify(firstOpen));
+  ok('_br.openTarget over the agent lane really opened the tab',
+     stub.calls.created.length === createdBefore + 1 &&
+     stub.calls.created.at(-1)?.url === 'https://fresh.example.net/start',
+     JSON.stringify(stub.calls.created.at(-1)));
+  ok('the tab it opened got the debugger attached',
+     stub.calls.attach.at(-1)?.tabId === firstOpen.result?.tabId, JSON.stringify(stub.calls.attach.at(-1)));
+
+  // The half that proves the session is usable and not just alive: a command
+  // that touches the page, on a tab this same socket created moments ago.
+  // Guarded so a regression reports both failures instead of crashing the run.
+  const freshTabId = firstOpen.result?.tabId ?? null;
+  if (freshTabId == null) {
+    ok('and can then drive the tab it just opened', false, 'no tab was opened to drive');
+  } else {
+    await waitFor('the new task tab to reach the relay', () => relay.ext.tabs[0]?.id === freshTabId);
+    const firstNav = await timeout(fresh.send('Page.navigate', { url: 'https://fresh.example.net/next' }));
+    ok('and can then drive the tab it just opened',
+       !firstNav.error && stub.calls.sendCommand.at(-1)?.tabId === freshTabId,
+       JSON.stringify({ firstNav, last: stub.calls.sendCommand.at(-1) }));
+  }
+  fresh.close();
+  await relay.ext.request({ method: '_br.endTask', params: {}, tabId: null });
+  await waitFor('the tabless state to come back', () => relay.ext.tabs.length === 0);
+
+
   // Back to the seeded task tab for the lifecycle sections below.
   await stub.chrome.storage.local.set({ taskTabId: TASK_TAB, taskGroupId: null, taskState: 'working' });
   await waitFor('the task tab to be re-announced', () => relay.ext.tabs.length === 1);

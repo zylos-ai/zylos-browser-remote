@@ -276,20 +276,38 @@ class AgentLane {
     });
     ws.on('error', (err) => this.log('agent: socket error', err.message));
 
-    // Tell the extension to put chrome.debugger on the tab. A failure here is
-    // worth surfacing immediately -- the alternative is every command failing
-    // later with a confusing upstream error.
-    try {
-      await this.ext.request({ type: 'attach', tabId: lease.tabId });
-    } catch (err) {
-      this.log(`attach failed for lease ${lease.leaseId}: ${err.message}`);
-      // Answer the buffered frames instead of dropping them, so a client that
-      // spoke early learns why it failed rather than waiting out its timeout.
-      for (const raw of pendingFrames) this._failFrame(ws, raw, `attach failed: ${err.message}`);
-      pendingFrames = [];
-      try { ws.close(4006, `attach failed: ${err.message}`); } catch { /* noop */ }
-      this.sockets.delete(lease.leaseId);
-      return;
+    // Tell the extension to put chrome.debugger on the tab -- but ONLY if the
+    // lease already names one. A tabless lease is the session model's normal
+    // starting state: the agent connects first and calls `_br.openTarget` to
+    // create the tab. Attaching eagerly there deadlocks the whole flow -- the
+    // extension answers "no active task tab: call _br.openTarget first" (it is
+    // right; there is none), we close the socket, and the agent is gone before
+    // it can send the one call that would have created the tab. No site is
+    // reachable, ever. Found on the first real-Chrome run; see
+    // tools/test-extension.js "a tabless session must be DRIVABLE".
+    //
+    // Deferring costs nothing: the extension resolves the target and attaches
+    // per command anyway (execute() -> resolveTarget -> ensureAttached), and
+    // `_br.openTarget` attaches to the tab it opens. Nothing is ever driven
+    // unattached; the attach just happens when there is something to attach to.
+    if (lease.tabId != null) {
+      // A failure with a named tab IS worth surfacing immediately -- the
+      // alternative is every command failing later with a confusing upstream
+      // error.
+      try {
+        await this.ext.request({ type: 'attach', tabId: lease.tabId });
+      } catch (err) {
+        this.log(`attach failed for lease ${lease.leaseId}: ${err.message}`);
+        // Answer the buffered frames instead of dropping them, so a client that
+        // spoke early learns why it failed rather than waiting out its timeout.
+        for (const raw of pendingFrames) this._failFrame(ws, raw, `attach failed: ${err.message}`);
+        pendingFrames = [];
+        try { ws.close(4006, `attach failed: ${err.message}`); } catch { /* noop */ }
+        this.sockets.delete(lease.leaseId);
+        return;
+      }
+    } else {
+      this.log(`lease ${lease.leaseId} has no tab yet; deferring attach until _br.openTarget`);
     }
 
     attached = true;
