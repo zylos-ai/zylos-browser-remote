@@ -31,7 +31,7 @@ const EXT_PORT = 3912;            // not 3802/3803 (live) and not 3902/3903 (smo
 const AGENT_PORT = 3913;
 const TOKEN = 'test-extension-token-not-a-secret';
 const BASE = `http://127.0.0.1:${AGENT_PORT}`;
-const ARMED_TAB = 42;
+const TASK_TAB = 42;
 
 let pass = 0;
 const failures = [];
@@ -72,8 +72,14 @@ function makeChromeStub() {
   const storage = new Map();
   const storageListeners = [];
   const tabs = new Map();
+  const groups = new Map();
   const alarms = new Map();
-  const calls = { attach: [], detach: [], sendCommand: [], executeScript: [], openOptions: 0 };
+  let nextTabId = 100;
+  let nextGroupId = 500;
+  const calls = {
+    attach: [], detach: [], sendCommand: [], executeScript: [], openOptions: 0,
+    created: [], grouped: [], ungrouped: [], groupUpdates: [], messages: [],
+  };
   const debuggerEventListeners = [];
   const debuggerDetachListeners = [];
   const tabUpdatedListeners = [];
@@ -159,11 +165,62 @@ function makeChromeStub() {
         if (!tabs.has(id)) throw new Error(`No tab with id: ${id}.`);
         return { ...tabs.get(id) };
       },
-      async query() {
-        return [...tabs.values()].map((t) => ({ ...t }));
+      // Chrome filters by the properties present on the query object; session.js
+      // uses both the match-everything form and a groupId lookup.
+      async query(q = {}) {
+        return [...tabs.values()]
+          .filter((t) => (q.groupId === undefined ? true : (t.groupId ?? -1) === q.groupId))
+          .filter((t) => (q.active === undefined ? true : Boolean(t.active) === q.active))
+          .map((t) => ({ ...t }));
+      },
+      async create({ url, active }) {
+        const tab = {
+          id: nextTabId++, url, title: `New: ${url}`, active: Boolean(active),
+          status: 'complete', windowId: 1, groupId: -1, lastAccessed: Date.now(),
+        };
+        if (tab.active) for (const t of tabs.values()) t.active = false;
+        tabs.set(tab.id, tab);
+        calls.created.push({ url, active: Boolean(active), id: tab.id });
+        return { ...tab };
+      },
+      async update(id, props) {
+        if (!tabs.has(id)) throw new Error(`No tab with id: ${id}.`);
+        if (props.active) for (const t of tabs.values()) t.active = false;
+        tabs.set(id, { ...tabs.get(id), ...props });
+        return { ...tabs.get(id) };
+      },
+      async group({ tabIds }) {
+        const id = nextGroupId++;
+        groups.set(id, { id, title: '', color: 'grey', collapsed: false });
+        for (const tid of tabIds) if (tabs.has(tid)) tabs.get(tid).groupId = id;
+        calls.grouped.push({ tabIds: [...tabIds], groupId: id });
+        return id;
+      },
+      async ungroup(ids) {
+        const list = Array.isArray(ids) ? ids : [ids];
+        for (const tid of list) if (tabs.has(tid)) tabs.get(tid).groupId = -1;
+        calls.ungrouped.push([...list]);
       },
       onUpdated: { addListener: (fn) => tabUpdatedListeners.push(fn) },
       onRemoved: { addListener: (fn) => tabRemovedListeners.push(fn) },
+    },
+
+    tabGroups: {
+      async query(q = {}) {
+        return [...groups.values()]
+          .filter((g) => (q.title === undefined ? true : g.title === q.title))
+          .map((g) => ({ ...g }));
+      },
+      async update(id, props) {
+        if (!groups.has(id)) throw new Error(`No group with id: ${id}.`);
+        groups.set(id, { ...groups.get(id), ...props });
+        calls.groupUpdates.push({ id, ...props });
+        return { ...groups.get(id) };
+      },
+    },
+
+    windows: {
+      async update(id, props) { return { id, ...props }; },
     },
 
     debugger: {
@@ -204,6 +261,10 @@ function makeChromeStub() {
       onStartup: { addListener: () => {} },
       onMessage: { addListener: () => {} },
       openOptionsPage() { calls.openOptions++; },
+      // The side panel is absent in this harness, so a real Chrome would reject
+      // here ("no receiving end"). background.js swallows that; record and
+      // resolve, since the assertions below only care that it was attempted.
+      async sendMessage(message) { calls.messages.push(message); },
     },
 
     action: { onClicked: { addListener: () => {} } },
@@ -217,9 +278,12 @@ function makeChromeStub() {
     injectResults,
     attachFailures,
     // --- test-side controls -------------------------------------------------
-    setTab(tab) { tabs.set(tab.id, tab); },
+    groups,
+    setTab(tab) { tabs.set(tab.id, { groupId: -1, windowId: 1, ...tab }); },
     patchTab(id, patch) { tabs.set(id, { ...tabs.get(id), ...patch }); },
+    getTab(id) { return tabs.get(id); },
     dropTab(id) { tabs.delete(id); },
+    groupOf(id) { return groups.get(id); },
     seedStorage(obj) { for (const [k, v] of Object.entries(obj)) storage.set(k, v); },
     readStorage(k) { return storage.get(k); },
     fireTabUpdated(id, changeInfo) {
@@ -276,13 +340,19 @@ function cdpClient(WS, url) {
   const relay = await start({ token: TOKEN, extPort: EXT_PORT, agentPort: AGENT_PORT });
 
   const stub = makeChromeStub();
-  stub.setTab({ id: ARMED_TAB, url: 'https://example.com/docs', title: 'Docs', active: true, status: 'complete' });
+  stub.setTab({ id: TASK_TAB, url: 'https://example.com/docs', title: 'Docs', active: true, status: 'complete' });
   stub.setTab({ id: 7, url: 'chrome://settings', title: 'Settings', active: false, status: 'complete' });
   stub.setTab({ id: 9, url: 'https://other.example.com/', title: 'Other', active: false, status: 'complete' });
   stub.seedStorage({
     relayUrl: `ws://127.0.0.1:${EXT_PORT}/ext`,
     token: TOKEN,
-    armedTabId: ARMED_TAB,
+    // There is no arm gate any more: what the extension drives is the CURRENT
+    // TASK's tab, and a task is what _br.openTarget creates. Seeding one here
+    // puts the worker in mid-task so the CDP path below has something to drive;
+    // the no-task and openTarget cases are exercised further down.
+    taskTabId: TASK_TAB,
+    taskGroupId: null,
+    taskState: 'working',
   });
 
   globalThis.chrome = stub.chrome;
@@ -318,9 +388,9 @@ function cdpClient(WS, url) {
   ok('keepalive alarm was created', Boolean(stub.alarms.get('zylos-browser-remote-keepalive')));
 
   await waitFor('hello', () => relay.ext.tabs.length === 1);
-  ok('hello reports ONLY the armed tab', relay.ext.tabs.length === 1 && relay.ext.tabs[0].id === ARMED_TAB,
+  ok('hello reports ONLY the task tab', relay.ext.tabs.length === 1 && relay.ext.tabs[0].id === TASK_TAB,
      JSON.stringify(relay.ext.tabs));
-  ok('hello marks that tab armed', relay.ext.tabs[0].armed === true);
+  ok('hello marks that tab as the task tab', relay.ext.tabs[0].task === true);
   ok('hello carries the capability list', (relay.ext.status().capabilities || []).includes('_br.snapshot'));
   await waitFor('status', () => stub.readStorage('status')?.state === 'connected');
   ok('status in storage.local reads connected', stub.readStorage('status').state === 'connected');
@@ -329,19 +399,19 @@ function cdpClient(WS, url) {
   const leaseRes = await (await fetch(`${BASE}/lease`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ttl: 120_000 }),
   })).json();
-  ok('lease targets the armed tab', leaseRes.ok === true && leaseRes.tabId === ARMED_TAB, JSON.stringify(leaseRes));
+  ok('lease targets the task tab', leaseRes.ok === true && leaseRes.tabId === TASK_TAB, JSON.stringify(leaseRes));
 
   const client = cdpClient(WS, leaseRes.cdpUrl);
   await client.ready;
   await waitFor('chrome.debugger.attach', () => stub.calls.attach.length === 1);
-  ok('agent attach reached chrome.debugger.attach on the armed tab',
-     stub.calls.attach[0].tabId === ARMED_TAB && stub.calls.attach[0].version === '1.3',
+  ok('agent attach reached chrome.debugger.attach on the task tab',
+     stub.calls.attach[0].tabId === TASK_TAB && stub.calls.attach[0].version === '1.3',
      JSON.stringify(stub.calls.attach));
 
   const nav = await client.send('Page.navigate', { url: 'https://example.com/docs/intro' });
   const navCall = stub.calls.sendCommand.find((c) => c.method === 'Page.navigate');
   ok('Page.navigate travelled agent -> relay -> extension -> chrome.debugger',
-     Boolean(navCall) && navCall.params.url === 'https://example.com/docs/intro' && navCall.tabId === ARMED_TAB,
+     Boolean(navCall) && navCall.params.url === 'https://example.com/docs/intro' && navCall.tabId === TASK_TAB,
      JSON.stringify(navCall));
   ok('the CDP result came back to the agent', nav.result && nav.result.frameId === 'FRAME-1', JSON.stringify(nav));
 
@@ -387,11 +457,11 @@ function cdpClient(WS, url) {
 
   // Anything outside NAMED_KEYS is refused, and the refusal has to name the
   // three accepted values -- an agent that guessed 'Return' needs to be told.
-  const badKey = await expectRejection(relay.ext.request({ method: '_br.press', params: { key: 'Return' }, tabId: ARMED_TAB }));
+  const badKey = await expectRejection(relay.ext.request({ method: '_br.press', params: { key: 'Return' }, tabId: TASK_TAB }));
   ok('_br.press refuses a key name outside the table',
      badKey.rejected && /Enter/.test(badKey.message) && /Tab/.test(badKey.message) && /Escape/.test(badKey.message),
      badKey.message);
-  const modifierKey = await expectRejection(relay.ext.request({ method: '_br.press', params: { key: 'Enter', modifiers: 2 }, tabId: ARMED_TAB }));
+  const modifierKey = await expectRejection(relay.ext.request({ method: '_br.press', params: { key: 'Enter', modifiers: 2 }, tabId: TASK_TAB }));
   ok('_br.press ignores an agent-supplied modifier rather than forwarding it',
      !modifierKey.rejected
      || !stub.calls.sendCommand.some((c) => c.method === 'Input.dispatchKeyEvent' && c.params.modifiers),
@@ -404,7 +474,7 @@ function cdpClient(WS, url) {
   const goodAction = stub.injectResults.pagePrepareKey.formAction;
   const keyEventsBefore = stub.calls.sendCommand.filter((c) => c.method === 'Input.dispatchKeyEvent').length;
   stub.injectResults.pagePrepareKey = { ...stub.injectResults.pagePrepareKey, formAction: 'https://shop.example.com/checkout' };
-  const pressBlocked = await expectRejection(relay.ext.request({ method: '_br.press', params: { key: 'Enter' }, tabId: ARMED_TAB }));
+  const pressBlocked = await expectRejection(relay.ext.request({ method: '_br.press', params: { key: 'Enter' }, tabId: TASK_TAB }));
   ok('_br.press refuses when the focused field submits to a blocklisted URL',
      pressBlocked.rejected && /blocklist/.test(pressBlocked.message), pressBlocked.message);
   ok('the blocklisted-form press dispatched no key event at all',
@@ -417,10 +487,10 @@ function cdpClient(WS, url) {
      JSON.stringify(shot.result && { ...shot.result, data: '<omitted>' }));
 
   const list = await client.send('_br.listTabs', {});
-  const armedFlags = (list.result?.tabs || []).filter((t) => t.armed).map((t) => t.id);
-  ok('_br.listTabs lists every tab but marks only the armed one',
-     list.result?.tabs?.length === 3 && armedFlags.length === 1 && armedFlags[0] === ARMED_TAB,
-     JSON.stringify(armedFlags));
+  const taskFlags = (list.result?.tabs || []).filter((t) => t.task).map((t) => t.id);
+  ok('_br.listTabs lists every tab but marks only the task one',
+     list.result?.tabs?.length === 3 && taskFlags.length === 1 && taskFlags[0] === TASK_TAB,
+     JSON.stringify(taskFlags));
 
   // === compromised relay: what the browser refuses on its own =================
   // These bypass the chokepoint entirely by calling ExtLane.request() directly --
@@ -429,31 +499,31 @@ function cdpClient(WS, url) {
   // on this side at all.
   const sendCommandsBefore = stub.calls.sendCommand.length;
 
-  const evil = await expectRejection(relay.ext.request({ method: 'Runtime.evaluate', params: { expression: '1+1' }, tabId: ARMED_TAB }));
+  const evil = await expectRejection(relay.ext.request({ method: 'Runtime.evaluate', params: { expression: '1+1' }, tabId: TASK_TAB }));
   ok('extension refuses Runtime.evaluate even when the relay forwards it',
      evil.rejected && /banned/.test(evil.message), evil.message);
 
-  const rawInput = await expectRejection(relay.ext.request({ method: 'Input.dispatchMouseEvent', params: { type: 'mousePressed', x: 1, y: 1 }, tabId: ARMED_TAB }));
+  const rawInput = await expectRejection(relay.ext.request({ method: 'Input.dispatchMouseEvent', params: { type: 'mousePressed', x: 1, y: 1 }, tabId: TASK_TAB }));
   ok('extension refuses raw Input.* from the relay',
      rawInput.rejected && /banned/.test(rawInput.message), rawInput.message);
 
   const foreignTab = await expectRejection(relay.ext.request({ method: 'Page.navigate', params: { url: 'https://other.example.com/' }, tabId: 9 }));
-  ok('extension refuses a tab the owner never armed',
-     foreignTab.rejected && /not the armed tab/.test(foreignTab.message), foreignTab.message);
+  ok('extension refuses a tab that is not the current task\'s',
+     foreignTab.rejected && /not the task tab/.test(foreignTab.message), foreignTab.message);
 
-  const blocked = await expectRejection(relay.ext.request({ method: '_br.navigate', params: { url: 'https://shop.example.com/checkout' }, tabId: ARMED_TAB }));
+  const blocked = await expectRejection(relay.ext.request({ method: '_br.navigate', params: { url: 'https://shop.example.com/checkout' }, tabId: TASK_TAB }));
   ok('extension refuses a blocklisted destination on its own',
      blocked.rejected && /blocklist/.test(blocked.message), blocked.message);
 
-  // The armed tab navigates itself somewhere dangerous and the relay's cached URL
+  // The task tab navigates itself somewhere dangerous and the relay's cached URL
   // has not caught up. The relay would allow; the extension re-reads the live URL.
-  stub.patchTab(ARMED_TAB, { url: 'https://shop.example.com/checkout' });
+  stub.patchTab(TASK_TAB, { url: 'https://shop.example.com/checkout' });
   ok('the relay would have allowed this frame against its stale cached URL',
      relayChokepoint.check({ method: '_br.click', params: { selector: '#buy' }, tabUrl: 'https://example.com/docs' }) === null);
-  const stale = await expectRejection(relay.ext.request({ method: '_br.click', params: { selector: '#buy' }, tabId: ARMED_TAB }));
+  const stale = await expectRejection(relay.ext.request({ method: '_br.click', params: { selector: '#buy' }, tabId: TASK_TAB }));
   ok('extension re-screens against the tab\'s ACTUAL current URL and refuses',
      stale.rejected && /blocklist/.test(stale.message), stale.message);
-  stub.patchTab(ARMED_TAB, { url: 'https://example.com/docs' });
+  stub.patchTab(TASK_TAB, { url: 'https://example.com/docs' });
 
   ok('no refused frame reached chrome.debugger', stub.calls.sendCommand.length === sendCommandsBefore,
      JSON.stringify(stub.calls.sendCommand.slice(sendCommandsBefore)));
@@ -462,7 +532,7 @@ function cdpClient(WS, url) {
 
   // === events ================================================================
   events.length = 0;
-  stub.fireDebuggerEvent({ tabId: ARMED_TAB }, 'Page.loadEventFired', { timestamp: 1 });
+  stub.fireDebuggerEvent({ tabId: TASK_TAB }, 'Page.loadEventFired', { timestamp: 1 });
   await waitFor('the event to reach the relay', () => events.length === 1);
   ok('a debugger event from the attached tab reaches the relay', events[0].method === 'Page.loadEventFired');
 
@@ -470,46 +540,142 @@ function cdpClient(WS, url) {
   await sleep(100);
   ok('an event from a tab we are not driving is dropped', events.length === 1, JSON.stringify(events.map((e) => e.method)));
 
-  stub.fireDebuggerEvent({ tabId: ARMED_TAB }, 'Network.responseReceived', { body: 'x'.repeat(70_000) });
+  stub.fireDebuggerEvent({ tabId: TASK_TAB }, 'Network.responseReceived', { body: 'x'.repeat(70_000) });
   await sleep(150);
   ok('an oversized event frame is dropped, not truncated', events.length === 1, String(events.length));
   ok('the drop is recorded in status', stub.readStorage('status')?.lastDroppedEvent === 'Network.responseReceived',
      JSON.stringify(stub.readStorage('status')));
 
-  // === tabless methods survive an unarmed browser ============================
-  await stub.chrome.storage.local.remove('armedTabId');
-  await waitFor('the relay to be told there is no armed tab', () => relay.ext.tabs.length === 0);
-  ok('unarming pushes an empty tab list, so the relay stops leasing', relay.ext.tabs.length === 0);
+  // === between tasks: no tab, and that is a normal state =====================
+  // The old model's "unarmed" fault is now the resting state. Tabless methods
+  // must still answer, page-touching ones must refuse with an actionable
+  // message, and the relay must stop handing out leases.
+  await stub.chrome.storage.local.remove('taskTabId');
+  await waitFor('the relay to be told there is no task tab', () => relay.ext.tabs.length === 0);
+  ok('ending a task pushes an empty tab list, so the relay stops leasing', relay.ext.tabs.length === 0);
 
   const info = await relay.ext.request({ method: '_br.info', tabId: null });
-  ok('_br.info answers with no tab armed and nothing attached',
-     info.armedTabId === null && Array.isArray(info.capabilities), JSON.stringify(info));
+  ok('_br.info answers with no task tab and nothing attached',
+     info.taskTabId === null && Array.isArray(info.capabilities), JSON.stringify(info));
 
-  const unarmed = await expectRejection(relay.ext.request({ method: 'Page.navigate', params: { url: 'https://example.com/' }, tabId: null }));
-  ok('a page-touching method is refused with no tab armed',
-     unarmed.rejected && /no tab armed/.test(unarmed.message), unarmed.message);
+  const noTask = await expectRejection(relay.ext.request({ method: 'Page.navigate', params: { url: 'https://example.com/' }, tabId: null }));
+  ok('a page-touching method is refused when no task is open, and says how to start one',
+     noTask.rejected && /no active task tab/.test(noTask.message) && /_br\.openTarget/.test(noTask.message),
+     noTask.message);
 
-  await stub.chrome.storage.local.set({ armedTabId: ARMED_TAB });
-  await waitFor('re-arm', () => relay.ext.tabs.length === 1);
-  ok('re-arming pushes the tab back to the relay', relay.ext.tabs[0].id === ARMED_TAB);
+  // === session methods: openTarget / setState / endTask / clearFinished ======
+  // The whole point of the redesign: the agent picks the tab, the owner does not
+  // have to authorize one. These run against the real session.js on the stub.
+
+  // A blocklisted destination must be refused BEFORE a tab exists. Getting this
+  // wrong means navigating the owner's browser to a checkout page and only then
+  // declining to click -- the refusal would be worthless.
+  const tabsBeforeRefusal = stub.calls.created.length;
+  const badTarget = await expectRejection(
+    relay.ext.request({ method: '_br.openTarget', params: { url: 'https://shop.example.com/checkout' }, tabId: null }));
+  ok('_br.openTarget refuses a blocklisted URL',
+     badTarget.rejected && /blocklist/.test(badTarget.message), badTarget.message);
+  ok('the refused target never became a tab', stub.calls.created.length === tabsBeforeRefusal,
+     JSON.stringify(stub.calls.created.slice(tabsBeforeRefusal)));
+
+  // Reuse: tab 9 is already on other.example.com, so no new tab and -- because
+  // it is the owner's own tab -- no regrouping of his tab strip.
+  const groupsBeforeReuse = stub.calls.grouped.length;
+  const reuse = await relay.ext.request({
+    method: '_br.openTarget', params: { url: 'https://other.example.com/some/page' }, tabId: null });
+  ok('_br.openTarget reuses a tab already on that site instead of opening one',
+     reuse.reused === true && reuse.tabId === 9, JSON.stringify(reuse));
+  ok('a reused tab is left in the owner\'s layout, not pulled into a group',
+     stub.calls.grouped.length === groupsBeforeReuse && reuse.groupId === null,
+     JSON.stringify({ grouped: stub.calls.grouped.length, groupId: reuse.groupId }));
+  ok('the reused tab was focused', stub.getTab(9).active === true);
+  await waitFor('the reused tab to reach the relay', () => relay.ext.tabs[0]?.id === 9);
+  ok('the relay now leases the reused tab', relay.ext.tabs.length === 1 && relay.ext.tabs[0].id === 9,
+     JSON.stringify(relay.ext.tabs));
+
+  // A site nothing is open on: new tab, grouped, green.
+  const opened = await relay.ext.request({
+    method: '_br.openTarget', params: { url: 'https://docs.example.org/guide' }, tabId: null });
+  ok('_br.openTarget opens a new tab when no tab is on that site',
+     opened.reused === false && stub.calls.created.at(-1)?.url === 'https://docs.example.org/guide',
+     JSON.stringify(opened));
+  ok('the new tab was put in a group', opened.groupId != null && stub.getTab(opened.tabId).groupId === opened.groupId,
+     JSON.stringify({ groupId: opened.groupId, tabGroup: stub.getTab(opened.tabId)?.groupId }));
+  ok('the group is green and labelled working',
+     stub.groupOf(opened.groupId)?.color === 'green' && /工作中/.test(stub.groupOf(opened.groupId)?.title || ''),
+     JSON.stringify(stub.groupOf(opened.groupId)));
+  ok('opening a target attached the debugger to it',
+     stub.calls.attach.at(-1)?.tabId === opened.tabId, JSON.stringify(stub.calls.attach.at(-1)));
+
+  // waiting = yellow, and the panel is told.
+  stub.calls.messages.length = 0;
+  const waitState = await relay.ext.request({ method: '_br.setState', params: { state: 'waiting' }, tabId: null });
+  ok('_br.setState waiting recolours the group yellow',
+     stub.groupOf(opened.groupId)?.color === 'yellow' && /等待你/.test(stub.groupOf(opened.groupId)?.title || ''),
+     JSON.stringify(stub.groupOf(opened.groupId)));
+  ok('_br.setState reports the new state back', waitState.state === 'waiting', JSON.stringify(waitState));
+  ok('the side panel is told the state changed',
+     stub.calls.messages.some((m) => m.type === 'chat.status' && m.state === 'waiting'),
+     JSON.stringify(stub.calls.messages));
+
+  const badState = await expectRejection(
+    relay.ext.request({ method: '_br.setState', params: { state: 'chartreuse' }, tabId: null }));
+  ok('_br.setState refuses a colour outside working/waiting/stopped', badState.rejected, badState.message);
+
+  // endTask: debugger goes away, the group goes grey, the tab STAYS.
+  const detachesBeforeEnd = stub.calls.detach.length;
+  const ended = await relay.ext.request({ method: '_br.endTask', params: {}, tabId: null });
+  ok('_br.endTask detaches the debugger so the banner disappears',
+     stub.calls.detach.length > detachesBeforeEnd, `${detachesBeforeEnd} -> ${stub.calls.detach.length}`);
+  ok('_br.endTask greys the group', stub.groupOf(opened.groupId)?.color === 'grey',
+     JSON.stringify(stub.groupOf(opened.groupId)));
+  ok('_br.endTask does NOT close the tab', Boolean(stub.getTab(opened.tabId)), String(ended.tabId));
+  await waitFor('the empty push after endTask', () => relay.ext.tabs.length === 0);
+  ok('after endTask the relay has no tab to lease', relay.ext.tabs.length === 0);
+
+  // clearFinished tidies grey groups only, and still never closes a tab.
+  const ownGroup = await stub.chrome.tabs.group({ tabIds: [] });
+  await stub.chrome.tabGroups.update(ownGroup, { title: 'My own research', color: 'blue' });
+  const cleared = await relay.ext.request({ method: '_br.clearFinished', params: {}, tabId: null });
+  ok('_br.clearFinished ungrouped the finished group', cleared.cleared === 1, JSON.stringify(cleared));
+  ok('_br.clearFinished left the tab open', Boolean(stub.getTab(opened.tabId)));
+  ok('_br.clearFinished ungrouped that tab', stub.getTab(opened.tabId).groupId === -1,
+     String(stub.getTab(opened.tabId).groupId));
+  ok('_br.clearFinished never touches a group the owner made himself',
+     stub.groupOf(ownGroup)?.title === 'My own research', JSON.stringify(stub.groupOf(ownGroup)));
+
+  // Back to the seeded task tab for the lifecycle sections below.
+  await stub.chrome.storage.local.set({ taskTabId: TASK_TAB, taskGroupId: null, taskState: 'working' });
+  await waitFor('the task tab to be re-announced', () => relay.ext.tabs.length === 1);
+  ok('setting a task tab pushes it back to the relay', relay.ext.tabs[0].id === TASK_TAB);
 
   // === tab lifecycle =========================================================
-  stub.patchTab(ARMED_TAB, { url: 'https://example.com/docs/other', title: 'Other page' });
-  stub.fireTabUpdated(ARMED_TAB, { url: 'https://example.com/docs/other' });
-  await waitFor('the state push', () => relay.ext.tabUrl(ARMED_TAB) === 'https://example.com/docs/other');
+  stub.patchTab(TASK_TAB, { url: 'https://example.com/docs/other', title: 'Other page' });
+  stub.fireTabUpdated(TASK_TAB, { url: 'https://example.com/docs/other' });
+  await waitFor('the state push', () => relay.ext.tabUrl(TASK_TAB) === 'https://example.com/docs/other');
   ok('a self-navigating page refreshes the relay\'s cached URL',
-     relay.ext.tabUrl(ARMED_TAB) === 'https://example.com/docs/other');
+     relay.ext.tabUrl(TASK_TAB) === 'https://example.com/docs/other');
 
   // === attaching to a forbidden tab ==========================================
-  await stub.chrome.storage.local.set({ armedTabId: 7 });     // chrome://settings
+  await stub.chrome.storage.local.set({ taskTabId: 7 });     // chrome://settings
   await sleep(100);
   const forbidden = await expectRejection(relay.ext.request({ type: 'attach', tabId: 7 }));
   ok('extension refuses to attach the debugger to a chrome:// tab',
      forbidden.rejected && /cannot attach/.test(forbidden.message), forbidden.message);
-  await stub.chrome.storage.local.set({ armedTabId: ARMED_TAB });
+  // Same refusal via the session lane: a chrome:// URL must not become a task
+  // either, or openTarget would be a way around tabAttachAllowed.
+  const forbiddenTarget = await expectRejection(
+    relay.ext.request({ method: '_br.openTarget', params: { url: 'chrome://settings' }, tabId: null }));
+  ok('_br.openTarget refuses a chrome:// URL', forbiddenTarget.rejected, forbiddenTarget.message);
+  await stub.chrome.storage.local.set({ taskTabId: TASK_TAB });
   await sleep(100);
 
   // === kill switch ===========================================================
+  // Re-attach first: _br.endTask above dropped the debugger, and "the kill
+  // switch detaches" only means anything against a LIVE attachment.
+  await relay.ext.request({ method: '_br.snapshot', params: {}, tabId: TASK_TAB });
+  ok('a command re-attached the debugger to the task tab',
+     stub.calls.attach.at(-1)?.tabId === TASK_TAB, JSON.stringify(stub.calls.attach.at(-1)));
   const detachesBefore = stub.calls.detach.length;
   await stub.chrome.storage.local.set({ enabled: false });
   await waitFor('the socket to close', () => !relay.ext.isConnected());
@@ -524,18 +690,22 @@ function cdpClient(WS, url) {
   await waitFor('reconnect', () => relay.ext.isConnected(), 10_000);
   ok('re-enabling dials back out', relay.ext.isConnected());
   await waitFor('hello after reconnect', () => relay.ext.tabs.length === 1, 10_000);
-  ok('the armed tab is re-announced after reconnect', relay.ext.tabs[0].id === ARMED_TAB);
+  ok('the task tab is re-announced after reconnect', relay.ext.tabs[0].id === TASK_TAB);
 
-  // === closing the armed tab =================================================
-  stub.fireTabRemoved(ARMED_TAB);
+  // === the owner closes the tab we are driving ===============================
+  // Closing it is a perfectly good way to say "stop", so it ends the task
+  // rather than leaving a task pointing at a tab that no longer exists.
+  stub.fireTabRemoved(TASK_TAB);
   await waitFor('the empty state push', () => relay.ext.tabs.length === 0);
-  ok('closing the armed tab clears it everywhere',
-     relay.ext.tabs.length === 0 && stub.readStorage('armedTabId') === undefined,
-     String(stub.readStorage('armedTabId')));
+  ok('closing the task tab clears it everywhere',
+     relay.ext.tabs.length === 0 && stub.readStorage('taskTabId') === null,
+     String(stub.readStorage('taskTabId')));
+  ok('closing the task tab is recorded as a stopped task',
+     stub.readStorage('taskState') === 'stopped', String(stub.readStorage('taskState')));
 
   const gone = await expectRejection(relay.ext.request({ method: '_br.snapshot', params: {}, tabId: null }));
-  ok('commands are refused once the armed tab is gone',
-     gone.rejected && /no tab armed/.test(gone.message), gone.message);
+  ok('commands are refused once the task tab is gone',
+     gone.rejected && /no active task tab/.test(gone.message), gone.message);
 
   // ---------------------------------------------------------------- teardown
   relay.close();

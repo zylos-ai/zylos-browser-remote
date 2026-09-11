@@ -22,10 +22,13 @@ const path = require('path');
 const WebSocket = require('ws');
 const { start } = require('../relay/server');
 const { SUBPROTOCOL, MAX_CHAT_TEXT } = require('../relay/ext-lane');
+const chokepoint = require('../relay/chokepoint');
 
 const TOKEN = 'chat-bridge-token-not-a-secret';
-const EXT_PORT = 3912;
-const AGENT_PORT = 3913;
+// Not 3802/3803 (a live relay holds those), not 3902/3903 (smoke), not
+// 3912/3913 (test-extension).
+const EXT_PORT = 3922;
+const AGENT_PORT = 3923;
 const BASE = `http://127.0.0.1:${AGENT_PORT}`;
 const SESSION = 'f7c1a9e2-0b44-4a51-9d0e-2c3b5a7e1d88';
 
@@ -224,6 +227,49 @@ function postChat(body, { raw = false } = {}) {
     body: JSON.stringify({ text: 'from the public lane' }),
   }).then((r) => r.status).catch(() => 'refused');
   ok('the public ext lane serves no /chat endpoint', onPublic === 426 || onPublic === 'refused', String(onPublic));
+
+  // == H. session methods + /json/list honesty (SIDEPANEL-SPEC.md D) ==
+  // These belong with the chat work -- the panel's whole flow is
+  // chat -> openTarget -> setState -> endTask -- but tools/test-chokepoint.js is
+  // owned elsewhere, so the assertions live here.
+  ok('_br.openTarget is allowlisted',
+     chokepoint.check({ method: '_br.openTarget', params: { url: 'https://www.bilibili.com/' } }) === null);
+  ok('_br.setState working|waiting|stopped are allowlisted',
+     ['working', 'waiting', 'stopped'].every(
+       (s) => chokepoint.check({ method: '_br.setState', params: { state: s } }) === null));
+  ok('_br.endTask is allowlisted', chokepoint.check({ method: '_br.endTask', params: {} }) === null);
+  ok('_br.clearFinished is allowlisted', chokepoint.check({ method: '_br.clearFinished', params: {} }) === null);
+  ok('_br.setState refuses a state outside the three',
+     /working\|waiting\|stopped/.test(String(chokepoint.check({ method: '_br.setState', params: { state: 'green' } }))),
+     String(chokepoint.check({ method: '_br.setState', params: { state: 'green' } })));
+  ok('_br.openTarget still goes through the URL guard',
+     /blocklisted/.test(String(chokepoint.check({ method: '_br.openTarget', params: { url: 'https://shop.test/checkout' } }))));
+  ok('_br.openTarget without a url is refused',
+     typeof chokepoint.check({ method: '_br.openTarget', params: {} }) === 'string');
+  ok('opening a target is treated as mutating (retry must not open twice)',
+     chokepoint.isMutating('_br.openTarget') === true);
+
+  // /json/list must say "no tab yet" rather than advertise a phantom page, and
+  // must still hand back a lease so the agent can call _br.openTarget at all.
+  const ext2 = fakeExtension();           // hello carries tabs: []
+  await new Promise((resolve) => ext2.ws.once('open', resolve));
+  await sleep(80);
+  const noTab = await (await fetch(`${BASE}/json/list`)).json();
+  ok('/json/list still mints a session lease with zero tabs', noTab.length === 1, JSON.stringify(noTab));
+  ok('the tabless session is labelled honestly, not as a phantom page',
+     noTab[0] && noTab[0].zylosHasTab === false && /no tab yet/.test(noTab[0].title) && noTab[0].url === 'about:blank',
+     JSON.stringify(noTab[0]));
+  ok('the tabless session is still drivable (webSocketDebuggerUrl present)',
+     /devtools\/page\//.test(noTab[0].webSocketDebuggerUrl || ''));
+
+  ext2.ws.send(JSON.stringify({ type: 'state', tabs: [{ id: 77, url: 'https://www.bilibili.com/v/x', title: 'B站' }] }));
+  await sleep(80);
+  const withTab = await (await fetch(`${BASE}/json/list`)).json();
+  ok('once a tab exists the real title/url are reported',
+     withTab[0].zylosHasTab === true && withTab[0].url === 'https://www.bilibili.com/v/x' && withTab[0].title === 'B站',
+     JSON.stringify(withTab[0]));
+  ext2.ws.close();
+  await sleep(50);
 
   relay.close();
   await sleep(50);

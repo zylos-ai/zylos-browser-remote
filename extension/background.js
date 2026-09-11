@@ -296,7 +296,7 @@ async function execute({ method, params, tabId }) {
 
   const { tabId: taskTabId } = await getTask();
   if (TABLESS_METHODS.has(method)) {
-    return execBr({ method, params, tabId: null, state: { armedTabId: taskTabId, attachedTabId } });
+    return execBr({ method, params, tabId: null, state: { taskTabId, attachedTabId } });
   }
 
   const tab = await resolveTarget(tabId);
@@ -311,7 +311,7 @@ async function execute({ method, params, tabId }) {
   await ensureAttached(tab);
 
   return isBrMethod(method)
-    ? execBr({ method, params, tabId: tab.id, state: { armedTabId: tab.id, attachedTabId } })
+    ? execBr({ method, params, tabId: tab.id, state: { taskTabId: tab.id, attachedTabId } })
     : execCdp({ method, params, tabId: tab.id });
 }
 

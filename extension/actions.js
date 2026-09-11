@@ -641,7 +641,7 @@ async function brListTabs(_tabId, _params, state) {
       title: t.title,
       url: t.url,
       active: t.active,
-      armed: t.id === state.armedTabId,
+      task: t.id === state.taskTabId,
     })),
   };
 }
@@ -651,7 +651,7 @@ async function brInfo(_tabId, _params, state) {
     name: 'zylos-browser-remote extension',
     version: VERSION,
     capabilities: CAPABILITIES,
-    armedTabId: state.armedTabId ?? null,
+    taskTabId: state.taskTabId ?? null,
     attachedTabId: state.attachedTabId ?? null,
   };
 }
@@ -674,7 +674,7 @@ const HANDLERS = {
  * @param {string} a.method
  * @param {object} a.params  plain JSON from the agent -- data, never code
  * @param {number} a.tabId   the tab this lease is driving
- * @param {object} a.state   {armedTabId, attachedTabId}
+ * @param {object} a.state   {taskTabId, attachedTabId}
  */
 export function execBr({ method, params = {}, tabId, state = {} }) {
   const fn = HANDLERS[method];
