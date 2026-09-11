@@ -55,7 +55,14 @@ anything merely "read-only looking" that is not listed.
 
 *`_br.*` pseudo-methods, implemented by trusted extension code:*
 `_br.info`, `_br.listTabs`, `_br.snapshot`, `_br.click`, `_br.fill`,
-`_br.screenshot`, `_br.navigate`, `_br.waitFor`
+`_br.press`, `_br.screenshot`, `_br.navigate`, `_br.waitFor`
+
+`_br.press` takes a key **name** — `Enter`, `Tab` or `Escape`, and nothing else.
+The descriptor (code, virtual key code, text) lives in the extension; modifier
+combos are deliberately unavailable, because that is how a keyboard action turns
+into a raw-input lane by degrees. It refuses when nothing is focused, when the
+focused field is a password field, and when the focused field sits in a form
+whose `action` is blocklisted — the one place an Enter's destination is visible.
 
 ### Explicitly banned
 

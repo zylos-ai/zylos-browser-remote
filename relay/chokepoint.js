@@ -40,6 +40,10 @@ const ALLOWED_BR_METHODS = new Set([
   '_br.snapshot',
   '_br.click',
   '_br.fill',
+  // _br.press takes a key NAME from a three-entry table the extension owns
+  // (Enter/Tab/Escape). It is NOT a widening of BANNED_METHOD_PATTERNS: raw
+  // Input.* from the agent stays banned below, exactly as before.
+  '_br.press',
   '_br.screenshot',
   '_br.navigate',
   '_br.waitFor',
@@ -132,6 +136,9 @@ const MUTATING_METHODS = new Set([
   '_br.navigate',
   '_br.click',
   '_br.fill',
+  // Enter submits forms. A retry after a mid-flight cutoff must replay the
+  // recorded answer rather than submit a second time.
+  '_br.press',
 ]);
 
 function isMutating(method) {

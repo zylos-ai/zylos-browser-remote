@@ -41,6 +41,7 @@ export const ALLOWED_BR_METHODS = new Set([
   '_br.snapshot',
   '_br.click',
   '_br.fill',
+  '_br.press',
   '_br.screenshot',
   '_br.navigate',
   '_br.waitFor',

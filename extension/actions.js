@@ -36,14 +36,30 @@ export const CAPABILITIES = [
   '_br.snapshot',
   '_br.click',
   '_br.fill',
+  '_br.press',
   '_br.screenshot',
   '_br.navigate',
   '_br.waitFor',
 ];
 
+// The agent sends a key NAME; this table -- fixed extension source -- owns the
+// descriptor. That is the same rule as the rest of the file: data in, never
+// codes, never coordinates. Exactly three keys, and no modifiers: ctrl/meta
+// combos are how a keyboard action becomes a raw-input lane by degrees, and
+// this table is the single place anyone has to touch to widen it.
+const NAMED_KEYS = {
+  Enter: { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' },
+  Tab: { key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, text: '\t' },
+  Escape: { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 },
+};
+
 const NAV_TIMEOUT_MS = 15_000;
 const WAIT_TIMEOUT_MS = 15_000;
 const WAIT_POLL_MS = 200;
+// Enter can submit. Nothing has started navigating the instant the key goes up,
+// so the settle poll gets a beat before it starts believing tab.status.
+const PRESS_SETTLE_MS = 2500;
+const PRESS_LEAD_MS = 300;
 const SNAPSHOT_MAX_ELEMENTS = 200;
 const SNAPSHOT_MAX_CHARS = 20_000;
 
@@ -149,22 +165,100 @@ function pageSnapshot({ maxElements, maxChars }) {
     return cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity) > 0;
   }
 
+  // Labels are single-line by contract: the 120-char cap should carry ~120
+  // characters of meaning, not the first line of a blob plus its newlines.
+  function norm(s) {
+    return String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+  }
+
+  // label[for] resolved ONCE, up front, as DATA. The old code built
+  // `label[for="<el.id>"]` by concatenating a page-controlled id into a selector:
+  // an id containing a quote or a bracket silently changes what that matches, and
+  // an id that makes it invalid throws -- out of labelOf, out of the loop, taking
+  // the whole snapshot with it. Comparing htmlFor can do neither, and it is O(1)
+  // per element instead of a DOM query.
+  const labelByFor = new Map();
+  for (const lab of document.querySelectorAll('label[for]')) {
+    if (lab.htmlFor && !labelByFor.has(lab.htmlFor)) labelByFor.set(lab.htmlFor, lab);
+  }
+
+  // el.type reflects the IDL attribute: lowercase, defaulted, and -- unlike
+  // getAttribute('type') -- it follows a type assigned from script.
+  function fieldType(el) {
+    return String((el.tagName === 'INPUT' ? el.type : el.getAttribute('type')) || '').toLowerCase();
+  }
+
+  // DELIBERATELY ASYMMETRIC, and the asymmetry is the point: this broad heuristic
+  // gates READS (redaction) only. Over-redacting costs nothing -- the field is
+  // still reported, so the agent knows it exists. _br.fill's REFUSAL stays at the
+  // narrow `type === 'password'` test in pagePrepareFill, because over-refusing a
+  // write breaks ordinary form filling.
+  function isSecret(el) {
+    if (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') return false;
+    if (fieldType(el) === 'password') return true;
+    const hint = [el.getAttribute('autocomplete'), el.getAttribute('name'), el.id].join(' ').toLowerCase();
+    return /pass(wd|word)?|passcode|\botp\b|one-?time|\bcvv\b|\bcvc\b|security-?code|secret|token|\bpin\b/.test(hint);
+  }
+
   function labelOf(el) {
-    const aria = el.getAttribute('aria-label');
-    if (aria) return aria.trim();
-    if (el.id) {
-      const lab = document.querySelector(`label[for="${el.id}"]`);
-      if (lab && lab.innerText) return lab.innerText.trim();
+    const aria = norm(el.getAttribute('aria-label'));
+    if (aria) return aria;
+
+    const labelledBy = el.getAttribute('aria-labelledby');
+    if (labelledBy) {
+      const joined = labelledBy.trim().split(/\s+/)
+        .map((id) => { const t = document.getElementById(id); return t ? (t.innerText || t.textContent) : ''; })
+        .join(' ');
+      const v = norm(joined);
+      if (v) return v;
     }
+
+    if (el.id) {
+      const lab = labelByFor.get(el.id);
+      const v = lab ? norm(lab.innerText || lab.textContent) : '';
+      if (v) return v;
+    }
+
     const wrap = el.closest && el.closest('label');
-    if (wrap && wrap.innerText) return wrap.innerText.trim();
-    // el.value as a last-resort label is right for a submit button, and a
-    // password leak for <input type=password>: rec.value is redacted below, but
-    // this path would have carried the same secret out under a different key.
-    const isPassword = el.tagName === 'INPUT' && (el.getAttribute('type') || '').toLowerCase() === 'password';
-    const own = (el.innerText || (isPassword ? '' : el.value) || el.getAttribute('placeholder') || '').trim();
+    if (wrap) {
+      const v = norm(wrap.innerText || wrap.textContent);
+      if (v) return v;
+    }
+
+    // DIRECT child text nodes only. On machine-generated markup a card is a
+    // wrapper <a> with no text of its own, and taking its whole innerText labels
+    // it with every metric inside ("6.5万 109 02:25:21" -- true, useless, and it
+    // crowds out the real title). A wrapper has no direct text, so it falls
+    // through to title/descendant below; a plain button still matches here.
+    let own = '';
+    for (const node of el.childNodes) if (node.nodeType === 3) own += node.nodeValue;
+    own = norm(own);
     if (own) return own;
-    return (el.getAttribute('title') || '').trim();
+
+    const title = norm(el.getAttribute('title'));
+    if (title) return title;
+
+    const inner = el.querySelector('[aria-label], [title], img[alt], h1, h2, h3, h4');
+    if (inner) {
+      const v = norm(inner.getAttribute('aria-label') || inner.getAttribute('title') ||
+        inner.getAttribute('alt') || inner.innerText || inner.textContent);
+      if (v) return v;
+    }
+
+    const placeholder = norm(el.getAttribute('placeholder'));
+    if (placeholder) return placeholder;
+
+    // el.value as a label is right for a submit button and a leak for a password
+    // field: rec.value is redacted below, but this path would have carried the
+    // same secret out under a different key. Same gate, same call.
+    if (!isSecret(el)) {
+      const value = norm(el.value);
+      if (value) return value;
+    }
+
+    // Last resort, not third: when there IS text and nothing above matched, a
+    // noisy label still beats an empty one.
+    return norm(el.innerText);
   }
 
   const out = [];
@@ -176,7 +270,7 @@ function pageSnapshot({ maxElements, maxChars }) {
     if (!visible(el, rect)) continue;
 
     const tag = el.tagName.toLowerCase();
-    const type = (el.getAttribute('type') || '').toLowerCase();
+    const type = fieldType(el);
     const rec = {
       selector: stableSelector(el),
       tag,
@@ -190,10 +284,10 @@ function pageSnapshot({ maxElements, maxChars }) {
     if (tag === 'a' && el.href) rec.href = el.href;
 
     if (tag === 'input' || tag === 'textarea') {
-      // A password value must never leave the browser -- not to the relay, not
+      // A secret value must never leave the browser -- not to the relay, not
       // into a log, not into the agent's context. The field is still reported so
       // the agent knows it exists and can refuse for itself.
-      if (type === 'password') rec.redacted = true;
+      if (isSecret(el)) rec.redacted = true;
       else if (el.value) rec.value = String(el.value).slice(0, 200);
     }
     out.push(rec);
@@ -259,7 +353,10 @@ function pagePrepareFill({ selector }) {
   if (!el) return { ok: false, error: `no element matches ${selector}` };
 
   const tag = el.tagName.toLowerCase();
-  const type = (el.getAttribute('type') || '').toLowerCase();
+  // el.type, not getAttribute('type'): a field whose type was set from script
+  // (el.type = 'password') carries no type ATTRIBUTE at all, and reading the
+  // attribute would have walked straight past it into the password box.
+  const type = String((el.tagName === 'INPUT' ? el.type : el.getAttribute('type')) || '').toLowerCase();
   if (type === 'password') {
     return { ok: false, error: 'refused: _br.fill will not type into a password field' };
   }
@@ -287,6 +384,50 @@ function pageFinishFill({ selector }) {
   el.dispatchEvent(new Event('change', { bubbles: true }));
   const value = el.isContentEditable ? el.textContent : el.value;
   return { ok: true, value: String(value == null ? '' : value).slice(0, 200) };
+}
+
+// ------------------------------------------------------------------ injected: press
+
+function pagePrepareKey({ selector }) {
+  let el = null;
+  if (selector) {
+    try { el = document.querySelector(selector); }
+    catch { return { ok: false, error: `invalid selector: ${selector}` }; }
+    if (!el) return { ok: false, error: `no element matches ${selector}` };
+    el.scrollIntoView({ block: 'center', inline: 'center' });
+    el.focus();
+  }
+
+  // A keystroke with nothing focused is the keyboard equivalent of a blind
+  // click: it goes to the document and does whatever that page decided a bare
+  // Enter means. Refuse instead of guessing.
+  const active = document.activeElement;
+  if (!active || active === document.body || active === document.documentElement) {
+    return {
+      ok: false,
+      error: selector
+        ? `${selector} could not be focused, so the key would go nowhere`
+        : 'refused: nothing is focused -- pass params.selector to say where the key should go',
+    };
+  }
+  if (el && active !== el && !(el.contains && el.contains(active))) {
+    return { ok: false, error: `${selector} could not be focused (focus is on <${active.tagName.toLowerCase()}>)` };
+  }
+
+  const type = String((active.tagName === 'INPUT' ? active.type : active.getAttribute('type')) || '').toLowerCase();
+  if (type === 'password') {
+    return { ok: false, error: 'refused: _br.press will not send keys to a password field' };
+  }
+
+  // Enter submits, and the form's action is the ONLY place that destination is
+  // visible: it is not in params, and not in the tab URL the relay screened.
+  const form = active.closest ? active.closest('form') : null;
+  return {
+    ok: true,
+    tag: active.tagName.toLowerCase(),
+    type,
+    formAction: form ? String(form.action || '') : null,
+  };
 }
 
 // ------------------------------------------------------------------ injected: waitFor
@@ -366,6 +507,62 @@ async function brFill(tabId, params) {
 
   const done = unwrap(await inject(tabId, pageFinishFill, { selector }));
   return { filled: selector, type: prep.type || prep.tag, value: done.value };
+}
+
+async function brPress(tabId, params) {
+  const name = params.key;
+  const descriptor = typeof name === 'string' && Object.prototype.hasOwnProperty.call(NAMED_KEYS, name)
+    ? NAMED_KEYS[name]
+    : null;
+  if (!descriptor) {
+    throw new Error(
+      `_br.press accepts only these key names: ${Object.keys(NAMED_KEYS).join(', ')} ` +
+      `(got ${JSON.stringify(name === undefined ? null : name)}). ` +
+      'Raw key codes and modifier combos are deliberately unavailable.'
+    );
+  }
+  const selector = params.selector == null ? null : String(params.selector);
+
+  const prep = unwrap(await inject(tabId, pagePrepareKey, { selector }));
+  if (prep.formAction && isBlockedUrl(prep.formAction)) {
+    throw new Error(
+      `refused: the focused field submits to a blocklisted URL (${String(prep.formAction).slice(0, 80)})`
+    );
+  }
+
+  const base = {
+    key: descriptor.key,
+    code: descriptor.code,
+    windowsVirtualKeyCode: descriptor.windowsVirtualKeyCode,
+    nativeVirtualKeyCode: descriptor.windowsVirtualKeyCode,
+  };
+  // `text` is what makes Chrome treat this as a character-producing key, which
+  // is what implicit form submission on Enter keys off.
+  await cdp(tabId, 'Input.dispatchKeyEvent',
+    descriptor.text ? { type: 'keyDown', text: descriptor.text, ...base } : { type: 'rawKeyDown', ...base });
+  await cdp(tabId, 'Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+
+  // Same re-screen as _br.navigate, for the same reason: Enter can land the tab
+  // somewhere the request never named.
+  await sleep(PRESS_LEAD_MS);
+  const deadline = Date.now() + clampInt(params.timeoutMs, 200, 30_000, PRESS_SETTLE_MS);
+  let tab = await chrome.tabs.get(tabId);
+  while (Date.now() < deadline) {
+    tab = await chrome.tabs.get(tabId);
+    if (tab.status === 'complete') break;
+    await sleep(150);
+  }
+  if (isBlockedUrl(tab.url)) {
+    throw new Error(`refused: pressing ${descriptor.key} landed on a blocklisted URL (${String(tab.url).slice(0, 80)})`);
+  }
+
+  return {
+    pressed: descriptor.key,
+    target: selector,
+    tag: prep.tag,
+    url: tab.url,
+    settled: tab.status === 'complete',
+  };
 }
 
 async function brNavigate(tabId, params) {
@@ -459,6 +656,7 @@ const HANDLERS = {
   '_br.snapshot': brSnapshot,
   '_br.click': brClick,
   '_br.fill': brFill,
+  '_br.press': brPress,
   '_br.navigate': brNavigate,
   '_br.waitFor': brWaitFor,
   '_br.screenshot': brScreenshot,
