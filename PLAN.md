@@ -1,6 +1,11 @@
 # zylos-browser-remote — build plan (working doc, not the README)
 
-Status: repo cloned EMPTY, nothing written yet. Caddy route already live.
+Status 2026-09-11: relay + extension + all three test layers DONE and pushed
+(`a7bf61c`, `9ceda77`, `86d127e`, `e62c70d`). The real-Chrome round trip passes
+34/34 (`npm run test:chrome`). NEXT: option-3 allowlist widening for
+agent-browser, then install agent-browser locally and test client-vs-relay.
+Only after that: mint `relay/token` + register in pm2's ecosystem file.
+(Original status: repo cloned EMPTY, nothing written yet. Caddy route already live.)
 Owner ask: bobo, Lark group `oc_783338341070bc1562a33ef8fa0d2b14`; design authored
 by peer agent Piper, 分工 = this agent writes the code.
 
