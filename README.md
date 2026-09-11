@@ -29,9 +29,15 @@ someone offer to **be** a browser (and only with the token) — never to drive o
 npm install
 openssl rand -hex 32 > relay/token && chmod 600 relay/token   # never commit this
 npm start            # ext lane :3802, agent lane :3803
-npm test             # 42 guard + 42 chokepoint assertions, offline
+npm test             # offline: guard + chokepoint + guard-sync + real worker on a chrome.* stub
 npm run smoke        # full loopback round-trip, fake extension + fake CDP client
+npm run test:chrome  # end-to-end in a REAL Chrome with the extension installed
 ```
+
+`test:chrome` is kept out of `npm test` because it needs a Chrome binary (it finds
+Playwright's, or set `BR_CHROME`) and a display (it starts its own Xvfb, or set
+`BR_HEADLESS=1`). It is the only test that exercises the injected page functions
+against a real DOM, so run it before trusting a change to `extension/actions.js`.
 
 Ports are overridable with `BROWSER_REMOTE_EXT_PORT` / `BROWSER_REMOTE_AGENT_PORT`;
 the agent lane's bind address is not — `127.0.0.1` is a safety property, not a default.

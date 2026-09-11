@@ -10,6 +10,7 @@
     "test": "node tools/test-guard.js && node tools/test-chokepoint.js && node tools/check-guard-sync.js && node tools/test-extension.js",
     "test:guard-sync": "node tools/check-guard-sync.js",
     "test:extension": "node tools/test-extension.js",
+    "test:chrome": "node tools/test-real-chrome.js",
     "smoke": "node tools/smoke.js"
   },
   "dependencies": {

@@ -158,7 +158,11 @@ function pageSnapshot({ maxElements, maxChars }) {
     }
     const wrap = el.closest && el.closest('label');
     if (wrap && wrap.innerText) return wrap.innerText.trim();
-    const own = (el.innerText || el.value || el.getAttribute('placeholder') || '').trim();
+    // el.value as a last-resort label is right for a submit button, and a
+    // password leak for <input type=password>: rec.value is redacted below, but
+    // this path would have carried the same secret out under a different key.
+    const isPassword = el.tagName === 'INPUT' && (el.getAttribute('type') || '').toLowerCase() === 'password';
+    const own = (el.innerText || (isPassword ? '' : el.value) || el.getAttribute('placeholder') || '').trim();
     if (own) return own;
     return (el.getAttribute('title') || '').trim();
   }
