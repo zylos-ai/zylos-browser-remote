@@ -7,7 +7,7 @@
   "type": "commonjs",
   "scripts": {
     "start": "node relay/server.js",
-    "test": "node tools/test-guard.js && node tools/test-chokepoint.js && node tools/check-guard-sync.js && node tools/test-extension.js && node tools/test-handshake-race.js && node tools/test-chat-bridge.js",
+    "test": "node tools/test-guard.js && node tools/test-chokepoint.js && node tools/check-guard-sync.js && node tools/test-extension.js && node tools/test-handshake-race.js && node tools/test-chat-bridge.js && node tools/test-sidepanel.js",
     "test:guard-sync": "node tools/check-guard-sync.js",
     "test:extension": "node tools/test-extension.js",
     "test:chrome": "node tools/test-real-chrome.js",
