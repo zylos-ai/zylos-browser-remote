@@ -1,0 +1,269 @@
+{
+  "total": 74,
+  "byPhase": {
+    "connect": [
+      "Browser.getVersion",
+      "Network.enable",
+      "Page.enable",
+      "Runtime.enable",
+      "Runtime.evaluate",
+      "Runtime.runIfWaitingForDebugger",
+      "Target.attachToTarget",
+      "Target.getTargets",
+      "Target.setAutoAttach",
+      "Target.setDiscoverTargets",
+      "WebMCP.enable"
+    ],
+    "open": [
+      "Browser.getVersion",
+      "Page.navigate",
+      "Runtime.evaluate",
+      "WebMCP.enable"
+    ],
+    "snapshot": [
+      "Accessibility.enable",
+      "Accessibility.getFullAXTree",
+      "Browser.getVersion",
+      "DOM.enable",
+      "Runtime.evaluate"
+    ],
+    "snapshot-i": [
+      "Accessibility.enable",
+      "Accessibility.getFullAXTree",
+      "Browser.getVersion",
+      "DOM.enable",
+      "Runtime.evaluate"
+    ],
+    "get-text": [
+      "Browser.getVersion",
+      "Runtime.callFunctionOn",
+      "Runtime.evaluate"
+    ],
+    "click": [
+      "Browser.getVersion",
+      "Input.dispatchMouseEvent",
+      "Runtime.evaluate"
+    ],
+    "fill": [
+      "Browser.getVersion",
+      "Input.insertText",
+      "Runtime.callFunctionOn",
+      "Runtime.evaluate"
+    ],
+    "type": [
+      "Browser.getVersion",
+      "Input.insertText",
+      "Runtime.callFunctionOn",
+      "Runtime.evaluate"
+    ],
+    "press": [
+      "Browser.getVersion",
+      "Input.dispatchKeyEvent"
+    ],
+    "screenshot": [
+      "Browser.getVersion",
+      "Page.captureScreenshot"
+    ],
+    "tab-list": [
+      "Browser.getVersion"
+    ],
+    "reload": [
+      "Browser.getVersion",
+      "Page.reload",
+      "Runtime.evaluate"
+    ],
+    "back": [
+      "Browser.getVersion",
+      "Runtime.evaluate"
+    ]
+  },
+  "allowedToday": [
+    "Page.captureScreenshot",
+    "Page.enable",
+    "Page.navigate",
+    "Page.reload"
+  ],
+  "wouldNeedAdding": [
+    {
+      "method": "Accessibility.enable",
+      "firstNeededBy": "snapshot",
+      "refusal": "refused: Accessibility.enable is not in the P0 allowlist",
+      "payloadSample": null,
+      "phases": [
+        "snapshot",
+        "snapshot-i"
+      ]
+    },
+    {
+      "method": "Accessibility.getFullAXTree",
+      "firstNeededBy": "snapshot",
+      "refusal": "refused: Accessibility.getFullAXTree is not in the P0 allowlist",
+      "payloadSample": null,
+      "phases": [
+        "snapshot",
+        "snapshot-i"
+      ]
+    },
+    {
+      "method": "Browser.getVersion",
+      "firstNeededBy": "connect",
+      "refusal": "refused: Browser.getVersion is banned (browser-wide control)",
+      "payloadSample": null,
+      "phases": [
+        "connect",
+        "open",
+        "snapshot",
+        "snapshot-i",
+        "get-text",
+        "click",
+        "fill",
+        "type",
+        "press",
+        "screenshot",
+        "tab-list",
+        "reload",
+        "back"
+      ]
+    },
+    {
+      "method": "DOM.enable",
+      "firstNeededBy": "snapshot",
+      "refusal": "refused: DOM.enable is not in the P0 allowlist",
+      "payloadSample": null,
+      "phases": [
+        "snapshot",
+        "snapshot-i"
+      ]
+    },
+    {
+      "method": "Input.dispatchKeyEvent",
+      "firstNeededBy": "press",
+      "refusal": "refused: Input.dispatchKeyEvent is banned (raw input injection -- use the structured _br.* actions)",
+      "payloadSample": null,
+      "phases": [
+        "press"
+      ]
+    },
+    {
+      "method": "Input.dispatchMouseEvent",
+      "firstNeededBy": "click",
+      "refusal": "refused: Input.dispatchMouseEvent is banned (raw input injection -- use the structured _br.* actions)",
+      "payloadSample": null,
+      "phases": [
+        "click"
+      ]
+    },
+    {
+      "method": "Input.insertText",
+      "firstNeededBy": "fill",
+      "refusal": "refused: Input.insertText is banned (raw input injection -- use the structured _br.* actions)",
+      "payloadSample": null,
+      "phases": [
+        "fill",
+        "type"
+      ]
+    },
+    {
+      "method": "Network.enable",
+      "firstNeededBy": "connect",
+      "refusal": "refused: Network.enable is not in the P0 allowlist",
+      "payloadSample": null,
+      "phases": [
+        "connect"
+      ]
+    },
+    {
+      "method": "Runtime.callFunctionOn",
+      "firstNeededBy": "get-text",
+      "refusal": "refused: Runtime.callFunctionOn is banned (arbitrary code execution in a logged-in browser)",
+      "payloadSample": "function() { return this.innerText || this.textContent || ''; }",
+      "phases": [
+        "get-text",
+        "fill",
+        "type"
+      ]
+    },
+    {
+      "method": "Runtime.enable",
+      "firstNeededBy": "connect",
+      "refusal": "refused: Runtime.enable is banned (arbitrary code execution in a logged-in browser)",
+      "payloadSample": null,
+      "phases": [
+        "connect"
+      ]
+    },
+    {
+      "method": "Runtime.evaluate",
+      "firstNeededBy": "connect",
+      "refusal": "refused: Runtime.evaluate is banned (arbitrary code execution in a logged-in browser)",
+      "payloadSample": "1",
+      "phases": [
+        "connect",
+        "open",
+        "snapshot",
+        "snapshot-i",
+        "get-text",
+        "click",
+        "fill",
+        "type",
+        "reload",
+        "back"
+      ]
+    },
+    {
+      "method": "Runtime.runIfWaitingForDebugger",
+      "firstNeededBy": "connect",
+      "refusal": "refused: Runtime.runIfWaitingForDebugger is banned (arbitrary code execution in a logged-in browser)",
+      "payloadSample": null,
+      "phases": [
+        "connect"
+      ]
+    },
+    {
+      "method": "Target.attachToTarget",
+      "firstNeededBy": "connect",
+      "refusal": "refused: Target.attachToTarget is banned (target/session creation is out of P0 scope)",
+      "payloadSample": null,
+      "phases": [
+        "connect"
+      ]
+    },
+    {
+      "method": "Target.getTargets",
+      "firstNeededBy": "connect",
+      "refusal": "refused: Target.getTargets is banned (target/session creation is out of P0 scope)",
+      "payloadSample": null,
+      "phases": [
+        "connect"
+      ]
+    },
+    {
+      "method": "Target.setAutoAttach",
+      "firstNeededBy": "connect",
+      "refusal": "refused: Target.setAutoAttach is banned (target/session creation is out of P0 scope)",
+      "payloadSample": null,
+      "phases": [
+        "connect"
+      ]
+    },
+    {
+      "method": "Target.setDiscoverTargets",
+      "firstNeededBy": "connect",
+      "refusal": "refused: Target.setDiscoverTargets is banned (target/session creation is out of P0 scope)",
+      "payloadSample": null,
+      "phases": [
+        "connect"
+      ]
+    },
+    {
+      "method": "WebMCP.enable",
+      "firstNeededBy": "connect",
+      "refusal": "refused: WebMCP.enable is not in the P0 allowlist",
+      "payloadSample": null,
+      "phases": [
+        "connect",
+        "open"
+      ]
+    }
+  ]
+}
