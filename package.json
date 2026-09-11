@@ -1,0 +1,17 @@
+{
+  "name": "zylos-browser-remote",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Remote-browser relay: drives a Chrome MV3 extension on the owner's machine over a standard CDP surface exposed only on loopback",
+  "main": "relay/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node relay/server.js",
+    "test": "node tools/test-guard.js && node tools/test-chokepoint.js",
+    "test:guard-sync": "node tools/check-guard-sync.js",
+    "smoke": "node tools/smoke.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
