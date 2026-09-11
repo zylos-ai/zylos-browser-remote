@@ -84,6 +84,7 @@ function makeChromeStub() {
   const debuggerDetachListeners = [];
   const tabUpdatedListeners = [];
   const tabRemovedListeners = [];
+  const runtimeMessageListeners = [];
 
   // Canned answers. Tests overwrite entries to drive a specific branch.
   const cdpResults = {
@@ -259,7 +260,10 @@ function makeChromeStub() {
     runtime: {
       onInstalled: { addListener: () => {} },
       onStartup: { addListener: () => {} },
-      onMessage: { addListener: () => {} },
+      // Recorded, not ignored: the side panel and the options page reach the
+      // worker through here, and `panel.saveSettings` / `reconnect` are two of
+      // the three paths that retire a live socket. See sendRuntimeMessage.
+      onMessage: { addListener: (fn) => runtimeMessageListeners.push(fn) },
       openOptionsPage() { calls.openOptions++; },
       // The side panel is absent in this harness, so a real Chrome would reject
       // here ("no receiving end"). background.js swallows that; record and
@@ -298,6 +302,28 @@ function makeChromeStub() {
     },
     fireDebuggerDetach(source, reason) {
       for (const fn of debuggerDetachListeners.slice()) fn(source, reason);
+    },
+    /**
+     * Play the side panel / options page: deliver a runtime message and wait for
+     * the worker's answer. background.js registers TWO onMessage listeners and
+     * each returns false for types it does not own, so the message goes to both
+     * and the first sendResponse wins -- exactly Chrome's dispatch.
+     */
+    sendRuntimeMessage(message) {
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        let willRespond = false;
+        const respond = (response) => { if (!settled) { settled = true; resolve(response); } };
+        for (const fn of runtimeMessageListeners.slice()) {
+          if (fn(message, {}, respond) === true) willRespond = true;
+        }
+        if (settled) return;
+        if (!willRespond) { resolve(undefined); return; }
+        const timer = setTimeout(() => {
+          if (!settled) { settled = true; reject(new Error(`no response to ${message.type}`)); }
+        }, 5000);
+        if (timer.unref) timer.unref();
+      });
     },
   };
 }
@@ -706,6 +732,101 @@ function cdpClient(WS, url) {
   const gone = await expectRejection(relay.ext.request({ method: '_br.snapshot', params: {}, tabId: null }));
   ok('commands are refused once the task tab is gone',
      gone.rejected && /no active task tab/.test(gone.message), gone.message);
+
+  // === a superseded socket must not speak for the live one ===================
+  // connect() stamps each socket with a generation and every handler goes inert
+  // the moment it no longer matches. Without that guard a socket retired by
+  // panel.saveSettings, the `reconnect` message or the kill switch would --
+  // asynchronously, AFTER its replacement was already open -- write
+  // 'disconnected' over 'connected', bump the backoff and arm a second
+  // reconnect. That is not cosmetic: the side panel locks its composer unless
+  // the state is exactly 'connected', so the owner pastes his relay URL, presses
+  // 保存并重连, and is left staring at 已断开 with a dead input over a socket
+  // that is in fact live.
+  //
+  // close() is asynchronous, and on loopback the old close and the new open race
+  // either way round; LateCloseWS pins the order the guard exists for by
+  // delivering close events late, so the superseded socket always lands on top
+  // of an already-open replacement. Without it this section passes by luck.
+  const LATE_CLOSE_MS = 200;
+  let extConnects = 0;
+  relay.ext.on('connected', () => { extConnects += 1; });
+
+  const PlainWS = globalThis.WebSocket;
+  globalThis.WebSocket = class LateCloseWS extends PlainWS {
+    set onclose(fn) {
+      super.onclose = typeof fn === 'function'
+        ? (event) => { setTimeout(() => { fn(event); }, LATE_CLOSE_MS); }
+        : fn;
+    }
+    get onclose() { return super.onclose; }
+  };
+
+  // Warm-up: the socket that is live right now was built by the plain class, so
+  // retire it in favour of one whose close lands late. No assertions here.
+  // Every wait below counts a NEW connection rather than just looking at the
+  // state, which the socket being replaced already satisfies.
+  const settled = () => relay.ext.isConnected() && stub.readStorage('status')?.state === 'connected';
+  await stub.sendRuntimeMessage({ type: 'reconnect' });
+  await waitFor('the late-close socket to take over', () => extConnects === 1 && relay.ext.isConnected());
+  await sleep(LATE_CLOSE_MS + 300);
+
+  const supersedingPaths = [
+    ['the reconnect message', () => stub.sendRuntimeMessage({ type: 'reconnect' })],
+    ['panel.saveSettings', () => stub.sendRuntimeMessage({
+      type: 'panel.saveSettings', relayUrl: `ws://127.0.0.1:${EXT_PORT}/ext`, token: TOKEN })],
+  ];
+  for (const [label, trigger] of supersedingPaths) {
+    extConnects = 0;
+    const answer = await trigger();
+    ok(`${label} answers the panel ok`, answer?.ok === true, JSON.stringify(answer));
+    await waitFor(`${label} to redial`, () => extConnects === 1 && relay.ext.isConnected());
+    // Reported as an assertion, never as a timeout: a status that never reaches
+    // 'connected' is the very fault under test, not a broken harness.
+    const reached = await waitFor(`${label} to report connected`, settled, 3000).catch(() => false);
+    ok(`${label} reaches connected`, reached === true, JSON.stringify(stub.readStorage('status')));
+    // The superseded socket's close event is delivered inside this window.
+    await sleep(LATE_CLOSE_MS + 300);
+    ok(`the socket ${label} retired does not overwrite the live connection's status`,
+       stub.readStorage('status')?.state === 'connected', JSON.stringify(stub.readStorage('status')));
+    ok(`${label} leaves exactly one connected socket`,
+       relay.ext.isConnected() && extConnects === 1, `connects=${extConnects}`);
+  }
+
+  // Longer than the first backoff step a stray onclose would have armed.
+  await sleep(1600);
+  ok('a deliberate reconnect is not followed by a redundant one',
+     extConnects === 1 && relay.ext.isConnected() && stub.readStorage('status')?.state === 'connected',
+     `connects=${extConnects} status=${JSON.stringify(stub.readStorage('status'))}`);
+  globalThis.WebSocket = PlainWS;
+
+  // === two concurrent status patches, and neither may be lost ================
+  // setStatus is a read-modify-write across an await. Flipping the kill switch
+  // fires two of them at once -- detachAll('kill switch') writing lastDetach,
+  // and the storage listener writing state:'disabled' -- and before they were
+  // serialised the later writer's stale snapshot silently dropped the earlier
+  // one's field, which is how the switch could leave the status reading
+  // 'connected'. Assert BOTH fields survive: a correct final `state` alone does
+  // not prove the other write was not the one that got clobbered.
+  stub.setTab({ id: TASK_TAB, url: 'https://example.com/docs', title: 'Docs', active: true, status: 'complete' });
+  await stub.chrome.storage.local.set({ taskTabId: TASK_TAB, taskGroupId: null, taskState: 'working' });
+  await waitFor('the task tab to be announced again', () => relay.ext.tabs.length === 1);
+  await relay.ext.request({ method: '_br.snapshot', params: {}, tabId: TASK_TAB });
+  ok('the debugger is attached again, so the kill switch has something to detach',
+     stub.calls.attach.at(-1)?.tabId === TASK_TAB, JSON.stringify(stub.calls.attach.at(-1)));
+
+  // Clear the earlier run's lastDetach, or a dropped write would be masked by a
+  // stale value that happens to read the same.
+  await stub.chrome.storage.local.set({ status: { state: 'connected' } });
+  await sleep(50);
+  await stub.chrome.storage.local.set({ enabled: false });
+  await waitFor('the socket to close under the kill switch', () => !relay.ext.isConnected());
+  await sleep(400);           // both patches are long since enqueued and drained
+  const raced = stub.readStorage('status') || {};
+  ok('the kill switch\'s own write survives the concurrent detach write',
+     raced.state === 'disabled', JSON.stringify(raced));
+  ok('the detach write survives the concurrent kill-switch write',
+     raced.lastDetach === 'kill switch', JSON.stringify(raced));
 
   // ---------------------------------------------------------------- teardown
   relay.close();
