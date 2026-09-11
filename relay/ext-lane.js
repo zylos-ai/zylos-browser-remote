@@ -121,6 +121,16 @@ class ExtLane extends EventEmitter {
       // Newest wins: a reconnect after a half-dead socket must heal cleanly
       // rather than leave a zombie holding the lane.
       this.log('ext: superseding previous connection');
+      // Anything still in flight was sent on the socket being replaced, so its
+      // answer is never coming. Fail it HERE: the close handler below cannot,
+      // because `this.ws` is reassigned to the new socket before the old one's
+      // close event fires, so its `this.ws === ws` guard is already false.
+      // Left to time out instead, an in-flight `attach` stalls the full 30s and
+      // (since the agent lane registers its frame handler only after that
+      // attach resolves) every agent command silently vanishes meanwhile.
+      // MV3 recycles the extension service worker routinely, so this is the
+      // common path, not an edge case.
+      this._failAllPending('extension reconnected; in-flight request abandoned');
       try { this.ws.close(4001, 'superseded by newer connection'); } catch { /* gone */ }
     }
     this.ws = ws;

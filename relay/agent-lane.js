@@ -190,6 +190,26 @@ class AgentLane {
     this.sockets.set(lease.leaseId, ws);
     this.log(`agent attached to lease ${lease.leaseId}`);
 
+    // Listen BEFORE the handshake, not after. A client that connects and sends
+    // immediately is doing nothing wrong, but its frames arrive while the
+    // attach below is still in flight -- and a handler registered afterwards
+    // never sees them. They are not queued by ws and not replayed: they are
+    // dropped with no response, no error and no log line, which is
+    // indistinguishable from a dead extension and took a live debugging
+    // session to track down. So buffer here and drain once attached.
+    let pendingFrames = [];
+    let attached = false;
+    ws.on('message', (raw) => {
+      if (attached) this._onAgentFrame(ws, lease, raw);
+      else pendingFrames.push(raw);
+    });
+
+    ws.on('close', () => {
+      if (this.sockets.get(lease.leaseId) === ws) this.sockets.delete(lease.leaseId);
+      this.log(`agent detached from lease ${lease.leaseId}`);
+    });
+    ws.on('error', (err) => this.log('agent: socket error', err.message));
+
     // Tell the extension to put chrome.debugger on the tab. A failure here is
     // worth surfacing immediately -- the alternative is every command failing
     // later with a confusing upstream error.
@@ -197,17 +217,26 @@ class AgentLane {
       await this.ext.request({ type: 'attach', tabId: lease.tabId });
     } catch (err) {
       this.log(`attach failed for lease ${lease.leaseId}: ${err.message}`);
+      // Answer the buffered frames instead of dropping them, so a client that
+      // spoke early learns why it failed rather than waiting out its timeout.
+      for (const raw of pendingFrames) this._failFrame(ws, raw, `attach failed: ${err.message}`);
+      pendingFrames = [];
       try { ws.close(4006, `attach failed: ${err.message}`); } catch { /* noop */ }
       this.sockets.delete(lease.leaseId);
       return;
     }
 
-    ws.on('message', (raw) => this._onAgentFrame(ws, lease, raw));
-    ws.on('close', () => {
-      if (this.sockets.get(lease.leaseId) === ws) this.sockets.delete(lease.leaseId);
-      this.log(`agent detached from lease ${lease.leaseId}`);
-    });
-    ws.on('error', (err) => this.log('agent: socket error', err.message));
+    attached = true;
+    const queued = pendingFrames;
+    pendingFrames = [];
+    for (const raw of queued) this._onAgentFrame(ws, lease, raw);
+  }
+
+  /** Reply to an unprocessed frame with an error, preserving its id. */
+  _failFrame(ws, raw, message) {
+    let id = 0;
+    try { id = JSON.parse(raw.toString()).id ?? 0; } catch { /* keep 0 */ }
+    send(ws, { id, error: { code: ERR_UPSTREAM, message } });
   }
 
   async _onAgentFrame(ws, lease, raw) {
