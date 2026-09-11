@@ -1,14 +1,16 @@
 {
   "manifest_version": 3,
   "name": "Zylos Browser Remote",
-  "version": "0.1.0",
-  "description": "Dials out to the Zylos relay and drives one tab you explicitly arm. Payment and account-settings pages are refused regardless of what is asked.",
+  "version": "0.2.0",
+  "description": "Chat with Zylos in the side panel while it drives the site you asked about. Payment and account-settings pages are refused regardless of what is asked.",
   "permissions": [
     "debugger",
     "tabs",
+    "tabGroups",
     "storage",
     "alarms",
-    "scripting"
+    "scripting",
+    "sidePanel"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -17,8 +19,11 @@
     "service_worker": "background.js",
     "type": "module"
   },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
   "options_page": "options.html",
   "action": {
-    "default_title": "Zylos Browser Remote: open options"
+    "default_title": "Zylos: open the chat panel"
   }
 }

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zylos 浏览器助手</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header class="hdr">
+    <div class="brand">
+      <span class="task-dot" id="taskDot" title="空闲"></span>
+      <span class="brand-name">Zylos 浏览器助手</span>
+    </div>
+    <span class="pill" id="connPill" title="中继连接状态">状态未知</span>
+  </header>
+
+  <main class="transcript" id="transcript" role="log" aria-live="polite" aria-label="对话记录">
+    <p class="empty" id="emptyHint">
+      在下面说一句话就行，比如「打开B站搜蜘蛛侠」。<br>
+      我会在浏览器里替你操作，过程和结果都会出现在这里。
+    </p>
+  </main>
+
+  <p class="notice" id="composerNotice" hidden></p>
+
+  <form class="composer" id="composer">
+    <textarea id="input" rows="1" autocomplete="off" spellcheck="false"
+              placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
+    <button type="submit" id="send" title="发送">发送</button>
+  </form>
+
+  <footer class="footer">
+    <div class="actions">
+      <button type="button" id="clearFinished" title="把已停止的标签分组解散，标签页不会被关闭">清理已完成</button>
+      <button type="button" id="settingsToggle" aria-expanded="false" aria-controls="settings">设置</button>
+    </div>
+
+    <p class="toast" id="toast" hidden></p>
+
+    <section class="settings" id="settings" hidden>
+      <div class="kill" id="killRow">
+        <input type="checkbox" id="enabled">
+        <label for="enabled">允许远程控制</label>
+      </div>
+      <p class="hint" id="killHint"></p>
+
+      <label class="field-label" for="relayUrl">中继地址</label>
+      <input type="text" id="relayUrl" autocomplete="off" spellcheck="false"
+             placeholder="wss://&lt;agent-domain&gt;/browser-remote/ext">
+      <p class="hint">域名由平台分配、可能变化，问一下我就会告诉你；路径固定是 <code>/browser-remote/ext</code>。</p>
+
+      <label class="field-label" for="token">令牌</label>
+      <input type="password" id="token" autocomplete="off" spellcheck="false" placeholder="64 位十六进制字符">
+      <p class="hint">中继的共享密钥，只存在这个浏览器配置文件的本地扩展存储里。</p>
+
+      <p class="save-row"><button type="button" id="save">保存并重连</button></p>
+
+      <pre class="status-box" id="settingsStatus">加载中…</pre>
+    </section>
+  </footer>
+
+  <script src="sidepanel.js" type="module"></script>
+</body>
+</html>

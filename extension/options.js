@@ -17,20 +17,19 @@ async function load() {
   // Absent means enabled -- matches background.js (only an explicit false kills).
   renderKill(enabled !== false);
   await renderStatus();
-  await renderTabs();
 }
 
 function renderKill(on) {
   $('enabled').checked = on;
   $('killRow').className = on ? 'kill' : 'kill off';
   $('killHint').textContent = on
-    ? 'The agent may drive the armed tab.'
+    ? 'The agent may drive the tab the current task is using.'
     : 'OFF — the relay connection is closed and every command is refused.';
 }
 
 async function renderStatus() {
-  const { status, relayUrl, token, armedTabId, enabled } = await chrome.storage.local.get([
-    'status', 'relayUrl', 'token', 'armedTabId', 'enabled',
+  const { status, relayUrl, token, enabled } = await chrome.storage.local.get([
+    'status', 'relayUrl', 'token', 'enabled',
   ]);
   const s = status || {};
   const age = s.at ? `${Math.round((Date.now() - s.at) / 1000)}s ago` : 'never';
@@ -41,48 +40,8 @@ async function renderStatus() {
     `enabled:   ${enabled !== false}`,
     `relayUrl:  ${relayUrl || '(not set)'}`,
     `token:     ${token ? 'configured' : '(not set)'}`,
-    `armedTab:  ${armedTabId ?? '(none)'}`,
     s.lastDetach ? `lastDetach: ${s.lastDetach}` : null,
   ].filter(Boolean).join('\n');
-}
-
-async function renderTabs() {
-  const tabs = await chrome.tabs.query({});
-  const { armedTabId } = await chrome.storage.local.get('armedTabId');
-  const body = $('tabs').querySelector('tbody');
-  body.replaceChildren();
-
-  for (const t of tabs) {
-    // Arming this options page itself would be pointless (the extension
-    // refuses to attach to chrome-extension:// anyway).
-    if (t.url?.startsWith('chrome-extension://') && t.url.includes('options.html')) continue;
-
-    const tr = document.createElement('tr');
-    if (t.id === armedTabId) tr.className = 'armed';
-
-    const info = document.createElement('td');
-    const title = document.createElement('div');
-    title.textContent = t.title || '(untitled)';
-    const url = document.createElement('div');
-    url.className = 'url';
-    url.textContent = t.url || '';
-    info.append(title, url);
-
-    const action = document.createElement('td');
-    action.style.width = '110px';
-    const btn = document.createElement('button');
-    btn.textContent = t.id === armedTabId ? 'Disarm' : 'Arm';
-    btn.addEventListener('click', async () => {
-      if (t.id === armedTabId) await chrome.storage.local.remove('armedTabId');
-      else await chrome.storage.local.set({ armedTabId: t.id });
-      await renderTabs();
-      await renderStatus();
-    });
-    action.append(btn);
-
-    tr.append(info, action);
-    body.append(tr);
-  }
 }
 
 $('enabled').addEventListener('change', async (ev) => {
@@ -106,7 +65,6 @@ $('save').addEventListener('click', async () => {
 
 $('refresh').addEventListener('click', async () => {
   await renderStatus();
-  await renderTabs();
 });
 
 load();

@@ -45,6 +45,13 @@ export const ALLOWED_BR_METHODS = new Set([
   '_br.screenshot',
   '_br.navigate',
   '_br.waitFor',
+  // Session methods. These pick/label the tab a task runs in; they touch no
+  // page content and forward nothing to CDP. openTarget is the one that can
+  // create a tab, so it screens its URL through the guard before doing so.
+  '_br.openTarget',
+  '_br.setState',
+  '_br.endTask',
+  '_br.clearFinished',
 ]);
 
 // Named refusals for the surfaces that must never execute here, so a log line

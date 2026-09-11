@@ -5,7 +5,8 @@
  * Order is fixed and must stay fixed:
  *   1. methodAllowed()  -- default-deny allowlist (this file)
  *   2. screen()         -- URL blocklist walk (guard.js, shared with the extension)
- *   3. idempotency      -- replay a recorded answer instead of re-executing
+ *   3. paramsAllowed()  -- per-method payload shape (this file)
+ *   4. idempotency      -- replay a recorded answer instead of re-executing
  *
  * The guard sits BELOW the provider seam on purpose: swapping LocalRelayProvider
  * for a future ConnectorProvider cannot route around it, because there is exactly
@@ -47,7 +48,49 @@ const ALLOWED_BR_METHODS = new Set([
   '_br.screenshot',
   '_br.navigate',
   '_br.waitFor',
+  // --- task-session methods (SIDEPANEL-SPEC.md D) ---------------------------
+  // Same bar as the rest of this list: each carries DATA the extension
+  // interprets (a URL, one of three state words) and never code. Tab/group
+  // management stays entirely inside the extension, which re-screens the URL
+  // against its own guard copy before it touches anything -- these do not widen
+  // what can be executed on a page, only which tab the session is pointed at.
+  '_br.openTarget',
+  '_br.setState',
+  '_br.endTask',
+  '_br.clearFinished',
 ]);
+
+// Data-shape screening for the session methods. The allowlist says WHICH method
+// may run; this says the payload is the narrow data the method is allowed to
+// carry. `state` in particular is a closed set of three words -- an unchecked
+// string here would reach chrome.tabGroups.update as a title/colour input.
+const BR_STATES = new Set(['working', 'waiting', 'stopped']);
+
+const BR_PARAM_RULES = {
+  '_br.openTarget': (p) => (typeof p.url === 'string' && p.url !== ''
+    ? null
+    : 'refused: _br.openTarget requires a url string'),
+  '_br.setState': (p) => (typeof p.state === 'string' && BR_STATES.has(p.state)
+    ? null
+    : `refused: _br.setState state must be one of ${[...BR_STATES].join('|')}`),
+  '_br.endTask': () => null,
+  '_br.clearFinished': () => null,
+};
+
+/**
+ * @returns {null} when the params are the shape the method may carry, or a
+ * refusal string. Methods without a rule are unconstrained here by design --
+ * their params are already walked by screen().
+ */
+function paramsAllowed(method, params) {
+  const rule = BR_PARAM_RULES[method];
+  if (!rule) return null;
+  if (params === undefined || params === null) return rule({});
+  if (typeof params !== 'object' || Array.isArray(params)) {
+    return `refused: ${method} params must be an object`;
+  }
+  return rule(params);
+}
 
 // Not required for correctness -- the allowlist already denies these -- but a
 // named refusal ("banned by policy") beats a generic "not allowed" when the
@@ -123,7 +166,12 @@ class IdempotencyCache {
 function check({ method, params, tabUrl } = {}) {
   const banned = methodAllowed(method);
   if (banned) return banned;
-  return screen({ method, params, tabUrl });
+  // URL screening stays ahead of shape screening: when a payload is both
+  // malformed and points at a blocklisted URL, the blocklist is the answer the
+  // caller needs to see.
+  const blocked = screen({ method, params, tabUrl });
+  if (blocked) return blocked;
+  return paramsAllowed(method, params);
 }
 
 // Mutating actions are the ones where a mid-flight cutoff + retry would do the
@@ -139,6 +187,10 @@ const MUTATING_METHODS = new Set([
   // Enter submits forms. A retry after a mid-flight cutoff must replay the
   // recorded answer rather than submit a second time.
   '_br.press',
+  // Opening a target can CREATE a tab; a retry after a cutoff would leave the
+  // owner with two. setState/endTask/clearFinished are naturally idempotent
+  // (applying the same state twice is the same state), so they stay out.
+  '_br.openTarget',
 ]);
 
 function isMutating(method) {
@@ -148,7 +200,9 @@ function isMutating(method) {
 module.exports = {
   check,
   methodAllowed,
+  paramsAllowed,
   isMutating,
+  BR_STATES,
   IdempotencyCache,
   ALLOWED_CDP_METHODS,
   ALLOWED_BR_METHODS,

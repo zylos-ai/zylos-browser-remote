@@ -10,6 +10,7 @@
  *   GET  /json/version              Chrome-shaped version blob
  *   GET  /json , /json/list         one page target per active lease
  *   GET  /status                    relay health
+ *   POST /chat                      agent -> side panel chat bubble
  *   POST /lease                     acquire  -> {leaseId, cdpUrl, ttl, expiresAt}
  *   POST /lease/<id>/renew          extend
  *   DEL  /lease/<id>                revoke
@@ -22,9 +23,15 @@
 const http = require('http');
 const { WebSocketServer } = require('ws');
 const chokepoint = require('./chokepoint');
+const { MAX_CHAT_TEXT, SESSION_ID_RE } = require('./ext-lane');
 
 const BIND = '127.0.0.1';
 const DEVTOOLS_PREFIX = '/devtools/page/';
+
+// POST /chat carries one chat bubble, nothing else. 64 KiB is ~8x the accepted
+// text cap, so a legitimate body never trips it and a runaway one dies early
+// instead of being buffered.
+const CHAT_BODY_LIMIT_BYTES = 64 * 1024;
 
 // CDP error codes. -32601 is JSON-RPC "method not found", which is what a client
 // expects when a method is unavailable; refusals by policy are server errors.
@@ -101,6 +108,47 @@ class AgentLane {
         });
       }
 
+      // Egress half of the side-panel chat (SIDEPANEL-SPEC.md C). It lives HERE,
+      // on the loopback lane, and must never be added to :3802: that port is
+      // routed by Caddy, and an unauthenticated /chat there would let anyone who
+      // learns the public URL put words in the agent's mouth inside the owner's
+      // panel.
+      if (req.method === 'POST' && url.pathname === '/chat') {
+        let body;
+        try {
+          body = await readJson(req, CHAT_BODY_LIMIT_BYTES);
+        } catch (err) {
+          const tooBig = /too large/.test(err.message);
+          return reply(tooBig ? 413 : 400, { ok: false, error: err.message });
+        }
+        if (!body || typeof body !== 'object' || Array.isArray(body)) {
+          return reply(400, { ok: false, error: 'body must be a JSON object' });
+        }
+        const text = body.text;
+        if (typeof text !== 'string' || text === '') {
+          return reply(400, { ok: false, error: 'text must be a non-empty string' });
+        }
+        if (text.length > MAX_CHAT_TEXT) {
+          return reply(400, { ok: false, error: `text too long (${text.length} > ${MAX_CHAT_TEXT} chars)` });
+        }
+        const sessionId = body.sessionId === undefined || body.sessionId === null ? '' : body.sessionId;
+        if (sessionId !== '' && (typeof sessionId !== 'string' || !SESSION_ID_RE.test(sessionId))) {
+          return reply(400, { ok: false, error: 'malformed sessionId' });
+        }
+        if (!this.ext.isConnected()) {
+          return reply(503, { ok: false, error: 'extension not connected' });
+        }
+        // Default = the connected panel: one extension socket, so an omitted
+        // sessionId is unambiguous.
+        const delivered = this.ext.sendChat({ text, sessionId: sessionId || undefined });
+        if (!delivered) {
+          // Lost the socket between the check above and the send.
+          return reply(503, { ok: false, error: 'extension not connected' });
+        }
+        this.log(`chat -> panel (${text.length} chars${sessionId ? `, session ${sessionId}` : ''})`);
+        return reply(200, { ok: true, delivered: true });
+      }
+
       if (req.method === 'POST' && url.pathname === '/lease') {
         const body = await readJson(req);
         if (!this.ext.isConnected()) {
@@ -145,6 +193,15 @@ class AgentLane {
    * available, one is minted here so a stock client that only knows
    * /json/list -> webSocketDebuggerUrl works unmodified. That shortcut is only
    * defensible because this lane is loopback-only.
+   *
+   * A connected extension with ZERO reported tabs is a real, useful state under
+   * the session model: the agent connects first and calls `_br.openTarget` to
+   * create the tab. So the lease is still minted -- returning [] here would
+   * break that flow before it starts. What is NOT acceptable is the old
+   * pretence that the session was already driving a page: a phantom
+   * `"remote tab" @ about:blank` reads as a real target, and a caller that
+   * screenshots it gets nothing with no way to tell why. Hence `zylosHasTab`,
+   * plus a title that says so in words.
    */
   _targets() {
     if (!this.ext.isConnected()) return [];
@@ -153,13 +210,22 @@ class AgentLane {
       lease = this.leases.acquire({ tabId: this._defaultTabId() });
       this.log(`lease ${lease.leaseId} auto-acquired via /json/list`);
     }
-    const tab = this.ext.tabs.find((t) => String(t.id) === String(lease.tabId)) || this.ext.tabs[0] || {};
+    const tab = this.ext.tabs.find((t) => String(t.id) === String(lease.tabId)) || this.ext.tabs[0] || null;
+    const hasTab = Boolean(tab && tab.url);
+    const expires = new Date(lease.expiresAt).toISOString();
     return [{
       id: lease.leaseId,
       type: 'page',
-      title: tab.title || 'remote tab',
-      url: tab.url || 'about:blank',
-      description: `lease expires ${new Date(lease.expiresAt).toISOString()}`,
+      title: hasTab ? (tab.title || 'remote tab') : 'Zylos session (no tab yet)',
+      url: hasTab ? tab.url : 'about:blank',
+      description: hasTab
+        ? `lease expires ${expires}`
+        : `session ready, no tab yet -- call _br.openTarget; lease expires ${expires}`,
+      // Non-standard, deliberately prefixed: a caller can distinguish
+      // "session ready, no tab" from "session driving a real page" without
+      // guessing from the url.
+      zylosHasTab: hasTab,
+      zylosTabId: hasTab ? (tab.id ?? null) : null,
       webSocketDebuggerUrl: this.cdpUrl(lease.leaseId),
       devtoolsFrontendUrl: '',
     }];
@@ -323,14 +389,25 @@ function send(ws, obj) {
 }
 
 function readJson(req, limitBytes = 1_000_000) {
+  // Past the cap the body is DRAINED, not collected, and the socket is left
+  // alive so the refusal can actually be written back -- destroying the request
+  // mid-upload (what this used to do) resets the connection and the caller sees
+  // a socket error instead of the 413 that explains itself. A genuine flood
+  // still gets cut off at the hard ceiling rather than drained forever.
+  const hardKillBytes = limitBytes * 8;
   return new Promise((resolve, reject) => {
     let size = 0;
+    let over = false;
     const chunks = [];
     req.on('data', (c) => {
       size += c.length;
       if (size > limitBytes) {
-        reject(new Error('body too large'));
-        req.destroy();
+        if (!over) {
+          over = true;
+          chunks.length = 0;
+          reject(new Error('body too large'));
+        }
+        if (size > hardKillBytes) req.destroy();
         return;
       }
       chunks.push(c);
@@ -344,4 +421,4 @@ function readJson(req, limitBytes = 1_000_000) {
   });
 }
 
-module.exports = { AgentLane, BIND, DEVTOOLS_PREFIX };
+module.exports = { AgentLane, BIND, DEVTOOLS_PREFIX, CHAT_BODY_LIMIT_BYTES };

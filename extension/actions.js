@@ -40,6 +40,10 @@ export const CAPABILITIES = [
   '_br.screenshot',
   '_br.navigate',
   '_br.waitFor',
+  '_br.openTarget',
+  '_br.setState',
+  '_br.endTask',
+  '_br.clearFinished',
 ];
 
 // The agent sends a key NAME; this table -- fixed extension source -- owns the

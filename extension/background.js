@@ -3,7 +3,10 @@
  *
  * Dials OUT to the relay (the agent's container has no public IP and cannot
  * initiate a connection to this machine), then executes post-chokepoint
- * commands against the ONE tab the owner explicitly armed.
+ * commands against the ONE tab the current task is using -- the tab the agent
+ * opened with _br.openTarget, or an already-open tab on the same site that it
+ * adopted. See session.js: the owner asked for that instead of the old
+ * arm-a-tab gate, so "which tab" is now a task property, not a standing grant.
  *
  * Three MV3 constraints shape this file:
  *  1. A service worker is torn down after ~30s idle. Chrome 116+ resets that
@@ -24,6 +27,9 @@
 import { screen } from './guard.js';
 import { methodAllowed, isBrMethod, tabAttachAllowed } from './policy.js';
 import { VERSION, CAPABILITIES, execBr, execCdp } from './actions.js';
+import {
+  openTarget, setState, endTask, clearFinished, currentTaskTab, getTask,
+} from './session.js';
 
 const SUBPROTOCOL = 'zylos-browser-remote.v1';
 const ALARM_NAME = 'zylos-browser-remote-keepalive';
@@ -47,15 +53,27 @@ let attachedTabId = null;
 // ------------------------------------------------------------------ settings
 
 async function getConfig() {
-  const cfg = await chrome.storage.local.get(['relayUrl', 'token', 'armedTabId', 'enabled']);
+  const cfg = await chrome.storage.local.get(['relayUrl', 'token', 'enabled']);
   return {
     relayUrl: cfg.relayUrl,
     token: cfg.token,
-    armedTabId: cfg.armedTabId,
-    // Absent means enabled: a fresh install with no flag set should work once
-    // the owner arms a tab. Only an explicit `false` is a kill.
+    // Absent means enabled: a fresh install with no flag set should work as
+    // soon as it is configured. Only an explicit `false` is a kill.
     enabled: cfg.enabled !== false,
   };
+}
+
+/**
+ * Stable id for this install, used as the C4 endpoint the agent replies to.
+ * Minted once and persisted -- if it changed on every worker recycle the
+ * agent's replies would be addressed to a session that no longer exists.
+ */
+async function getSessionId() {
+  const { sessionId } = await chrome.storage.local.get('sessionId');
+  if (sessionId) return sessionId;
+  const minted = crypto.randomUUID();
+  await chrome.storage.local.set({ sessionId: minted });
+  return minted;
 }
 
 async function setStatus(patch) {
@@ -68,27 +86,23 @@ async function setStatus(patch) {
 /**
  * The `tabs` array in hello/state frames.
  *
- * ONLY the armed tab, never the full list. The relay uses tabs[0] as the
- * default lease target and tabUrl() as the URL it screens against, so putting
- * anything else first would hand a lease to a tab the owner never armed. The
- * full list is a separate, explicit request: _br.listTabs.
+ * ONLY the current task's tab, never the full list. The relay uses tabs[0] as
+ * the default lease target and tabUrl() as the URL it screens against, so
+ * putting anything else first would point the lease at a tab no task is using.
+ * The full list is a separate, explicit request: _br.listTabs.
+ *
+ * Empty is a normal state now, not a fault: between tasks there is no tab, and
+ * the agent opens one with _br.openTarget.
  */
-async function armedTabs() {
-  const { armedTabId } = await getConfig();
-  if (armedTabId == null) return [];
-  try {
-    const t = await chrome.tabs.get(armedTabId);
-    return [{ id: t.id, title: t.title, url: t.url, active: t.active, armed: true }];
-  } catch {
-    // Armed tab was closed while we were asleep.
-    await chrome.storage.local.remove('armedTabId');
-    return [];
-  }
+async function taskTabs() {
+  const t = await currentTaskTab();
+  if (!t) return [];
+  return [{ id: t.id, title: t.title, url: t.url, active: t.active, task: true }];
 }
 
 async function pushState() {
   if (!isOpen()) return;
-  send({ type: 'state', tabs: await armedTabs() });
+  send({ type: 'state', tabs: await taskTabs() });
 }
 
 // ------------------------------------------------------------------ transport
@@ -147,7 +161,7 @@ async function connect() {
     connecting = false;
     backoffAttempt = 0;
     ws = sock;
-    send({ type: 'hello', version: VERSION, capabilities: CAPABILITIES, tabs: await armedTabs() });
+    send({ type: 'hello', version: VERSION, capabilities: CAPABILITIES, tabs: await taskTabs() });
     await setStatus({ state: 'connected', error: null, code: null });
   };
 
@@ -195,22 +209,17 @@ function scheduleReconnect() {
  * relay is compromised or runs ahead of this extension.
  */
 async function resolveTarget(tabId) {
-  const { armedTabId } = await getConfig();
-  if (armedTabId == null) {
-    throw new Error('no tab armed: open the extension options and arm a tab first');
+  const tab = await currentTaskTab();
+  if (!tab) {
+    throw new Error('no active task tab: call _br.openTarget({url}) first');
   }
-  if (tabId != null && String(tabId) !== String(armedTabId)) {
+  if (tabId != null && String(tabId) !== String(tab.id)) {
     throw new Error(
-      `refused by extension: tab ${tabId} is not the armed tab (${armedTabId}); ` +
-      'only the armed tab may be driven'
+      `refused by extension: tab ${tabId} is not the task tab (${tab.id}); ` +
+      'only the tab the current task opened or adopted may be driven'
     );
   }
-  try {
-    return await chrome.tabs.get(armedTabId);
-  } catch {
-    await chrome.storage.local.remove('armedTabId');
-    throw new Error(`armed tab ${armedTabId} no longer exists; re-arm a tab`);
-  }
+  return tab;
 }
 
 async function ensureAttached(tab) {
@@ -236,11 +245,44 @@ async function detachAll(reason) {
 // ------------------------------------------------------------------ execution
 
 // _br.* methods that answer from extension/Chrome state and touch no page, so
-// they need neither an armed-tab lease nor a debugger attachment.
+// they need neither a task tab nor a debugger attachment.
 const TABLESS_METHODS = new Set(['_br.info', '_br.listTabs']);
 
+/**
+ * Session methods: they choose and label the tab a task runs in rather than
+ * acting on page content, so they run BEFORE resolveTarget -- openTarget is
+ * precisely the call that exists because there is no tab yet. Each screens its
+ * own input (see session.js); none of them reaches CDP.
+ */
+const SESSION_METHODS = {
+  '_br.openTarget': async (params) => {
+    const res = await openTarget(params);
+    const tab = await chrome.tabs.get(res.tabId);
+    await ensureAttached(tab);
+    await pushState();
+    broadcast({ type: 'chat.status', state: 'working' });
+    return res;
+  },
+  '_br.setState': async (params) => {
+    const res = await setState(params);
+    // 'stopped' means the task is over: drop the debugger so the yellow banner
+    // goes away rather than sitting on a tab nobody is driving.
+    if (params?.state === 'stopped') await detachAll('task stopped');
+    broadcast({ type: 'chat.status', state: res.state });
+    return res;
+  },
+  '_br.endTask': async () => {
+    await detachAll('task ended');
+    const res = await endTask();
+    await pushState();
+    broadcast({ type: 'chat.status', state: 'stopped' });
+    return res;
+  },
+  '_br.clearFinished': async () => clearFinished(),
+};
+
 async function execute({ method, params, tabId }) {
-  const { enabled, armedTabId } = await getConfig();
+  const { enabled } = await getConfig();
   // Re-checked here and not only in connect(): the owner may flip the switch
   // while a socket is open and a command is already in flight.
   if (!enabled) throw new Error('refused by extension: remote control is disabled (kill switch)');
@@ -249,8 +291,12 @@ async function execute({ method, params, tabId }) {
   const notAllowed = methodAllowed(method);
   if (notAllowed) throw new Error(notAllowed);
 
+  const session = SESSION_METHODS[method];
+  if (session) return session(params || {});
+
+  const { tabId: taskTabId } = await getTask();
   if (TABLESS_METHODS.has(method)) {
-    return execBr({ method, params, tabId: null, state: { armedTabId, attachedTabId } });
+    return execBr({ method, params, tabId: null, state: { armedTabId: taskTabId, attachedTabId } });
   }
 
   const tab = await resolveTarget(tabId);
@@ -265,7 +311,7 @@ async function execute({ method, params, tabId }) {
   await ensureAttached(tab);
 
   return isBrMethod(method)
-    ? execBr({ method, params, tabId: tab.id, state: { armedTabId, attachedTabId } })
+    ? execBr({ method, params, tabId: tab.id, state: { armedTabId: tab.id, attachedTabId } })
     : execCdp({ method, params, tabId: tab.id });
 }
 
@@ -310,10 +356,90 @@ async function handleFrame(sock, raw) {
       await reply(sock, msg, () => execute(msg));
       return;
 
+    case 'chat':
+      // The agent answering in the side panel. Persist first, then broadcast:
+      // the panel is usually closed, and a reply the owner never sees because
+      // he had it shut is a lost message, not a UI detail.
+      await appendChat({ role: 'assistant', text: String(msg.text ?? ''), ts: msg.ts || Date.now() });
+      return;
+
+    case 'chat-status':
+      broadcast({ type: 'chat.status', state: msg.state });
+      return;
+
     default:
       return;
   }
 }
+
+// ------------------------------------------------------------------ chat
+
+const CHAT_LOG_LIMIT = 200;
+
+/** Fire-and-forget to the side panel; it is simply absent most of the time. */
+function broadcast(message) {
+  chrome.runtime.sendMessage(message).catch(() => { /* no panel open */ });
+}
+
+async function appendChat(entry) {
+  const { chatLog } = await chrome.storage.local.get('chatLog');
+  const log = Array.isArray(chatLog) ? chatLog : [];
+  log.push(entry);
+  await chrome.storage.local.set({ chatLog: log.slice(-CHAT_LOG_LIMIT) });
+  broadcast({ type: 'chat.message', ...entry });
+}
+
+/**
+ * Owner typed something. It goes to the relay, which hands it to C4 and thence
+ * to the agent session -- the same session he talks to on Lark.
+ */
+async function sendChat(text) {
+  const clean = String(text ?? '').trim();
+  if (!clean) throw new Error('空消息');
+  if (!isOpen()) throw new Error('还没连上中继，消息没发出去');
+  const sessionId = await getSessionId();
+  const ts = Date.now();
+  if (!send({ type: 'chat', sessionId, text: clean, ts })) {
+    throw new Error('发送失败，连接刚断开');
+  }
+  // The panel appends and persists the owner's own line optimistically, so
+  // echoing it back here would show his message twice. Assistant replies are
+  // the only thing this worker writes to the transcript.
+  return { sent: true, ts };
+}
+
+// The side panel owns no state and no socket; it asks this worker for both.
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  const handlers = {
+    'panel.send': () => sendChat(msg.text),
+    'panel.getState': async () => ({
+      status: (await chrome.storage.local.get('status')).status || { state: 'unknown' },
+      task: { state: (await getTask()).state },
+      sessionId: await getSessionId(),
+    }),
+    'panel.clearFinished': () => clearFinished(),
+    'panel.saveSettings': async () => {
+      await chrome.storage.local.set({ relayUrl: msg.relayUrl, token: msg.token });
+      try { ws?.close(1000, 'settings changed'); } catch { /* not open */ }
+      ws = null;
+      backoffAttempt = 0;
+      await connect();
+      return { saved: true };
+    },
+    'panel.setEnabled': async () => {
+      await chrome.storage.local.set({ enabled: Boolean(msg.enabled) });
+      return { enabled: Boolean(msg.enabled) };
+    },
+  };
+
+  const handler = handlers[msg?.type];
+  if (!handler) return false;
+
+  handler()
+    .then((result) => sendResponse({ ok: true, ...(result || {}) }))
+    .catch((err) => sendResponse({ ok: false, error: String(err?.message || err) }));
+  return true;   // async response
+});
 
 /** Run `work` and answer the frame with resp/error. Never throws. */
 async function reply(sock, msg, work) {
@@ -350,9 +476,9 @@ chrome.debugger.onDetach.addListener((source) => {
 });
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
-  const { armedTabId } = await getConfig();
-  if (tabId !== armedTabId) return;
-  // The relay caches the armed tab's URL and screens against it. A page that
+  const { tabId: taskTabId } = await getTask();
+  if (tabId !== taskTabId) return;
+  // The relay caches the task tab's URL and screens against it. A page that
   // navigates itself must invalidate that cache immediately, or the relay
   // keeps screening a URL the tab has already left.
   if (changeInfo.url || changeInfo.status || changeInfo.title) await pushState();
@@ -360,16 +486,19 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   if (tabId === attachedTabId) attachedTabId = null;
-  const { armedTabId } = await getConfig();
-  if (tabId === armedTabId) {
-    await chrome.storage.local.remove('armedTabId');
+  const { tabId: taskTabId } = await getTask();
+  if (tabId === taskTabId) {
+    // The owner closed the tab we were driving. That is a perfectly good way to
+    // say stop, so treat it as one rather than erroring on the next command.
+    await endTask();
     await pushState();          // now empty: the relay must stop handing out leases
+    broadcast({ type: 'chat.status', state: 'stopped' });
   }
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
-  if (changes.armedTabId) void pushState();
+  if (changes.taskTabId) void pushState();
   if (changes.enabled) {
     if (changes.enabled.newValue === false) {
       void detachAll('kill switch');
@@ -394,7 +523,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 chrome.runtime.onInstalled.addListener(() => { ensureAlarm(); void connect(); });
 chrome.runtime.onStartup.addListener(() => { ensureAlarm(); void connect(); });
 
-chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage());
+// Clicking the toolbar icon opens the chat panel. setPanelBehavior is the only
+// way to get that without an onClicked listener -- the two are mutually
+// exclusive, and a listener would swallow the click and open nothing.
+chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true })
+  .catch(() => { /* older Chrome: the panel still opens from the puzzle menu */ });
 
 // The options page asks us to redial after the owner saves settings or arms a tab.
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -411,7 +544,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       open: isOpen(),
       attachedTabId,
       version: VERSION,
-      tabs: await armedTabs(),
+      tabs: await taskTabs(),
     }))();
     return true;                // async sendResponse
   }

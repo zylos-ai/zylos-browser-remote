@@ -23,6 +23,16 @@ const EXT_PATH = '/ext';
 const HEARTBEAT_MS = 17_000;       // app-level: a proxy may swallow raw ping frames
 const COMMAND_TIMEOUT_MS = 30_000;
 
+// Side-panel chat (SIDEPANEL-SPEC.md A/B). The owner's message is opaque data:
+// it is never parsed, matched or rewritten here -- it only has to be bounded, so
+// a runaway panel cannot push an unbounded argv at c4-receive. Over the cap the
+// frame is REFUSED and said so, never silently shortened: half an instruction
+// ("买两张票" -> "买两") is worse than no instruction.
+const MAX_CHAT_TEXT = 8000;
+// The sessionId is the C4 endpoint id and reaches a queue that names files after
+// it, so it is screened as an identifier, not as free text.
+const SESSION_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
+
 /** Constant-time compare over fixed-width digests (raw lengths differ -> leak). */
 function tokenMatches(expected, presented) {
   if (!expected || !presented) return false;
@@ -33,7 +43,8 @@ function tokenMatches(expected, presented) {
 
 /**
  * Emits: 'connected', 'disconnected' (code), 'hello' (payload), 'event' (frame),
- *        'state' (frame)
+ *        'state' (frame), 'chat' ({sessionId, text, ts}),
+ *        'chat-refused' ({reason, sessionId, length})
  */
 class ExtLane extends EventEmitter {
   constructor({ token, log = () => {} }) {
@@ -191,6 +202,9 @@ class ExtLane extends EventEmitter {
       case 'event':
         this.emit('event', msg);
         return;
+      case 'chat':
+        this._onChat(msg);
+        return;
       case 'resp':
       case 'error':
         break;
@@ -205,6 +219,44 @@ class ExtLane extends EventEmitter {
     this.pending.delete(msg.id);
     if (msg.type === 'error') p.reject(new Error(msg.error || 'extension error'));
     else p.resolve(msg.result);
+  }
+
+  /**
+   * Owner typed in the side panel: {type:'chat', sessionId, text, ts}.
+   *
+   * This lane validates the ENVELOPE only. The text is never inspected,
+   * normalised or matched against anything -- it belongs to the owner and goes
+   * to the agent verbatim (server.js hands it to c4-receive as one argv
+   * element, so no quoting or shell parsing is ever applied to it).
+   */
+  _onChat(msg) {
+    const sessionId = typeof msg.sessionId === 'string' ? msg.sessionId : '';
+    const text = typeof msg.text === 'string' ? msg.text : null;
+    const ts = Number.isFinite(msg.ts) ? msg.ts : Date.now();
+
+    const refuse = (reason) => {
+      // Loud on both sides: a dropped owner message must never be silent.
+      this.log(`ext: chat REFUSED (${reason})`);
+      this.notify({ type: 'chat-status', state: 'idle', error: `message refused: ${reason}`, ts: Date.now() });
+      this.emit('chat-refused', { reason, sessionId, length: text == null ? 0 : text.length });
+    };
+
+    if (!SESSION_ID_RE.test(sessionId)) return refuse('missing or malformed sessionId');
+    if (text == null) return refuse('missing text');
+    if (text.length === 0) return refuse('empty text');
+    if (text.length > MAX_CHAT_TEXT) {
+      return refuse(`text too long (${text.length} > ${MAX_CHAT_TEXT} chars) -- send it in parts`);
+    }
+
+    this.log(`ext: chat from ${sessionId} (${text.length} chars)`);
+    this.emit('chat', { sessionId, text, ts });
+  }
+
+  /** Agent's reply, pushed down the panel socket (SIDEPANEL-SPEC.md B/C). */
+  sendChat({ text, sessionId, role = 'assistant', ts = Date.now() } = {}) {
+    const frame = { type: 'chat', role, text, ts };
+    if (sessionId) frame.sessionId = sessionId;
+    return this.notify(frame);
   }
 
   /**
@@ -275,4 +327,7 @@ class ExtLane extends EventEmitter {
   }
 }
 
-module.exports = { ExtLane, SUBPROTOCOL, EXT_PATH, HEARTBEAT_MS, COMMAND_TIMEOUT_MS, tokenMatches };
+module.exports = {
+  ExtLane, SUBPROTOCOL, EXT_PATH, HEARTBEAT_MS, COMMAND_TIMEOUT_MS, tokenMatches,
+  MAX_CHAT_TEXT, SESSION_ID_RE,
+};
