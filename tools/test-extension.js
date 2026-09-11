@@ -87,6 +87,7 @@ function makeChromeStub() {
     'Page.captureScreenshot': { data: 'ZmFrZS1zY3JlZW5zaG90' },
     'Input.dispatchMouseEvent': {},
     'Input.insertText': {},
+    'Input.dispatchKeyEvent': {},
   };
   const injectResults = {
     pageSnapshot: {
@@ -104,6 +105,9 @@ function makeChromeStub() {
       href: null, tag: 'button', disabled: false,
     },
     pagePrepareFill: { ok: true, tag: 'input', type: 'text', focused: true },
+    // A focused text input inside a harmless form. Tests overwrite formAction to
+    // drive the blocklist branch.
+    pagePrepareKey: { ok: true, tag: 'input', type: 'text', formAction: 'https://example.com/search' },
     pageFinishFill: { ok: true, value: 'typed text' },
     pageCheckState: { ok: true, satisfied: true, matches: 1 },
   };
@@ -362,6 +366,50 @@ function cdpClient(WS, url) {
   const insert = stub.calls.sendCommand.find((c) => c.method === 'Input.insertText');
   ok('_br.fill typed via Input.insertText', Boolean(insert) && insert.params.text === 'typed text');
   ok('_br.fill reported the resulting value', fill.result && fill.result.value === 'typed text', JSON.stringify(fill));
+
+  // _br.press: the agent sends a key NAME, never a descriptor. Raw
+  // Input.dispatchKeyEvent from the agent stays banned (asserted further down);
+  // this lane exists so the extension can own the key table.
+  const press = await client.send('_br.press', { key: 'Enter', selector: '#q' });
+  const keyEvents = stub.calls.sendCommand.filter((c) => c.method === 'Input.dispatchKeyEvent');
+  ok('_br.press dispatched exactly one keyDown + keyUp pair',
+     keyEvents.length === 2 && keyEvents[0].params.type === 'keyDown' && keyEvents[1].params.type === 'keyUp',
+     JSON.stringify(keyEvents.map((k) => k.params.type)));
+  ok('_br.press sent the extension-owned Enter descriptor, not anything the agent supplied',
+     keyEvents[0] && keyEvents[0].params.key === 'Enter' && keyEvents[0].params.code === 'Enter'
+     && keyEvents[0].params.windowsVirtualKeyCode === 13 && keyEvents[0].params.text === '\r',
+     JSON.stringify(keyEvents[0] && keyEvents[0].params));
+  const keyInject = stub.calls.executeScript.find((c) => c.funcName === 'pagePrepareKey');
+  ok('_br.press prepared focus through the fixed injected function in the ISOLATED world',
+     Boolean(keyInject) && keyInject.world === 'ISOLATED' && keyInject.args[0].selector === '#q',
+     JSON.stringify(keyInject && keyInject.args));
+  ok('_br.press reported what it pressed', press.result && press.result.pressed === 'Enter', JSON.stringify(press));
+
+  // Anything outside NAMED_KEYS is refused, and the refusal has to name the
+  // three accepted values -- an agent that guessed 'Return' needs to be told.
+  const badKey = await expectRejection(relay.ext.request({ method: '_br.press', params: { key: 'Return' }, tabId: ARMED_TAB }));
+  ok('_br.press refuses a key name outside the table',
+     badKey.rejected && /Enter/.test(badKey.message) && /Tab/.test(badKey.message) && /Escape/.test(badKey.message),
+     badKey.message);
+  const modifierKey = await expectRejection(relay.ext.request({ method: '_br.press', params: { key: 'Enter', modifiers: 2 }, tabId: ARMED_TAB }));
+  ok('_br.press ignores an agent-supplied modifier rather than forwarding it',
+     !modifierKey.rejected
+     || !stub.calls.sendCommand.some((c) => c.method === 'Input.dispatchKeyEvent' && c.params.modifiers),
+     modifierKey.message);
+  ok('a refused key name never reached chrome.debugger',
+     stub.calls.sendCommand.filter((c) => c.method === 'Input.dispatchKeyEvent' && c.params.key === 'Return').length === 0);
+
+  // Enter submits, and the form's action is the only place that destination is
+  // visible -- it is in neither the params nor the tab URL the relay screened.
+  const goodAction = stub.injectResults.pagePrepareKey.formAction;
+  const keyEventsBefore = stub.calls.sendCommand.filter((c) => c.method === 'Input.dispatchKeyEvent').length;
+  stub.injectResults.pagePrepareKey = { ...stub.injectResults.pagePrepareKey, formAction: 'https://shop.example.com/checkout' };
+  const pressBlocked = await expectRejection(relay.ext.request({ method: '_br.press', params: { key: 'Enter' }, tabId: ARMED_TAB }));
+  ok('_br.press refuses when the focused field submits to a blocklisted URL',
+     pressBlocked.rejected && /blocklist/.test(pressBlocked.message), pressBlocked.message);
+  ok('the blocklisted-form press dispatched no key event at all',
+     stub.calls.sendCommand.filter((c) => c.method === 'Input.dispatchKeyEvent').length === keyEventsBefore);
+  stub.injectResults.pagePrepareKey = { ...stub.injectResults.pagePrepareKey, formAction: goodAction };
 
   const shot = await client.send('_br.screenshot', { format: 'jpeg' });
   ok('_br.screenshot came back as base64 with a byte count',

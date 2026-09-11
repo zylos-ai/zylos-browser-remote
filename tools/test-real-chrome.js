@@ -86,7 +86,45 @@ const PAGE1 = `<!doctype html>
 <div id="result"></div>
 <button id="covered">covered button</button>
 <div id="overlay"></div>
+
+<!-- _br.press: a single-input form submits implicitly on Enter, and ONLY for a
+     TRUSTED key event. The page's own submit handler writing to the DOM is the
+     proof that the keystroke was real and not a synthesised KeyboardEvent. -->
+<form id="searchform" action="/page1">
+  <input id="q" name="q" type="text">
+</form>
+<div id="submitted"></div>
+
+<!-- Same shape, but the form's destination is blocklisted. That destination is
+     visible NOWHERE else: not in the press params, not in the tab URL. -->
+<form id="payform" action="/checkout">
+  <input id="cardname" name="cardname" type="text">
+</form>
+
+<!-- labelOf, the bilibili symptom: a machine-generated card is a wrapper <a>
+     with no text of its OWN, so the old "whole innerText" step labelled it with
+     every metric inside it. Direct-child-text-only must fall through to title. -->
+<a id="card" href="/page2" title="The real card title"><div>6.5万</div><div>109</div><div>02:25:21</div></a>
+
+<!-- Hostile id: the old code concatenated this into label[for="..."], which an
+     id carrying a quote and a bracket silently re-points or makes invalid -- and
+     an invalid selector throws out of labelOf and kills the WHOLE snapshot.
+     Resolving label[for] into a Map compared on htmlFor can do neither. -->
+<label for='a"] , input'>hostile label</label>
+<button id='a"] , input'>hostile id button</button>
+
+<!-- Redaction heuristics: a name-based secret, and a type set from SCRIPT (so
+     there is no type attribute at all for getAttribute('type') to find). -->
+<input id="otpfield" name="otp" type="text" value="314159-otp-must-never-leave">
+<input id="scriptpw" name="scriptpw" type="text" value="scriptset-must-never-leave">
 <script>
+  // Assigning the IDL property leaves no type ATTRIBUTE behind.
+  document.getElementById('scriptpw').type = 'password';
+  document.getElementById('searchform').addEventListener('submit', function (e) {
+    e.preventDefault();
+    document.getElementById('submitted').textContent = 'submitted:' + document.getElementById('q').value;
+  });
+  document.getElementById('payform').addEventListener('submit', function (e) { e.preventDefault(); });
   document.getElementById('go').addEventListener('click', function () {
     // Reads the field back: this only says "clicked:<text>" if the fill wrote a
     // real value AND the click was a real, trusted event.
@@ -421,6 +459,33 @@ async function main() {
     ok('no password value anywhere in the snapshot payload',
       !JSON.stringify(snap1.result).includes('hunter2'));
 
+    // --- labelOf, against a real DOM (the ONLY place these are exercised) -----
+    const byId = (sel) => (snap1.result?.elements || []).find((e) => e.selector === sel);
+    const card = byId('#card');
+    ok('a wrapper card is labelled by its title, not by the metrics inside it',
+      Boolean(card) && card.label === 'The real card title', JSON.stringify(card));
+    ok('the card label carries none of the metric noise',
+      Boolean(card) && !/109|02:25:21/.test(card.label), JSON.stringify(card && card.label));
+
+    // The hostile id must not just be survivable -- the map lookup has to resolve
+    // its label CORRECTLY, which a concatenated selector could not have done.
+    ok('the snapshot survived an id containing a quote and a bracket',
+      Array.isArray(snap1.result?.elements) && snap1.result.elements.length >= 6,
+      `${snap1.result?.elements?.length} elements`);
+    const hostile = (snap1.result?.elements || []).find((e) => e.label === 'hostile label');
+    ok('label[for] still resolves for an id no selector string could carry',
+      Boolean(hostile) && hostile.tag === 'button', JSON.stringify(hostile));
+
+    const otp = byId('#otpfield');
+    ok('a field named otp is redacted by the name heuristic, not just by type',
+      Boolean(otp) && otp.redacted === true && otp.value === undefined, JSON.stringify(otp));
+    const scriptPw = byId('#scriptpw');
+    ok('a password type set from SCRIPT is detected (el.type, not the attribute)',
+      Boolean(scriptPw) && scriptPw.type === 'password' && scriptPw.redacted === true
+      && scriptPw.value === undefined, JSON.stringify(scriptPw));
+    ok('neither heuristic-redacted secret appears anywhere in the payload',
+      !JSON.stringify(snap1.result).includes('must-never-leave'));
+
     const fill = await cdpCall(agent, '_br.fill', { selector: '#name', text: 'zylos-real' });
     ok('_br.fill typed into the real field', fill.ok && fill.result.value === 'zylos-real',
       JSON.stringify(fill));
@@ -437,6 +502,42 @@ async function main() {
     ok("the page's own handler read back what was typed and clicked",
       snap2.ok && (snap2.result.text || '').includes('clicked:zylos-real'),
       (snap2.result?.text || '').slice(0, 120));
+
+    // ---------------------------------------------------------------- press
+    // The whole point of this block: implicit form submission on Enter fires only
+    // for a TRUSTED key event. A synthesised KeyboardEvent from page script does
+    // not submit. So the page's own submit handler observing it is proof that
+    // Input.dispatchKeyEvent went through the real input pipeline.
+    section('_br.press against a real form');
+    const fillQ = await cdpCall(agent, '_br.fill', { selector: '#q', text: 'press-me' });
+    ok('filled the search field before pressing', fillQ.ok && fillQ.result.value === 'press-me',
+      JSON.stringify(fillQ));
+
+    const pressed = await cdpCall(agent, '_br.press', { key: 'Enter', selector: '#q' });
+    ok('_br.press reported a real Enter', pressed.ok && pressed.result.pressed === 'Enter',
+      JSON.stringify(pressed));
+    const snapPress = await waitFor("the page's own submit handler to observe the Enter", async () => {
+      const s = await cdpCall(agent, '_br.snapshot', {});
+      return s.ok && (s.result.text || '').includes('submitted:press-me') ? s : null;
+    }, 8000, 200).catch(() => null);
+    ok('the form submitted implicitly, so the key event was TRUSTED',
+      Boolean(snapPress), 'no "submitted:press-me" appeared -- the key was not trusted');
+
+    const badKey = await cdpCall(agent, '_br.press', { key: 'F5', selector: '#q' });
+    ok('_br.press refuses a key outside the named table, naming what it accepts',
+      !badKey.ok && /Enter/.test(badKey.error) && /Escape/.test(badKey.error), badKey.error);
+
+    const pressPay = await cdpCall(agent, '_br.press', { key: 'Enter', selector: '#cardname' });
+    ok('_br.press refuses when the focused field submits to a blocklisted action',
+      !pressPay.ok && /blocklist/.test(pressPay.error), pressPay.error);
+
+    const pressPw = await cdpCall(agent, '_br.press', { key: 'Enter', selector: '#pw' });
+    ok('_br.press refuses to send keys to a password field', !pressPw.ok && /password/.test(pressPw.error),
+      pressPw.error);
+
+    const pressNowhere = await cdpCall(agent, '_br.press', { key: 'Enter', selector: '#result' });
+    ok('_br.press refuses when the target cannot take focus (no blind keystrokes)',
+      !pressNowhere.ok && /focus|nowhere/.test(pressNowhere.error), pressNowhere.error);
 
     const shot = await cdpCall(agent, '_br.screenshot', { format: 'jpeg', quality: 60 });
     const shotOk = shot.ok && typeof shot.result.data === 'string' && shot.result.data.length > 1000;
@@ -474,6 +575,12 @@ async function main() {
 
     const fillPw = await cdpCall(agent, '_br.fill', { selector: '#pw', text: 'secret' });
     ok('_br.fill refuses a password field', !fillPw.ok && /password/.test(fillPw.error), fillPw.error);
+
+    // Same defect on the WRITE path: no type attribute exists to read, so the
+    // attribute-based check would have typed straight into a password box.
+    const fillScriptPw = await cdpCall(agent, '_br.fill', { selector: '#scriptpw', text: 'secret' });
+    ok('_br.fill refuses a field whose password type was set from script',
+      !fillScriptPw.ok && /password/.test(fillScriptPw.error), fillScriptPw.error);
 
     const coveredClick = await cdpCall(agent, '_br.click', { selector: '#covered' });
     ok('_br.click refuses an element covered by an overlay (real elementFromPoint)',

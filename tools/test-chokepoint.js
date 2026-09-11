@@ -82,6 +82,15 @@ allowed('_br.snapshot allowed', { method: '_br.snapshot', params: {} });
 allowed('_br.click allowed', { method: '_br.click', params: { selector: '#next' } });
 allowed('_br.fill allowed', { method: '_br.fill', params: { selector: '#q', value: 'hello' } });
 allowed('_br.listTabs allowed', { method: '_br.listTabs', params: {} });
+// _br.press is a named-key pseudo-method, NOT the raw Input.* lane: the agent
+// sends a key NAME and the extension owns the descriptor. Raw
+// Input.dispatchKeyEvent from the agent stays banned (asserted above).
+allowed('_br.press allowed', { method: '_br.press', params: { key: 'Enter', selector: '#q' } });
+allowed('_br.press without selector allowed', { method: '_br.press', params: { key: 'Escape' } });
+// The relay does not validate the key name -- that is the extension's job, and
+// it is the layer that owns NAMED_KEYS. The relay's contract is only that the
+// pseudo-method itself is on the allowlist.
+refused('_br.pressKey (near-miss name) denied', { method: '_br.pressKey', params: { key: 'Enter' } }, 'allowlist');
 
 // --- allowlist passes, guard still refuses ---------------------------------
 // Order matters: allowlist first, then the URL guard. An allowlisted method
@@ -112,6 +121,9 @@ refused('percent-encoded bypass still refused', {
 ok('navigate is mutating', isMutating('Page.navigate') === true);
 ok('_br.click is mutating', isMutating('_br.click') === true);
 ok('_br.fill is mutating', isMutating('_br.fill') === true);
+// Enter submits forms, so a retry after a mid-flight cutoff must hit the
+// idempotency cache rather than press again.
+ok('_br.press is mutating', isMutating('_br.press') === true);
 ok('snapshot is not mutating', isMutating('_br.snapshot') === false);
 ok('screenshot is not mutating', isMutating('Page.captureScreenshot') === false);
 
