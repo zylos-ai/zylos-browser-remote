@@ -156,6 +156,15 @@ async function connect() {
   sock.onclose = async (event) => {
     connecting = false;
     if (ws === sock) ws = null;
+    // The kill switch closes the socket itself, so this handler runs LAST and
+    // would otherwise overwrite 'disabled' with 'disconnected' -- reporting a
+    // fault for what the owner deliberately did, and leaving a reconnect timer
+    // ticking against a connect() that will only ever bail.
+    const { enabled } = await getConfig();
+    if (!enabled) {
+      await setStatus({ state: 'disabled', code: event.code });
+      return;
+    }
     // 4001 = the relay handed the lane to a newer connection of ours. Not an
     // error, but we still back off rather than race the replacement.
     await setStatus({ state: 'disconnected', code: event.code });
