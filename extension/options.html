@@ -27,11 +27,14 @@
   <h1>Zylos Browser Remote</h1>
 
   <div class="warn">
-    Use a <strong>dedicated Chrome profile</strong>, not your daily one. Any tab you
-    arm here can be driven remotely by the agent. Payment and account-settings pages
-    are refused by this extension regardless of what is asked, and arbitrary
-    JavaScript is never accepted — only structured actions (navigate, click, fill,
-    snapshot, screenshot) on a selector you can see.
+    Use a <strong>dedicated Chrome profile</strong>, not your daily one. Since 0.2.0
+    there is no per-tab arming: the agent drives whichever tab matches the site you
+    asked about — reusing one you already have open, or opening a new one — plus the
+    tabs it opens itself. That is a wider reach than 0.1.x, so the separate profile
+    matters more now, not less. Payment and account-settings pages are still refused
+    by this extension regardless of what is asked, password fields still cannot be
+    typed into, and arbitrary JavaScript is still never accepted — only structured
+    actions (navigate, click, fill, snapshot, screenshot) on a selector you can see.
   </div>
 
   <div class="kill" id="killRow">

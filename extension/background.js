@@ -50,6 +50,16 @@ let connecting = false;
 let backoffAttempt = 0;
 let attachedTabId = null;
 
+// Bumped by every connect() and by every deliberate teardown. A socket's
+// handlers carry the generation they were created in and go inert the moment
+// it no longer matches, because close() is asynchronous: saving settings,
+// pressing reconnect and re-arming the kill switch all close the old socket
+// and dial immediately, so the old onclose otherwise lands AFTER the new
+// socket is open and overwrites 'connected' with 'disconnected' -- which
+// leaves the panel reporting a fault, and its composer locked, over a
+// connection that is in fact live.
+let wsGen = 0;
+
 // ------------------------------------------------------------------ settings
 
 async function getConfig() {
@@ -76,9 +86,20 @@ async function getSessionId() {
   return minted;
 }
 
-async function setStatus(patch) {
-  const prev = (await chrome.storage.local.get('status')).status || {};
-  await chrome.storage.local.set({ status: { ...prev, ...patch, at: Date.now() } });
+// Serialises the read-modify-write below. Without it two concurrent patches
+// both read the same `prev` and the later write silently drops the earlier
+// one's fields -- which is how flipping the kill switch could leave the status
+// reading 'connected': detachAll('kill switch') and the 'disabled' write raced,
+// and the stale snapshot won. Chained rather than locked, so callers keep their
+// ordering and a rejected write cannot wedge the queue.
+let statusWrites = Promise.resolve();
+
+function setStatus(patch) {
+  statusWrites = statusWrites.then(async () => {
+    const prev = (await chrome.storage.local.get('status')).status || {};
+    await chrome.storage.local.set({ status: { ...prev, ...patch, at: Date.now() } });
+  }).catch(() => { /* storage gone: the next patch re-reads and recovers */ });
+  return statusWrites;
 }
 
 // ------------------------------------------------------------------ tab reporting
@@ -141,6 +162,7 @@ async function connect() {
     await setStatus({ state: 'unconfigured' });
     return;
   }
+  const gen = ++wsGen;
   connecting = true;
   await setStatus({ state: 'connecting' });
 
@@ -150,6 +172,7 @@ async function connect() {
     // echoes back only the non-secret protocol name.
     sock = new WebSocket(relayUrl, [SUBPROTOCOL, `token.${token}`]);
   } catch (err) {
+    if (gen !== wsGen) return;
     connecting = false;
     backoffAttempt += 1;
     await setStatus({ state: 'error', error: String(err.message || err) });
@@ -158,6 +181,9 @@ async function connect() {
   }
 
   sock.onopen = async () => {
+    // Superseded before it finished dialling: close it rather than let two
+    // sockets race for the lane, and say nothing about connection state.
+    if (gen !== wsGen) { try { sock.close(1000, 'superseded'); } catch { /* already closing */ } return; }
     connecting = false;
     backoffAttempt = 0;
     ws = sock;
@@ -168,6 +194,10 @@ async function connect() {
   sock.onmessage = (event) => { void handleFrame(sock, event.data); };
 
   sock.onclose = async (event) => {
+    // A superseded socket is inert: it must not clear the live attempt's
+    // `connecting` flag, rewrite its status, bump the backoff, or schedule a
+    // second reconnect on top of the one already in flight.
+    if (gen !== wsGen) return;
     connecting = false;
     if (ws === sock) ws = null;
     // The kill switch closes the socket itself, so this handler runs LAST and
@@ -187,9 +217,24 @@ async function connect() {
   };
 
   sock.onerror = async () => {
+    if (gen !== wsGen) return;
     // onclose always follows; record the signal and let it drive the reconnect.
     await setStatus({ state: 'error', error: 'socket error' });
   };
+}
+
+/**
+ * Close the current socket and retire it.
+ *
+ * Bumping the generation is the point: it makes the outgoing socket's
+ * handlers inert before close() has even finished, so whatever we do next --
+ * dial again, or deliberately stay down -- owns the reported state alone.
+ */
+function closeSocket(reason) {
+  wsGen += 1;
+  connecting = false;
+  try { ws?.close(1000, reason); } catch { /* already closed or closing */ }
+  ws = null;
 }
 
 function scheduleReconnect() {
@@ -420,8 +465,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     'panel.clearFinished': () => clearFinished(),
     'panel.saveSettings': async () => {
       await chrome.storage.local.set({ relayUrl: msg.relayUrl, token: msg.token });
-      try { ws?.close(1000, 'settings changed'); } catch { /* not open */ }
-      ws = null;
+      closeSocket('settings changed');
       backoffAttempt = 0;
       await connect();
       return { saved: true };
@@ -502,8 +546,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.enabled) {
     if (changes.enabled.newValue === false) {
       void detachAll('kill switch');
-      try { ws?.close(1000, 'disabled by owner'); } catch { /* noop */ }
-      ws = null;
+      closeSocket('disabled by owner');
       void setStatus({ state: 'disabled' });
     } else {
       backoffAttempt = 0;
@@ -533,8 +576,7 @@ chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true })
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === 'reconnect') {
     backoffAttempt = 0;
-    try { ws?.close(1000, 'reconnect requested'); } catch { /* noop */ }
-    ws = null;
+    closeSocket('reconnect requested');
     void connect();
     sendResponse({ ok: true });
     return true;

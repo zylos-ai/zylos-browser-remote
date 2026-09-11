@@ -101,12 +101,20 @@ These must be added to **both** `relay/chokepoint.js` and `extension/policy.js`
 
 | Method | Params | Behaviour |
 |---|---|---|
-| `_br.openTarget` | `{url}` | Resolve a tab for `url`: an existing tab whose **origin** matches wins (active tab preferred), else create one. Group it, set state `working`, attach the debugger. Returns `{tabId, url, title, reused: bool, groupId}`. Refuses via the existing guard/`tabAttachAllowed` before touching anything. |
+| `_br.openTarget` | `{url}` | Resolve a tab for `url`: an existing tab whose **origin** matches wins (active tab preferred), else create one. Set state `working` and attach the debugger. Returns `{tabId, url, title, reused: bool, groupId}`. Refuses via the existing guard/`tabAttachAllowed` before touching anything. |
 | `_br.setState` | `{state}` | `working`\|`waiting`\|`stopped`. Recolours the group (green/yellow/grey) and retitles it. `stopped` also detaches CDP. |
 | `_br.endTask` | `{}` | Detach CDP, set the group grey/已停止, clear the active task tab. Tabs and groups are left on screen. |
 | `_br.clearFinished` | `{}` | Ungroup grey ("已停止") Zylos groups. **Never closes tabs.** |
 
 Tab-group colours are Chrome's named colours: `green`, `yellow`, `grey`.
+
+**Only tabs we created are grouped** (`extension/session.js`). A *reused* tab is
+driven where it sits: grouping it would move it in the owner's tab strip, and
+tab groups are his UI, not ours. The consequence is deliberate but worth stating
+plainly — **on a reused tab there is no colour signal**, and `_br.setState` has
+no group to recolour (it returns `groupId: null`). What still marks a reused tab
+as driven is Chrome's own "being debugged" banner, which appears on attach and
+disappears when the task ends.
 
 ## Ownership of files (do not cross these lines)
 

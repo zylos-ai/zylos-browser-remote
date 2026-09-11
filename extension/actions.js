@@ -28,7 +28,10 @@
 
 import { isBlockedUrl } from './guard.js';
 
-export const VERSION = '0.1.0';
+// Kept in step with manifest.json by hand. It is what `hello` and `_br.info`
+// report, so it is also how the relay log tells us whether a browser is
+// running the reloaded extension or still the pre-side-panel one.
+export const VERSION = '0.2.0';
 
 export const CAPABILITIES = [
   '_br.info',
