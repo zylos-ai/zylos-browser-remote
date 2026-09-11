@@ -7,7 +7,7 @@
   "type": "commonjs",
   "scripts": {
     "start": "node relay/server.js",
-    "test": "node tools/test-guard.js && node tools/test-chokepoint.js",
+    "test": "node tools/test-guard.js && node tools/test-chokepoint.js && node tools/check-guard-sync.js",
     "test:guard-sync": "node tools/check-guard-sync.js",
     "smoke": "node tools/smoke.js"
   },

@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Zylos Browser Remote settings</title>
+  <style>
+    body { font: 14px/1.5 system-ui, sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; }
+    h1 { font-size: 18px; }
+    h2 { font-size: 15px; margin-top: 26px; }
+    label { display: block; margin: 14px 0 4px; font-weight: 600; }
+    input[type=text], input[type=password] { width: 100%; padding: 8px; box-sizing: border-box; font-family: ui-monospace, monospace; }
+    button { padding: 8px 14px; margin-right: 8px; cursor: pointer; }
+    .hint { color: #666; font-size: 12px; margin-top: 4px; }
+    .status { margin: 16px 0; padding: 10px 12px; border-radius: 6px; background: #f3f4f6; font-family: ui-monospace, monospace; font-size: 12px; white-space: pre-wrap; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+    td, th { text-align: left; padding: 6px 4px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+    .url { color: #666; font-size: 11px; word-break: break-all; }
+    .armed { background: #ecfdf5; }
+    .warn { background: #fef3c7; padding: 10px 12px; border-radius: 6px; margin: 16px 0; font-size: 13px; }
+    .kill { display: flex; align-items: center; gap: 10px; margin: 18px 0; padding: 10px 12px;
+            border: 1px solid #e5e7eb; border-radius: 6px; }
+    .kill.off { background: #fee2e2; border-color: #fca5a5; }
+    .kill input { width: 18px; height: 18px; }
+  </style>
+</head>
+<body>
+  <h1>Zylos Browser Remote</h1>
+
+  <div class="warn">
+    Use a <strong>dedicated Chrome profile</strong>, not your daily one. Any tab you
+    arm here can be driven remotely by the agent. Payment and account-settings pages
+    are refused by this extension regardless of what is asked, and arbitrary
+    JavaScript is never accepted — only structured actions (navigate, click, fill,
+    snapshot, screenshot) on a selector you can see.
+  </div>
+
+  <div class="kill" id="killRow">
+    <input id="enabled" type="checkbox">
+    <label for="enabled" style="margin:0">Remote control enabled</label>
+    <span class="hint" id="killHint" style="margin:0"></span>
+  </div>
+
+  <label for="relayUrl">Relay URL</label>
+  <input id="relayUrl" type="text" placeholder="wss://&lt;agent-domain&gt;/browser-remote/ext" autocomplete="off">
+  <div class="hint">
+    Ask the agent for its current domain — it is assigned by the platform and can
+    change, so it is never hardcoded here. The path is always
+    <code>/browser-remote/ext</code>. Over a tailnet instead, use
+    <code>ws://&lt;tailnet-host&gt;:3802/ext</code>.
+  </div>
+
+  <label for="token">Token</label>
+  <input id="token" type="password" placeholder="64 hex characters" autocomplete="off">
+  <div class="hint">Shared secret from the relay. Stored in this profile's local extension storage.</div>
+
+  <p style="margin-top:18px">
+    <button id="save">Save &amp; reconnect</button>
+    <button id="refresh">Refresh status</button>
+  </p>
+
+  <div class="status" id="status">loading…</div>
+
+  <h2>Arm a tab</h2>
+  <div class="hint">
+    Exactly one tab is drivable at a time, and nothing is driven until you arm it.
+    Disarming takes effect immediately — the agent's next command is refused.
+  </div>
+  <table id="tabs"><tbody></tbody></table>
+
+  <script src="options.js" type="module"></script>
+</body>
+</html>

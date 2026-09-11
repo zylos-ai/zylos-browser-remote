@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Zylos Browser Remote",
+  "version": "0.1.0",
+  "description": "Dials out to the Zylos relay and drives one tab you explicitly arm. Payment and account-settings pages are refused regardless of what is asked.",
+  "permissions": [
+    "debugger",
+    "tabs",
+    "storage",
+    "alarms",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "options_page": "options.html",
+  "action": {
+    "default_title": "Zylos Browser Remote: open options"
+  }
+}
