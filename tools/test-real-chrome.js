@@ -518,4 +518,11 @@ async function main() {
   process.exit(0);
 }
 
-main();
+if (require.main === module) main();
+
+// Exported for tools/live-bilibili.js, which drives a REAL public site with the
+// same launch/attach/arm machinery instead of the local fixture.
+module.exports = {
+  findChrome, startXvfb, launchChrome, devtoolsEndpoint,
+  Cdp, attachToWorker, evalInWorker, getJson, waitFor, sleep, cdpCall,
+};
