@@ -1,19 +1,20 @@
 {
   "name": "zylos-browser-remote",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Remote-browser relay: drives a Chrome MV3 extension on the owner's machine over a standard CDP surface exposed only on loopback",
+  "description": "Thin relay between the Coco browser extension (in the owner's Chrome) and a Zylos agent: key-authed WebSocket ingress, loopback /rpc + /chat, C4 hop. No browser logic lives here.",
   "main": "relay/server.js",
   "type": "commonjs",
   "scripts": {
     "start": "node relay/server.js",
-    "test": "node tools/test-guard.js && node tools/test-chokepoint.js && node tools/check-guard-sync.js && node tools/test-extension.js && node tools/test-handshake-race.js && node tools/test-chat-bridge.js && node tools/test-sidepanel.js",
-    "test:guard-sync": "node tools/check-guard-sync.js",
-    "test:extension": "node tools/test-extension.js",
-    "test:chrome": "node tools/test-real-chrome.js",
-    "smoke": "node tools/smoke.js"
+    "test": "node tools/smoke.js && node tools/test-cli.js",
+    "smoke": "node tools/smoke.js",
+    "key": "node scripts/key.js"
   },
   "dependencies": {
     "ws": "^8.18.0"
+  },
+  "bin": {
+    "zylos-browser": "scripts/browser.js"
   }
 }

@@ -1,209 +1,233 @@
 'use strict';
 /*
- * End-to-end smoke test: a fake extension on the ext lane, a stock-shaped CDP
- * client on the agent lane, and the real relay in between. No Chrome, no
- * network beyond loopback.
+ * Loopback round trip against a FAKE extension: proves the relay is a pipe.
+ *
+ *   bad key         -> 401
+ *   good key        -> connected, hello recorded in /status
+ *   POST /rpc       -> extension sees {type:'req', method, params, requestId}, answer comes back
+ *   ext error frame -> 200 {ok:false, code}
+ *   timeout         -> 504 EXT_TIMEOUT
+ *   offline         -> 503 EXT_OFFLINE, unknown keyId -> 404
+ *   two extensions  -> omitted endpoint -> 400 AMBIGUOUS_ENDPOINT; explicit works
+ *   ext chat        -> c4-receive stub called with --channel browser-remote --endpoint <keyId>
+ *   POST /chat      -> extension receives {type:'chat', role:'assistant'}
+ *   reconnect       -> old socket closed 4001, in-flight request fails EXT_OFFLINE
  *
  * Run: node tools/smoke.js
  */
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const http = require('http');
+const assert = require('assert');
 const WebSocket = require('ws');
+
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'br-smoke-'));
+const keysPath = path.join(tmp, 'keys.json');
+const c4Log = path.join(tmp, 'c4.jsonl');
+const c4Stub = path.join(tmp, 'c4-receive-stub.js');
+fs.writeFileSync(c4Stub, `
+  require('fs').appendFileSync(${JSON.stringify(c4Log)}, JSON.stringify(process.argv.slice(2)) + '\\n');
+`);
+process.env.BROWSER_REMOTE_KEYS_FILE = keysPath;
+process.env.ZYLOS_C4_RECEIVE = c4Stub;
+delete process.env.BROWSER_REMOTE_KEY;
+
 const { start } = require('../relay/server');
 const { SUBPROTOCOL } = require('../relay/ext-lane');
-const { LocalRelayProvider } = require('../relay/providers/local-relay-provider');
+const { newKey, keyIdOf } = require('../relay/keys');
 
-const TOKEN = 'smoke-token-not-a-secret';
-const EXT_PORT = 3902;            // deliberately NOT 3802/3803: never collide with a live relay
-const AGENT_PORT = 3903;
-const BASE = `http://127.0.0.1:${AGENT_PORT}`;
-
-let pass = 0;
-const failures = [];
-function ok(name, cond, detail = '') {
-  if (cond) { pass++; console.log(`  ok  ${name}`); return; }
-  failures.push(`${name}${detail ? ` -- ${detail}` : ''}`);
-  console.log(`  FAIL ${name}${detail ? ` -- ${detail}` : ''}`);
+let passed = 0;
+function ok(cond, msg) {
+  assert(cond, msg);
+  passed++;
+  console.log('  ok', msg);
 }
 
-// --- fake extension --------------------------------------------------------
+function post(port, p, body) {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const req = http.request({ host: '127.0.0.1', port, path: p, method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) } }, (res) => {
+      let b = '';
+      res.on('data', (c) => (b += c));
+      res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(b) }));
+    });
+    req.on('error', reject);
+    req.end(data);
+  });
+}
+function get(port, p) {
+  return new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: p }, (res) => {
+      let b = '';
+      res.on('data', (c) => (b += c));
+      res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(b) }));
+    }).on('error', reject);
+  });
+}
 
-const TABS = [{ id: 42, url: 'https://example.com/docs', title: 'Docs' }];
-
-function fakeExtension({ token = TOKEN } = {}) {
-  const ws = new WebSocket(`ws://127.0.0.1:${EXT_PORT}/ext`, [SUBPROTOCOL, `token.${token}`]);
-  const seen = { attach: 0, detach: 0, leaseLost: 0, pings: 0, methods: [] };
-  ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', version: '0.1.0', capabilities: ['_br.snapshot'], tabs: TABS })));
-  ws.on('message', (raw) => {
-    const msg = JSON.parse(raw.toString());
-    if (msg.type === 'ping') { seen.pings++; return ws.send(JSON.stringify({ type: 'pong' })); }
-    if (msg.type === 'lease-lost') { seen.leaseLost++; return; }
-    if (msg.type === 'attach') { seen.attach++; return ws.send(JSON.stringify({ id: msg.id, type: 'resp', result: { attached: msg.tabId } })); }
-    if (msg.type === 'detach') { seen.detach++; return ws.send(JSON.stringify({ id: msg.id, type: 'resp', result: {} })); }
-    if (msg.type === 'req') {
-      seen.methods.push(msg.method);
-      // Echo enough to prove the frame arrived intact and post-chokepoint.
-      return ws.send(JSON.stringify({ id: msg.id, type: 'resp', result: { echoed: msg.method, params: msg.params, tabId: msg.tabId } }));
+/** Minimal extension: answers `req` via a handler, records everything. */
+function fakeExt(port, key, { version = '9.9.9', handler } = {}) {
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/ext`, [SUBPROTOCOL, `key.${key}`]);
+  const ext = { ws, frames: [], closeCode: null, open: new Promise((res, rej) => { ws.on('open', res); ws.on('error', rej); }) };
+  ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', version, capabilities: ['navigate', 'snapshot'] })));
+  ws.on('close', (code) => { ext.closeCode = code; });
+  ws.on('message', async (raw) => {
+    const m = JSON.parse(raw.toString());
+    ext.frames.push(m);
+    if (m.type === 'ping') ws.send(JSON.stringify({ type: 'pong', ts: m.ts }));
+    if (m.type === 'req' && handler) {
+      const out = await handler(m);
+      if (out) ws.send(JSON.stringify({ id: m.id, ...out }));
     }
   });
-  return { ws, seen };
+  ext.waitFor = (pred, ms = 2000) => new Promise((res, rej) => {
+    const t0 = Date.now();
+    const tick = () => {
+      const hit = ext.frames.find(pred);
+      if (hit) return res(hit);
+      if (Date.now() - t0 > ms) return rej(new Error('frame not seen'));
+      setTimeout(tick, 10);
+    };
+    tick();
+  });
+  return ext;
 }
 
-// --- fake CDP client -------------------------------------------------------
-
-function cdpClient(url) {
-  const ws = new WebSocket(url);
-  const waiters = new Map();
-  let id = 0;
-  const ready = new Promise((resolve, reject) => {
-    ws.once('open', resolve);
-    ws.once('error', reject);
+function expectUpgradeStatus(port, protocols) {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ext`, protocols);
+    ws.on('unexpected-response', (_req, res) => { resolve(res.statusCode); ws.terminate(); });
+    ws.on('open', () => { resolve(101); ws.close(); });
+    ws.on('error', () => {});
   });
-  // Cases below connect on purpose expecting a rejected handshake; mark the
-  // promise handled so a deliberate failure is not an unhandled rejection.
-  ready.catch(() => {});
-  ws.on('message', (raw) => {
-    const msg = JSON.parse(raw.toString());
-    const w = waiters.get(msg.id);
-    if (w) { waiters.delete(msg.id); w(msg); }
-  });
-  return {
-    ws,
-    ready,
-    send(method, params) {
-      const mid = ++id;
-      return new Promise((resolve) => {
-        waiters.set(mid, resolve);
-        ws.send(JSON.stringify({ id: mid, method, params: params || {} }));
-      });
-    },
-    closed: new Promise((resolve) => ws.once('close', (code) => resolve(code))),
-  };
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// --- run -------------------------------------------------------------------
-
 (async () => {
-  const relay = await start({ token: TOKEN, extPort: EXT_PORT, agentPort: AGENT_PORT });
+  const relay = await start({ extPort: 0, agentPort: 0 });
+  const extPort = relay.ext.server.address().port;
+  const agentPort = relay.agent.server.address().port;
 
-  // 1. bad token is rejected at the upgrade
-  await new Promise((resolve) => {
-    const bad = new WebSocket(`ws://127.0.0.1:${EXT_PORT}/ext`, [SUBPROTOCOL, 'token.wrong']);
-    bad.on('open', () => { ok('bad token rejected', false, 'connection opened'); bad.close(); resolve(); });
-    bad.on('error', (err) => { ok('bad token rejected', /401/.test(err.message), err.message); resolve(); });
+  const a = newKey({ label: 'alpha' });
+  const b = newKey({ label: 'beta' });
+  ok(a.keyId === keyIdOf(a.key) && a.keyId.length === 12, 'keyId is 12-hex sha256 prefix');
+  ok(!fs.readFileSync(keysPath, 'utf8').includes(a.key), 'keys.json stores digests, never the key');
+
+  console.log('-- auth');
+  ok((await expectUpgradeStatus(extPort, [SUBPROTOCOL, 'key.deadbeefdeadbeefdeadbeef'])) === 401, 'bad key -> 401');
+  ok((await expectUpgradeStatus(extPort, [SUBPROTOCOL])) === 401, 'no key -> 401');
+  ok((await expectUpgradeStatus(extPort, ['zylos-browser-remote.v1', `key.${a.key}`])) === 401, 'old subprotocol -> 401');
+
+  console.log('-- rpc');
+  const seen = [];
+  const extA = fakeExt(extPort, a.key, {
+    handler: async (m) => {
+      seen.push(m);
+      if (m.method === 'navigate') return { type: 'resp', result: { url: m.params.url, settled: true } };
+      if (m.method === 'click') return { type: 'error', code: 'BLOCKED_URL', message: 'payment host', details: { host: 'pay.example' } };
+      if (m.method === 'hang') return null;
+      return { type: 'resp', result: { echo: m.method } };
+    },
   });
-
-  // 2. wrong path on the public lane is refused (it is the ONE public surface)
-  await new Promise((resolve) => {
-    const wrong = new WebSocket(`ws://127.0.0.1:${EXT_PORT}/devtools/page/x`, [SUBPROTOCOL, `token.${TOKEN}`]);
-    wrong.on('open', () => { ok('non-/ext path refused on public lane', false, 'opened'); wrong.close(); resolve(); });
-    wrong.on('error', (err) => { ok('non-/ext path refused on public lane', /404/.test(err.message), err.message); resolve(); });
-  });
-
-  // 3. no extension yet -> no targets, lease refused
-  const emptyTargets = await (await fetch(`${BASE}/json/list`)).json();
-  ok('no targets without an extension', Array.isArray(emptyTargets) && emptyTargets.length === 0);
-  const noExt = await fetch(`${BASE}/lease`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
-  ok('lease refused without an extension', noExt.status === 503);
-
-  // 4. extension connects
-  const ext = fakeExtension();
-  await new Promise((resolve) => ext.ws.once('open', resolve));
+  await extA.open;
   await sleep(50);
-  const status = await (await fetch(`${BASE}/status`)).json();
-  ok('status reports extension connected', status.extension.connected === true, JSON.stringify(status.extension));
+  const st = await get(agentPort, '/status');
+  ok(st.body.extensions[a.keyId] && st.body.extensions[a.keyId].version === '9.9.9', '/status shows connected extension with hello version');
+  ok(st.body.extensions[a.keyId].label === 'alpha', '/status carries key label');
 
-  // 5. provider hands back a lease
-  const provider = new LocalRelayProvider({ baseUrl: BASE });
-  const lease = await provider.acquire({ ttl: 60_000 });
-  ok('lease has an id and a cdpUrl', Boolean(lease.leaseId) && /^ws:\/\/127\.0\.0\.1:/.test(lease.cdpUrl), lease.cdpUrl);
-  ok('lease targets the reported tab', lease.tabId === 42, String(lease.tabId));
+  let r = await post(agentPort, '/rpc', { method: 'navigate', params: { url: 'https://example.com' }, requestId: 'req-1' });
+  ok(r.status === 200 && r.body.ok === true && r.body.result.settled === true, '/rpc forwards and returns result');
+  ok(r.body.endpoint === a.keyId, '/rpc echoes resolved endpoint');
+  const fwd = seen.find((m) => m.method === 'navigate');
+  ok(fwd.type === 'req' && fwd.requestId === 'req-1' && typeof fwd.deadline === 'number', 'extension saw req with requestId + deadline');
+  ok(fwd.params.url === 'https://example.com', 'params forwarded verbatim');
 
-  // 6. second acquire is refused while one is live (one real browser, one driver)
-  let doubleRefused = false;
-  try { await provider.acquire({}); } catch (err) { doubleRefused = /already active/.test(err.message); }
-  ok('second lease refused while one is active', doubleRefused);
+  r = await post(agentPort, '/rpc', { method: 'click', params: { selector: 'a' } });
+  ok(r.status === 200 && r.body.ok === false && r.body.code === 'BLOCKED_URL' && r.body.details.host === 'pay.example', 'extension error -> 200 ok:false with code/details');
 
-  // 7. a stock-shaped CDP client attaches and drives
-  const client = cdpClient(lease.cdpUrl);
-  await client.ready;
+  r = await post(agentPort, '/rpc', { method: 'Runtime.evaluate', params: {} });
+  ok(r.status === 200 && r.body.ok === true && r.body.result.echo === 'Runtime.evaluate', 'relay has no allowlist: unknown methods pass through (policy is the extension\'s)');
+
+  r = await post(agentPort, '/rpc', { method: 'hang', timeoutMs: 1000 });
+  ok(r.status === 504 && r.body.code === 'EXT_TIMEOUT', 'unanswered request -> 504 EXT_TIMEOUT');
+
+  r = await post(agentPort, '/rpc', { method: 'bad method!' });
+  ok(r.status === 400 && r.body.code === 'BAD_REQUEST', 'malformed method -> 400');
+  r = await post(agentPort, '/rpc', { method: 'x', params: [1] });
+  ok(r.status === 400, 'array params -> 400');
+  r = await post(agentPort, '/rpc', { method: 'x', endpoint: 'ZZZ' });
+  ok(r.status === 400 && r.body.code === 'BAD_ENDPOINT', 'malformed endpoint -> 400');
+  r = await post(agentPort, '/rpc', { method: 'x', endpoint: '000000000000' });
+  ok(r.status === 404 && r.body.code === 'UNKNOWN_ENDPOINT', 'unknown keyId -> 404');
+  r = await post(agentPort, '/rpc', { method: 'x', endpoint: b.keyId });
+  ok(r.status === 503 && r.body.code === 'EXT_OFFLINE', 'known but disconnected keyId -> 503');
+
+  console.log('-- two extensions');
+  const extB = fakeExt(extPort, b.key, { handler: async () => ({ type: 'resp', result: { who: 'beta' } }) });
+  await extB.open;
   await sleep(50);
-  ok('extension was told to attach', ext.seen.attach === 1, String(ext.seen.attach));
-
-  const nav = await client.send('Page.navigate', { url: 'https://example.com/docs/intro' });
-  ok('Page.navigate reaches the extension', nav.result && nav.result.echoed === 'Page.navigate', JSON.stringify(nav));
-
-  const snap = await client.send('_br.snapshot', {});
-  ok('_br.snapshot reaches the extension', snap.result && snap.result.echoed === '_br.snapshot');
-
-  // 8. the chokepoint holds on the live path, not just in unit tests
-  const evil = await client.send('Runtime.evaluate', { expression: '1+1' });
-  ok('Runtime.evaluate refused on the wire', Boolean(evil.error) && /banned/.test(evil.error.message), JSON.stringify(evil));
-
-  const pay = await client.send('Page.navigate', { url: 'https://shop.example.com/checkout' });
-  ok('blocklisted URL refused on the wire', Boolean(pay.error) && /blocklisted/.test(pay.error.message), JSON.stringify(pay));
-
-  const unknown = await client.send('Emulation.setDeviceMetricsOverride', {});
-  ok('unknown method refused on the wire', Boolean(unknown.error) && unknown.error.code === -32601);
-
-  ok('refused frames never reached the extension',
-     ext.seen.methods.every((m) => m === 'Page.navigate' || m === '_br.snapshot'),
-     ext.seen.methods.join(','));
-
-  // 9. idempotency: a retry replays instead of re-navigating
-  const key = 'smoke-key-1';
-  const first = await client.send('_br.navigate', { url: 'https://example.com/a', __idempotencyKey: key });
-  const retry = await client.send('_br.navigate', { url: 'https://example.com/a', __idempotencyKey: key });
-  ok('idempotent retry is replayed', retry.result && retry.result.replayed === true, JSON.stringify(retry));
-  ok('idempotent retry did not re-reach the extension',
-     ext.seen.methods.filter((m) => m === '_br.navigate').length === 1,
-     ext.seen.methods.join(','));
-  ok('first call was not marked replayed', first.result && first.result.replayed === undefined);
-
-  // 10. revoking the lease tears down both sides
-  const revoked = await lease.revoke();
-  const closeCode = await client.closed;
+  r = await post(agentPort, '/rpc', { method: 'info' });
+  ok(r.status === 400 && r.body.code === 'AMBIGUOUS_ENDPOINT', 'two connected + no endpoint -> 400 AMBIGUOUS_ENDPOINT');
+  r = await post(agentPort, '/rpc', { method: 'info', endpoint: b.keyId });
+  ok(r.body.ok && r.body.result.who === 'beta', 'explicit endpoint routes to the right extension');
+  r = await post(agentPort, '/chat', { endpoint: b.keyId, text: '你好 beta' });
+  ok(r.status === 200 && r.body.delivered, 'POST /chat with endpoint delivered');
+  const chatB = await extB.waitFor((m) => m.type === 'chat');
+  ok(chatB.role === 'assistant' && chatB.text === '你好 beta', 'extension B received the chat frame');
+  ok(!extA.frames.some((m) => m.type === 'chat'), 'extension A did not');
+  extB.ws.close();
   await sleep(50);
-  ok('revoke reported ok', revoked === true);
-  ok('agent socket closed on revoke', closeCode === 4003, String(closeCode));
-  ok('extension told the lease is gone', ext.seen.leaseLost === 1, String(ext.seen.leaseLost));
-  ok('extension told to detach', ext.seen.detach === 1, String(ext.seen.detach));
 
-  // 11. attaching to a dead lease is refused
-  const gone = cdpClient(lease.cdpUrl);
-  await new Promise((resolve) => {
-    gone.ws.on('open', () => { ok('dead lease rejected', false, 'opened'); resolve(); });
-    gone.ws.on('error', (err) => { ok('dead lease rejected', /410/.test(err.message), err.message); resolve(); });
-  });
+  console.log('-- chat ingress -> C4');
+  extA.ws.send(JSON.stringify({ type: 'chat', text: '帮我搜蜘蛛侠 "quoted" $(rm -rf) ; done', ts: Date.now() }));
+  await sleep(400);
+  const calls = fs.readFileSync(c4Log, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  ok(calls.length === 1, 'c4-receive stub spawned once');
+  const argv = calls[0];
+  ok(argv[argv.indexOf('--channel') + 1] === 'browser-remote', '--channel browser-remote');
+  ok(argv[argv.indexOf('--endpoint') + 1] === a.keyId, '--endpoint is the keyId');
+  ok(argv[argv.indexOf('--content') + 1] === '[Browser] 帮我搜蜘蛛侠 "quoted" $(rm -rf) ; done', 'content prefixed, otherwise verbatim (single argv, no shell)');
 
-  // 12. /json/list mints a lease for a stock client that knows nothing else
-  const targets = await (await fetch(`${BASE}/json/list`)).json();
-  ok('/json/list auto-mints a target', targets.length === 1 && /devtools\/page\//.test(targets[0].webSocketDebuggerUrl));
-  ok('/json/list reports the real tab url', targets[0].url === 'https://example.com/docs', targets[0].url);
-  const version = await (await fetch(`${BASE}/json/version`)).json();
-  ok('/json/version is Chrome-shaped', version['Protocol-Version'] === '1.3');
+  extA.ws.send(JSON.stringify({ type: 'chat', text: 'x'.repeat(8001), ts: Date.now() }));
+  const refused = await extA.waitFor((m) => m.type === 'chat-status');
+  ok(/too long/.test(refused.error), 'over-cap chat refused loudly, not truncated');
+  extA.ws.send(JSON.stringify({ type: 'chat', text: '', ts: Date.now() }));
+  await sleep(100);
+  ok(fs.readFileSync(c4Log, 'utf8').trim().split('\n').length === 1, 'refused chats never reach C4');
 
-  // 13. lease expiry closes the socket without anyone asking
-  const shortRaw = await (await fetch(`${BASE}/lease/${targets[0].id}`, { method: 'DELETE' })).json();
-  ok('auto-minted lease revocable', shortRaw.ok === true);
-  // Long enough to attach while it is alive; the sweeper (5s) then closes it
-  // without anyone asking, which is the property under test.
-  const short = await provider.acquire({ ttl: 1200 });
-  const shortClient = cdpClient(short.cdpUrl);
-  await shortClient.ready;
-  const shortClosed = await Promise.race([shortClient.closed, sleep(12_000).then(() => 'timeout')]);
-  ok('expired lease closes the agent socket unprompted', shortClosed === 4003, String(shortClosed));
+  console.log('-- reconnect supersedes');
+  const hangP = post(agentPort, '/rpc', { method: 'hang', timeoutMs: 5000 });
+  await extA.waitFor((m) => m.method === 'hang' && m.type === 'req' && m.id > 3);
+  const extA2 = fakeExt(extPort, a.key, { handler: async () => ({ type: 'resp', result: { gen: 2 } }) });
+  await extA2.open;
+  const hung = await hangP;
+  ok(hung.status === 503 && hung.body.code === 'EXT_OFFLINE', 'in-flight request fails fast when the extension reconnects');
+  await sleep(50);
+  ok(extA.closeCode === 4001, 'old socket closed with 4001');
+  r = await post(agentPort, '/rpc', { method: 'info' });
+  ok(r.body.ok && r.body.result.gen === 2, 'new socket serves requests');
+
+  console.log('-- offline');
+  extA2.ws.close();
+  await sleep(50);
+  r = await post(agentPort, '/rpc', { method: 'info' });
+  ok(r.status === 503 && r.body.code === 'EXT_OFFLINE', 'no extension -> 503 EXT_OFFLINE');
+  r = await post(agentPort, '/chat', { text: 'hi' });
+  ok(r.status === 503, '/chat with no extension -> 503');
+
+  console.log('-- public lane exposes only /ext');
+  const probe = await new Promise((res) => http.get({ host: '127.0.0.1', port: extPort, path: '/rpc' }, (resp) => res(resp.statusCode)));
+  ok(probe === 426, 'plain HTTP on :3802 -> 426');
+  ok((await expectUpgradeStatus(extPort, [SUBPROTOCOL, `key.${a.key}`])) === 101, 'good key still accepted after all that');
 
   relay.close();
-  ext.ws.close();
-  await sleep(50);
-
-  console.log(failures.length
-    ? `\nsmoke: ${pass} passed, ${failures.length} FAILED`
-    : `\nsmoke: ${pass} assertions passed`);
-  process.exit(failures.length ? 1 : 0);
+  fs.rmSync(tmp, { recursive: true, force: true });
+  console.log(`\nsmoke: ${passed} assertions passed`);
+  process.exit(0);
 })().catch((err) => {
-  console.error('smoke: crashed', err);
+  console.error('\nsmoke FAILED:', err);
   process.exit(1);
 });

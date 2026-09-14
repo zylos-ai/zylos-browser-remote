@@ -1,7 +1,0 @@
-{
-  "name": "zylos-browser-remote-extension",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "_why": "Chrome ignores this file entirely -- an MV3 extension is described by manifest.json. It exists ONLY so Node (whose nearest package.json would otherwise be the repo root's \"type\":\"commonjs\") will import background.js/actions.js/policy.js/guard.js as ESM in tools/test-extension.js. Do not add dependencies here; the extension ships with zero."
-}

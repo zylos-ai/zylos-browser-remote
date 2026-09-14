@@ -1,151 +1,135 @@
-# zylos-browser-remote — protocol
+# zylos-browser-remote — protocol (v2)
 
-Three layers, frozen. Layer 1 is what the agent talks, layer 2 is what the
-extension talks, layer 3 is the seam that lets the transport underneath be
-replaced without either side noticing.
+Two surfaces and one hop. The relay owns the surfaces; it does **not** own the
+meaning of anything that crosses them.
 
 ```
-agent / CDP client                relay                         owner's Chrome
-──────────────────                ─────                         ──────────────
-  layer 1: CDP over WS   ──▶  :3803 agent lane  (loopback only)
-                                    │
-                              chokepoint: allowlist → guard → idempotency
-                                    │
-                              :3802 ext lane  ──▶ wss://<domain>/browser-remote/ext
-                                                        layer 2: ext wire protocol
+agent (scripts/browser.js)          relay                          owner's Chrome
+──────────────────────────          ─────                          ──────────────
+  A. loopback HTTP  ──▶  :3803 agent lane   (127.0.0.1 only)
+                                │  forward verbatim
+                          :3802 ext lane    ──▶ wss://<domain>/browser-remote/ext
+                                                   B. extension wire protocol
+  C. C4 hop: owner chat ──▶ c4-receive.js --channel browser-remote --endpoint <keyId>
+             agent reply ◀── c4-send.js browser-remote <keyId> → scripts/send.js → POST /chat
 ```
 
-Layer 3 (`ConnectionProvider`) sits in front of layer 1: the agent asks a
-provider for a **lease**, and the lease carries the `cdpUrl` it should attach to.
+Everything the earlier design put in the relay — CDP façade, leases, method
+allowlist, URL guard, idempotency — now lives in the extension
+(`zylos-browser-extension`, `remote` build). The relay is trusted with exactly
+one thing: knowing which key is which browser.
 
 ---
 
-## Layer 1 — agent-facing: standard CDP
+## Identity: keys and keyIds
 
-The agent lane binds **127.0.0.1:3803 only** and is never routed by Caddy.
-It mimics enough of Chrome's DevTools HTTP surface that a stock CDP client
-attaches without special-casing.
+A browser joins with `relayUrl + key`. The relay stores `sha256(key)` only
+(`~/zylos/components/browser-remote/keys.json`, managed by `scripts/key.js`), and
+`keyId = sha256(key)[0:12]`. The keyId is:
 
-| Method | Path | Purpose |
+- the map key for the extension's live connection,
+- the `endpoint` the agent passes to `/rpc` and `/chat`,
+- the C4 `--endpoint` on incoming chat and the `<endpoint>` of `c4-send.js`.
+
+One key, one browser, one endpoint. Revoking the key removes all three at the
+next handshake; the file is re-read on every connect.
+
+---
+
+## A. Agent lane — `127.0.0.1:3803`
+
+No auth: the loopback bind is the auth. Bind address is not configurable.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/status` | – | `{ok, extensions:{<keyId>:{connected, label, since, version, capabilities, lastSeenMsAgo, pending}}}` |
+| POST | `/rpc` | `{endpoint?, method, params?, requestId?, timeoutMs?}` | see below |
+| POST | `/chat` | `{endpoint?, text}` | `200 {ok:true, endpoint, delivered:true}` |
+
+`/rpc` responses:
+
+| status | body | meaning |
 |---|---|---|
-| GET | `/json/version` | Chrome-shaped version blob |
-| GET | `/json` , `/json/list` | target list (one page target per active lease) |
-| GET | `/status` | relay health: extension connected?, leases, pending |
-| POST | `/lease` | acquire a lease → `{leaseId, cdpUrl, ttl, expiresAt}` |
-| POST | `/lease/<id>/renew` | extend TTL |
-| DELETE | `/lease/<id>` | revoke early |
-| WS | `/devtools/page/<leaseId>` | the CDP socket |
+| 200 | `{ok:true, endpoint, result}` | extension answered |
+| 200 | `{ok:false, endpoint, code, message, details?}` | extension refused (its code, e.g. `BLOCKED_URL`, `STALE_ELEMENT`) |
+| 400 | `{ok:false, code:'BAD_REQUEST'\|'BAD_ENDPOINT'\|'AMBIGUOUS_ENDPOINT'}` | malformed, or several browsers and no `endpoint` |
+| 404 | `{ok:false, code:'UNKNOWN_ENDPOINT'}` | no such key |
+| 503 | `{ok:false, code:'EXT_OFFLINE'}` | key known, browser not connected |
+| 504 | `{ok:false, code:'EXT_TIMEOUT'}` | no answer within `timeoutMs` (default 30 s, max 120 s) |
 
-`GET /json/list` lazily acquires a lease when none is active and an extension
-is connected, so a stock client that only knows `/json/list` → `webSocketDebuggerUrl`
-works unmodified. That shortcut is safe *because* the lane is loopback-only.
+Relay-side validation is shape only: `method` matches `[A-Za-z][A-Za-z0-9_.:-]{0,127}`,
+`params` is an object if present, `requestId` matches `[A-Za-z0-9._:-]{1,128}`,
+body ≤ 256 KiB. The relay does not know which methods exist.
 
-Frames on the WS are ordinary CDP: `{id, method, params}` in, `{id, result}` or
-`{id, error:{code,message}}` out, plus unsolicited `{method, params}` events.
-
-### Allowed methods (default-deny)
-
-Two families pass the chokepoint; **everything else is refused**, including
-anything merely "read-only looking" that is not listed.
-
-*Real CDP, forwarded to `chrome.debugger` as-is:*
-`Page.enable`, `Page.disable`, `Page.navigate`, `Page.reload`,
-`Page.getNavigationHistory`, `Page.navigateToHistoryEntry`,
-`Page.captureScreenshot`, `Page.bringToFront`, `Page.getFrameTree`
-
-*`_br.*` pseudo-methods, implemented by trusted extension code:*
-`_br.info`, `_br.listTabs`, `_br.snapshot`, `_br.click`, `_br.fill`,
-`_br.press`, `_br.screenshot`, `_br.navigate`, `_br.waitFor`
-
-`_br.press` takes a key **name** — `Enter`, `Tab` or `Escape`, and nothing else.
-The descriptor (code, virtual key code, text) lives in the extension; modifier
-combos are deliberately unavailable, because that is how a keyboard action turns
-into a raw-input lane by degrees. It refuses when nothing is focused, when the
-focused field is a password field, and when the focused field sits in a form
-whose `action` is blocklisted — the one place an Enter's destination is visible.
-
-### Explicitly banned
-
-`Runtime.evaluate` and every other arbitrary-code path (`Runtime.callFunctionOn`,
-`Runtime.compileScript`, `Page.addScriptToEvaluateOnNewDocument`, `Debugger.*`),
-raw input injection (`Input.*`), cookie/credential surfaces (`Network.getAllCookies`,
-`Network.setCookie`, `Storage.*`), and request interception (`Fetch.*`).
-
-This is the extension driving the owner's **real** browser with their real login
-state. Arbitrary JS in that context is equivalent to full account access, and the
-URL guard cannot screen behaviour — only URLs (see `GUARD-REVIEW.md` F1 in
-`cdp-bridge`). So the ban lives at the allowlist layer, above `guard.js`.
-
-Structured actions (`_br.click`, `_br.fill`) take a **selector**, never
-coordinates and never code. The extension resolves the selector itself and
-applies its own copy of the guard to any URL the target would reach.
-
-### P0 scope
-
-Single owner, single tab: `navigate` / `snapshot` / `click` / `fill` /
-`screenshot`. Full Playwright-grade CDP compatibility (sessions, multi-target,
-`Network.*`, `DOM.*` trees) is a LATER milestone and is not faked here.
+`endpoint` may be omitted when exactly one browser is connected.
 
 ---
 
-## Layer 2 — relay ↔ extension wire protocol
+## B. Extension wire protocol — `wss://<domain>/browser-remote/ext`
 
-WebSocket, `ws://127.0.0.1:3802/ext`, reachable from outside only through the
-platform edge at `wss://<agent-domain>/browser-remote/ext`. Every other path on
-:3802 is refused. A leaked public URL lets someone offer to **be** a browser
-(and only with the token); it never lets them drive one.
+Path `/ext` only; every other path on :3802 → 404 on upgrade, 426 on plain HTTP.
+A leaked public URL lets someone offer to **be** a browser (with a key), never
+drive one.
 
-**Auth:** the token rides in `Sec-WebSocket-Protocol` as `token.<hex>` alongside
-the protocol name `zylos-browser-remote.v1`. An MV3 service worker cannot set
-custom headers on a WebSocket, and a subprotocol — unlike `?token=` — is not
-written to every proxy access log on the path. Compared timing-safe over
-SHA-256 digests. Newest authenticated connection supersedes the older one, so a
-reconnect after a dropped socket heals instead of leaving a zombie.
+**Handshake:** `Sec-WebSocket-Protocol: zylos-browser-remote.v2, key.<hex>`.
+An MV3 service worker cannot set custom headers on a WebSocket, and a
+subprotocol — unlike `?key=` — is not written to proxy access logs. Verified as
+`sha256(key)` in constant time. Bad or missing key → `401`. A second connection
+with the same key supersedes the first (close `4001`); anything in flight on the
+old socket fails immediately with `EXT_OFFLINE` rather than after 30 s.
 
 | Direction | Frame | Notes |
 |---|---|---|
-| ext → relay | `{type:'hello', version, capabilities[], tabs[]}` | first frame after connect |
-| relay → ext | `{type:'ping', ts}` / ext → `{type:'pong'}` | 17s app-level heartbeat |
-| relay → ext | `{id, type:'attach', tabId}` | attach `chrome.debugger` to a tab |
-| relay → ext | `{id, type:'detach', tabId}` | release it |
-| relay → ext | `{id, type:'req', method, params, tabId}` | post-chokepoint CDP or `_br.*` |
-| ext → relay | `{id, type:'resp', result}` | success |
-| ext → relay | `{id, type:'error', error}` | failure (string message) |
-| ext → relay | `{type:'event', method, params, tabId}` | CDP event, forwarded to the agent |
-| relay → ext | `{type:'lease-lost', leaseId}` | lease expired/revoked → ext detaches |
+| ext → relay | `{type:'hello', version, capabilities[]}` | first frame; shown in `/status` |
+| relay → ext | `{type:'ping', ts}` / ext → relay `{type:'pong', ts}` | 17 s heartbeat; missed pong → terminate. Doubles as the MV3 service-worker keepalive |
+| relay → ext | `{id, type:'req', method, params, requestId?, deadline}` | verbatim from `/rpc`; `deadline` = epoch ms |
+| ext → relay | `{id, type:'resp', result}` | |
+| ext → relay | `{id, type:'error', code, message, details?}` | `code` is the extension's string code; missing → `EXT_ERROR` |
+| ext → relay | `{type:'chat', text, ts}` | owner typed in the side panel; text ≤ 8000 chars, else refused (never truncated) |
+| relay → ext | `{type:'chat', role:'assistant', text, ts}` | agent's reply from `/chat` |
+| relay → ext | `{type:'chat-status', state, error}` | only on refusal of an owner message |
 
-The heartbeat stays in the protocol even though the edge WS-cutoff probe was
-cancelled ("就当它是通的"): it is free, it doubles as the MV3 service-worker
-keepalive (Chrome 116+ resets the idle timer on WS activity), and it avoids
-rework if the edge turns out to cut long-lived sockets after all.
+Removed from v1: `state`, `attach`, `detach`, `event`, `lease-lost`, `sessionId`.
+The extension attaches `chrome.debugger` itself per task and never streams CDP
+events out.
 
-Commands time out after 30s. An `idempotencyKey` on a mutating `_br.*` request
-is remembered in a 500-entry LRU so a retry after a mid-flight cutoff replays the
-recorded answer instead of double-clicking or double-navigating.
+### What the extension enforces (not the relay)
 
-### MV3 constraints (agreed; not to be "simplified" away)
+- **Method table**: `info start open new-tab switch-tab tabs snapshot observe
+  screenshot click fill type scroll keypress pause finish stop finalize`. Anything
+  else → `UNKNOWN_METHOD`. Params are zod-validated → `BAD_PARAMS`.
+- **URL guard** (`utils/guard.ts`, the reviewed cdp-bridge blocklist): navigation
+  to payment / banking / account-security URLs → `BLOCKED_URL`; while the task tab
+  sits on such a page, `snapshot observe screenshot click fill type scroll
+  keypress` are refused, the exits (`open new-tab switch-tab pause finish stop
+  finalize`) stay open.
+- **Task tabs**: commands touch only tabs the extension created for the task
+  (`open` with no task creates one beside the owner's active tab). Never the
+  owner's own tab.
+- **Idempotency**: `requestId` on a mutating method replays the recorded answer
+  (`replayed:true`) instead of acting twice; 200-entry LRU per worker lifetime.
+- **Sensitive input**: password / OTP fields → `SENSITIVE_INPUT`.
+- **Kill switch**: the owner's 停用 closes the socket and releases the task.
+
+### MV3 constraints (unchanged)
 
 - Service workers are recycled: WS activity resets the idle timer, `chrome.alarms`
-  (30s floor) is the backstop.
-- One `chrome.debugger` client per tab — nothing else may be attached.
-- Cannot attach to `chrome://*` or the Chrome Web Store.
-- A permanent yellow "being debugged" banner is visible while attached. By design.
-- No custom WebSocket headers (hence the subprotocol token).
+  (30 s floor) re-dials after an offline recycle.
+- One `chrome.debugger` client per tab; cannot attach to `chrome://*` or the Web Store.
+- The yellow "being debugged" banner is visible while attached. By design.
+- No custom WebSocket headers (hence the subprotocol key).
 
 ---
 
-## Layer 3 — ConnectionProvider (migration seam)
+## C. C4 hop
 
-```js
-const lease = await provider.acquire({ ttl });
-// { leaseId, cdpUrl, ttl, expiresAt, renew(ttl?), revoke(), isExpired() }
-```
+- In: `{type:'chat'}` → `spawn(node, [c4-receive.js, --channel, browser-remote,
+  --endpoint, <keyId>, --priority, 2, --content, '[Browser] ' + text])`. argv
+  array, no shell; the owner's text is one inert argument.
+- Out: `c4-send.js browser-remote <keyId>` → comm-bridge runs
+  `scripts/send.js <keyId> <message>` → `POST 127.0.0.1:3803/chat`.
 
-`LocalRelayProvider` talks to the relay in this repo. A future
-`ConnectorProvider` will hand back a lease pointing at a platform-brokered
-endpoint. Callers only ever see the lease, so the swap changes no call site.
-
-**The guard sits BELOW the provider**, at the relay's single chokepoint, so
-changing providers cannot bypass it. There is exactly one code path from an
-agent frame to the extension, and it runs `methodAllowed()` then
-`screen({method, params, tabUrl})` every time.
+These messages enter the agent's normal conversation queue and therefore its
+session memory — a deliberate decision (see `THIN-RELAY-PLAN.md` §3.3). If that
+ever needs to change, the hook is an `--ephemeral` flag on `c4-receive.js`, not
+anything in this relay.

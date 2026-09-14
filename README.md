@@ -1,106 +1,97 @@
 # zylos-browser-remote
 
-Lets this agent drive **the owner's own Chrome** — real profile, real logins —
+Lets a Zylos agent drive **the owner's own Chrome** — real profile, real logins —
 from a container that has no public IP and cannot reach the owner's machine.
-The browser dials out; the agent never dials in.
+The browser dials out; the agent never dials in. The owner talks to the agent
+from the extension's side panel; the agent works in dedicated, marked tabs.
 
-Status: **P0 relay works end-to-end against a fake extension** (`npm run smoke`,
-28 assertions). The MV3 extension itself is the next milestone — until it lands
-there is no real browser on the other end.
+This repo is the **relay**: a thin, opinion-free pipe plus the zylos-core
+component glue. Every browser decision (what a command means, which URLs are
+off-limits, which tab may be touched, idempotency) lives in the extension —
+[`zylos-browser-extension`](../zylos-browser-extension), `remote` build.
 
 ```
-owner's Chrome ─[MV3 ext]→ wss://<agent-domain>/browser-remote/ext
-                              │  platform edge (TLS, Host→localhost)
-                              ▼
-                        caddy :3800   handle /browser-remote/*  (strips prefix)
-                              ▼
-   relay :3802   PUBLIC lane — extension ingress ONLY, path /ext, token-authed
-   relay :3803   LOOPBACK ONLY, never routed — CDP surface the agent attaches to
+owner's Chrome ─[extension]─→ wss://<agent-domain>/browser-remote/ext
+                                 │  platform edge (TLS)
+                                 ▼
+                           caddy :3800   handle /browser-remote/*  (strips prefix)
+                                 ▼
+   relay :3802   PUBLIC lane — extension ingress ONLY, path /ext, key-authed
+   relay :3803   LOOPBACK ONLY, never routed — POST /rpc, POST /chat, GET /status
+                                 ▲
+                scripts/browser.js (agent CLI)   scripts/send.js (C4 outbound)
 ```
 
 Two ports, and they must not be collapsed: Caddy's `strip_prefix` forwards
 *every* path on :3802, so anything served there is reachable by whoever learns
-the domain. Keeping the driving surface on :3803 means a leaked public URL lets
-someone offer to **be** a browser (and only with the token) — never to drive one.
+the domain. A leaked public URL lets someone offer to **be** a browser (and only
+with a key) — never to drive one.
 
 ## Run it
 
 ```sh
 npm install
-openssl rand -hex 32 > relay/token && chmod 600 relay/token   # never commit this
-npm start            # ext lane :3802, agent lane :3803
-npm test             # offline: guard + chokepoint + guard-sync + real worker on a chrome.* stub
-npm run smoke        # full loopback round-trip, fake extension + fake CDP client
-npm run test:chrome  # end-to-end in a REAL Chrome with the extension installed
+node scripts/key.js new --label bobo-mac     # prints the key ONCE; hand relayUrl + key to the owner
+npm start                                    # ext lane :3802, agent lane :3803
+npm test                                     # smoke (fake ext ↔ relay) + CLI end-to-end (real scripts, real relay process)
 ```
 
-`test:chrome` is kept out of `npm test` because it needs a Chrome binary (it finds
-Playwright's, or set `BR_CHROME`) and a display (it starts its own Xvfb, or set
-`BR_HEADLESS=1`). It is the only test that exercises the injected page functions
-against a real DOM, so run it before trusting a change to `extension/actions.js`.
+Ports: `BROWSER_REMOTE_EXT_PORT` / `BROWSER_REMOTE_AGENT_PORT`. Keys file:
+`BROWSER_REMOTE_KEYS_FILE` (default `~/zylos/components/browser-remote/keys.json`,
+digests only, re-read on every handshake). `BROWSER_REMOTE_KEY` is a single-key
+shortcut for dev. The agent lane's bind address is not configurable —
+`127.0.0.1` is a safety property, not a default.
 
-Ports are overridable with `BROWSER_REMOTE_EXT_PORT` / `BROWSER_REMOTE_AGENT_PORT`;
-the agent lane's bind address is not — `127.0.0.1` is a safety property, not a default.
+Owner side: install the extension's default remote build (`npm run build` in
+zylos-browser-extension → `.output/chrome-mv3`), open the side panel,
+paste `wss://<agent-domain>/browser-remote/ext` and the key.
 
-Attach like you would to Chrome:
+## As a zylos-core component
 
-```js
-const { LocalRelayProvider } = require('./relay/providers/local-relay-provider');
-const lease = await new LocalRelayProvider().acquire({ ttl: 15 * 60_000 });
-// lease.cdpUrl -> ws://127.0.0.1:3803/devtools/page/<leaseId>
-```
+`SKILL.md` is the component manifest (`type: communication`, pm2 service
+`zylos-browser-remote`, data dir `~/zylos/components/browser-remote`). Installed
+at `~/zylos/.claude/skills/browser-remote/`:
 
-or just point a stock CDP client at `http://127.0.0.1:3803` — `/json/version`
-and `/json/list` answer in Chrome's shape, and `/json/list` mints a lease on
-demand.
+| script | who runs it | does |
+|---|---|---|
+| `relay/server.js` | pm2 | the relay |
+| `scripts/browser.js` | the agent | `browser.js [--endpoint k] <method> [k=v … \| json]` → `POST /rpc`; screenshots land in `observations/` |
+| `scripts/send.js` | comm-bridge, via `c4-send.js browser-remote <keyId>` | `POST /chat` → side-panel bubble |
+| `scripts/key.js` | ops | `new --label` / `list` / `revoke` |
+
+Owner messages from the side panel arrive as C4 conversations on channel
+`browser-remote`, endpoint `<keyId>`, content prefixed `[Browser] `. The name is
+`browser-remote` because `browser` is the official zylos-browser capability
+component and `browser-extension` is zylos-browser-channel.
 
 ## Safety model
 
-One gate, one code path. Every agent→browser frame passes, in order:
+The relay is trusted with one fact — which key is which browser — and nothing
+else. Both ends treat it as untrusted:
 
-1. **default-deny allowlist** (`relay/chokepoint.js`) — `Page.navigate`,
-   `Page.reload`, `Page.captureScreenshot`, a few more, plus the `_br.*`
-   structured actions. Everything else is refused.
-2. **URL guard** (`relay/guard.js`, copied verbatim from the reviewed
-   `cdp-bridge` original) — payment/checkout/banking/account-settings URLs and
-   hosts, screened raw and percent-decoded, walking every string in `params`.
-3. **idempotency** — a retried mutating action replays its recorded answer
-   instead of clicking or navigating twice.
+- **Extension**: re-validates every `req` (zod), refuses unknown methods, screens
+  URLs against the reviewed blocklist (`utils/guard.ts`) on navigation *and* on
+  the live task-tab URL, drives only tabs it created, replays retried mutating
+  calls by `requestId`, refuses password/OTP fields, has a kill switch.
+- **Relay**: bounds bodies and chat text, validates envelopes, passes owner text
+  to `c4-receive.js` as a single argv element (no shell), exposes `/chat` only on
+  loopback so nobody on the public side can put words in the agent's mouth.
 
-**`Runtime.evaluate` is banned**, along with every other arbitrary-code and raw-input
-path. A URL blocklist cannot see `document.querySelector('form#pay').submit()`
-coming, and arbitrary JS in a logged-in browser is account-takeover-equivalent.
-Structured actions take selectors, never code and never coordinates.
-
-The guard sits **below** the provider seam, so swapping `LocalRelayProvider` for a
-future `ConnectorProvider` cannot route around it.
-
-`tools/test-guard.js` (42 assertions) still asserts that `screen()` leaves
-F1/F4/F5 open — correct, because those are behaviour, not URLs, and they are
-closed one layer up in `tools/test-chokepoint.js` (42 more). Don't "fix" either
-file to agree with the other; they test different layers.
-
-## Scope
-
-P0 is single owner, single tab: `navigate` / `snapshot` / `click` / `fill` /
-`screenshot`. Full Playwright-grade CDP compatibility — sessions, multi-target,
-`Network.*`, `DOM.*` trees — is a later milestone and is **not** faked here: a
-stock client attaches and the allowlisted methods work, anything else is refused
-loudly rather than silently half-implemented.
-
-Protocol details, frame shapes, and the MV3 constraints that shaped them:
-[`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+There is deliberately **no CDP surface** for stock clients anymore: keeping one
+meant keeping leases, event fan-out and a second allowlist in the relay. If raw
+CDP is ever needed, it goes in as an extension method behind the extension's
+policy — the relay does not change.
 
 ## Layout
 
 ```
-relay/chokepoint.js              allowlist + guard + idempotency  (the gate)
-relay/guard.js                   URL blocklist, shared with the extension
-relay/ext-lane.js                :3802 token-authed extension ingress
-relay/agent-lane.js              :3803 loopback CDP + lease HTTP surface
-relay/lease.js                   time-boxed, revocable grants
-relay/providers/                 ConnectionProvider seam + LocalRelayProvider
-relay/server.js                  wiring and boot
-tools/                           tests + smoke test
-extension/                       MV3 extension — next milestone
+relay/server.js        wiring + C4 hop (spawn c4-receive.js)
+relay/ext-lane.js      :3802  key → connection map, heartbeat, req/resp correlation, chat envelope
+relay/agent-lane.js    :3803  /rpc /chat /status
+relay/keys.js          keys.json, sha256, keyId, timing-safe verify
+scripts/               browser.js · send.js · key.js · relay-client.js
+tools/smoke.js         fake extension ↔ relay, 37 assertions
+tools/test-cli.js      real relay process + real scripts + fake extension, 25 assertions
+docs/PROTOCOL.md       the two surfaces and the C4 hop
+docs/THIN-RELAY-PLAN.md  why the relay got thin, decisions taken
 ```
