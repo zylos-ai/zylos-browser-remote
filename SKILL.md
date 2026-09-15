@@ -64,6 +64,13 @@ EOF
 Keep side-panel replies short: it is a narrow panel next to the page you are working in.
 Say what you are about to do before long sequences of commands, and what you found after.
 
+Before the final reply, explicitly finish the browser task. Sending a chat message
+does not end browser control: it may also be an intermediate progress message.
+Use `finalize keep=[...]` with actual tab IDs for pages the owner should keep
+(for example, the video they asked you to play); use `finalize` for disposable tabs.
+Use `pause` for a handoff that will continue, or `finish` to detach temporarily while
+keeping task tabs. The sidebar's browser status is separate from waiting for a chat reply.
+
 ## Driving the browser
 
 ```bash

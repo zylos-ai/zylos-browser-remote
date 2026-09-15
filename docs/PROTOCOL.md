@@ -85,9 +85,24 @@ old socket fails immediately with `EXT_OFFLINE` rather than after 30 s.
 | relay → ext | `{id, type:'req', method, params, requestId?, deadline}` | verbatim from `/rpc`; `deadline` = epoch ms |
 | ext → relay | `{id, type:'resp', result}` | |
 | ext → relay | `{id, type:'error', code, message, details?}` | `code` is the extension's string code; missing → `EXT_ERROR` |
-| ext → relay | `{type:'chat', text, ts}` | owner typed in the side panel; text ≤ 8000 chars, else refused (never truncated) |
+| ext → relay | `{type:'chat', id?, text, ts}` | owner typed in the side panel; `id` correlates the intake receipt; text ≤ 8000 chars |
 | relay → ext | `{type:'chat', role:'assistant', text, ts}` | agent's reply from `/chat` |
-| relay → ext | `{type:'chat-status', state, error}` | only on refusal of an owner message |
+| relay → ext | `{type:'chat-status', chatId?, state, code?, error?, ts}` | C4 intake receipt: `queued`, `failed`, or `unknown`; `chatId` echoes the user message `id` |
+
+Chat receipts describe transport intake, not Agent thinking or task completion.
+`queued` requires a successful C4 JSON queue receipt. `failed` includes rejected messages,
+`C4_DELIVERY_FAILED`, and `AGENT_UNAVAILABLE` (C4 returned `delivered` or `suppressed`
+for an unhealthy Agent instead of queuing work). `unknown` includes a 45-second intake
+timeout (`C4_DELIVERY_TIMEOUT`) or an unconfirmed result (`C4_DELIVERY_UNCONFIRMED`).
+A timeout does not prove that the message was never queued; neither side automatically resends it.
+Receipts belong to the submitting socket; a late receipt is not sent to its replacement.
+Errors are visible in the panel rather than only in relay logs. Keys and chat contents are not logged for receipts.
+
+The extension displays browser activity separately: `running` only while a browser
+command is in flight, `ready` between commands, `paused` after `pause`, and `finished`
+after `finish`. `finalize` removes the task. `info.control.phase` exposes the executor
+phase (`ready`, `paused`, `finished`); the sidebar derives `running` from in-flight commands.
+An assistant message is not an implicit `finish`; progress messages may precede more commands.
 
 Removed from v1: `state`, `attach`, `detach`, `event`, `lease-lost`, `sessionId`.
 The extension attaches `chrome.debugger` itself per task and never streams CDP

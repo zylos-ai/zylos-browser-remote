@@ -233,6 +233,29 @@ Owner messages from the side panel arrive as C4 conversations on channel
 `browser-remote` because `browser` is the official zylos-browser capability
 component and `browser-extension` is zylos-browser-channel.
 
+## 排查「一直 Working」或聊天无回复
+
+新版插件按实际浏览器指令显示 Working；标签仍被保留时显示待命，`finish` 后显示操作结束。
+聊天等待与浏览器执行是两种状态，不能通过任务卡片判断 Agent 是否正在思考。
+最终回复前，Agent 应按 `SKILL.md` 显式结束任务，并用 `finalize keep=[...]` 保留用户需要的页面。
+
+新版 Relay 会把 C4 入队结果通过 `chat-status` 发回插件。C4 退出失败、Agent 不可用、
+45 秒未拿到入队结果都会产生提示；两分钟未收到聊天回复时，插件显示延迟提示，不自动重发。
+本次状态修复需要同时更新插件和线上 Browser Remote，再重启 Relay、重新加载插件。
+
+在 Agent 机器上检查：
+
+```sh
+pm2 status zylos-browser-remote c4-dispatcher activity-monitor
+pm2 logs zylos-browser-remote --lines 80 --nostream
+node ~/zylos/.claude/skills/browser-remote/scripts/browser.js status
+```
+
+日志中的 `chat: queued in C4` 表示已入队，可按 `conversation` ID 继续检查 C4 和 Agent。
+出现 `C4 delivery timed out` 或 `C4 returned no queue receipt` 时，投递结果不确定，先检查再重试。
+只有 `ext[...] chat` 而没有入队成功日志时，先检查 C4 接收脚本、运行目录和服务状态。
+`chat[...] -> panel` 表示回复已交给浏览器连接；WebSocket 在线本身不代表 Agent 正常回复。
+
 ## Safety model
 
 The relay is trusted with one fact — which key is which browser — and nothing

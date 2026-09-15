@@ -7,7 +7,7 @@
   "type": "commonjs",
   "scripts": {
     "start": "node relay/server.js",
-    "test": "node tools/smoke.js && node tools/test-cli.js",
+    "test": "node --test tools/chat-delivery.test.js && node tools/smoke.js && node tools/test-cli.js",
     "smoke": "node tools/smoke.js",
     "key": "node scripts/key.js"
   },

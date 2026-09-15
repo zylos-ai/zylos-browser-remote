@@ -29,6 +29,7 @@ const c4Log = path.join(tmp, 'c4.jsonl');
 const c4Stub = path.join(tmp, 'c4-receive-stub.js');
 fs.writeFileSync(c4Stub, `
   require('fs').appendFileSync(${JSON.stringify(c4Log)}, JSON.stringify(process.argv.slice(2)) + '\\n');
+  console.log(JSON.stringify({ ok: true, action: 'queued', id: 1 }));
 `);
 process.env.BROWSER_REMOTE_KEYS_FILE = keysPath;
 process.env.ZYLOS_C4_RECEIVE = c4Stub;
@@ -192,7 +193,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok(argv[argv.indexOf('--content') + 1] === '[Browser] 帮我搜蜘蛛侠 "quoted" $(rm -rf) ; done', 'content prefixed, otherwise verbatim (single argv, no shell)');
 
   extA.ws.send(JSON.stringify({ type: 'chat', text: 'x'.repeat(8001), ts: Date.now() }));
-  const refused = await extA.waitFor((m) => m.type === 'chat-status');
+  const refused = await extA.waitFor((m) => m.type === 'chat-status' && m.state === 'failed');
   ok(/too long/.test(refused.error), 'over-cap chat refused loudly, not truncated');
   extA.ws.send(JSON.stringify({ type: 'chat', text: '', ts: Date.now() }));
   await sleep(100);

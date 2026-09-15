@@ -252,11 +252,18 @@ class ExtLane extends EventEmitter {
   _onChat(conn, msg) {
     const text = typeof msg.text === 'string' ? msg.text : null;
     const ts = Number.isFinite(msg.ts) ? msg.ts : Date.now();
+    const chatId = typeof msg.id === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(msg.id) ? msg.id : undefined;
+    // Keep acknowledgements on the socket that submitted the message. A late
+    // C4 result must not be sent to a replacement connection using this key.
+    const reportStatus = (status) => {
+      if (this.conns.get(conn.keyId) !== conn) return false;
+      return this._send(conn, { type: 'chat-status', ...status, chatId, ts: Date.now() });
+    };
 
     const refuse = (reason) => {
       // Loud on both sides: a dropped owner message must never be silent.
       this.log(`ext[${conn.keyId}]: chat REFUSED (${reason})`);
-      this._send(conn, { type: 'chat-status', state: 'idle', error: `message refused: ${reason}`, ts: Date.now() });
+      reportStatus({ state: 'failed', code: 'CHAT_REFUSED', error: `message refused: ${reason}` });
       this.emit('chat-refused', { keyId: conn.keyId, reason, length: text == null ? 0 : text.length });
     };
 
@@ -267,7 +274,7 @@ class ExtLane extends EventEmitter {
     }
 
     this.log(`ext[${conn.keyId}]: chat (${text.length} chars)`);
-    this.emit('chat', { keyId: conn.keyId, label: conn.label, text, ts });
+    this.emit('chat', { keyId: conn.keyId, label: conn.label, text, ts, chatId }, reportStatus);
   }
 
   // ------------------------------------------------------------ outbound

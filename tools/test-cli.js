@@ -28,7 +28,7 @@ const env = {
   ZYLOS_C4_RECEIVE: path.join(tmp, 'c4-stub.js'),
 };
 delete env.BROWSER_REMOTE_KEY;
-fs.writeFileSync(env.ZYLOS_C4_RECEIVE, `require('fs').appendFileSync(${JSON.stringify(path.join(tmp, 'c4.log'))}, JSON.stringify(process.argv.slice(2)) + '\\n');`);
+fs.writeFileSync(env.ZYLOS_C4_RECEIVE, `require('fs').appendFileSync(${JSON.stringify(path.join(tmp, 'c4.log'))}, JSON.stringify(process.argv.slice(2)) + '\\n'); console.log(JSON.stringify({ok:true,action:'queued',id:1}));`);
 
 let passed = 0;
 const ok = (c, m) => { assert(c, m); passed++; console.log('  ok', m); };
