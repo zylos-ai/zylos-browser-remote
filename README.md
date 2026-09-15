@@ -235,9 +235,11 @@ component and `browser-extension` is zylos-browser-channel.
 
 ## 排查「一直 Working」或聊天无回复
 
-新版插件按实际浏览器指令显示 Working；标签仍被保留时显示待命，`finish` 后显示操作结束。
-聊天等待与浏览器执行是两种状态，不能通过任务卡片判断 Agent 是否正在思考。
-最终回复前，Agent 应按 `SKILL.md` 显式结束任务，并用 `finalize keep=[...]` 保留用户需要的页面。
+正常最终回复会直接结束本轮：插件撤销浏览器控制、移除 Working 和紫色任务卡片，
+保留已打开的页面并取消工作分组。Agent 无需为普通回答额外调用 `finish`。
+只有显式标记为进度的消息（`scripts/send.js --progress <keyId> <text>` / `final:false`）才保留任务。
+需要只保留部分结果页面时，可以在最终回复前用 `finalize keep=[...]` 关闭其他临时页面。
+这些收尾逻辑在插件中执行；Relay 只转发聊天的 `final` 标记和工具请求。
 
 新版 Relay 会把 C4 入队结果通过 `chat-status` 发回插件。C4 退出失败、Agent 不可用、
 45 秒未拿到入队结果都会产生提示；两分钟未收到聊天回复时，插件显示延迟提示，不自动重发。

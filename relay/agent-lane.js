@@ -8,7 +8,7 @@
  *                 -> 200 {ok:true, result}
  *                 -> 200 {ok:false, code, message, details?}   the extension refused
  *                 -> 4xx/5xx {ok:false, code, message}         relay-level failure
- *   POST /chat    {endpoint?, text}          agent -> side-panel chat bubble
+ *   POST /chat    {endpoint?, text, final?}  agent -> side-panel chat bubble
  *   GET  /status  {ok, extensions:{<keyId>:{...}}}
  *
  * `method` and `params` are forwarded verbatim; the relay does not know which
@@ -122,7 +122,10 @@ class AgentLane {
     if (text.length > MAX_CHAT_TEXT) {
       return fail(400, 'BAD_REQUEST', `text too long (${text.length} > ${MAX_CHAT_TEXT} chars)`);
     }
-    if (!this.ext.sendChat(keyId, { text })) {
+    if (body.final !== undefined && typeof body.final !== 'boolean') {
+      return fail(400, 'BAD_REQUEST', 'final must be a boolean when present');
+    }
+    if (!this.ext.sendChat(keyId, { text, final: body.final ?? true })) {
       return fail(503, 'EXT_OFFLINE', 'extension not connected');
     }
     this.log(`chat[${keyId}] -> panel (${text.length} chars)`);

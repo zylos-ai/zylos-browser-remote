@@ -119,8 +119,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(50);
   const bubble = seen.find((m) => m.type === 'chat');
   ok(bubble && bubble.role === 'assistant' && bubble.text === '找到了 第一条', 'panel received the assistant bubble');
+  ok(bubble.final === true, 'C4 outbound replies end the turn by default');
   r = await run('browser.js', ['chat', '直接', 'chat', '子命令']);
   ok(r.code === 0 && seen.filter((m) => m.type === 'chat').length === 2, 'browser.js chat works too');
+  r = await run('send.js', ['--progress', keyId, '正在搜索']);
+  ok(r.code === 0 && seen.some((m) => m.type === 'chat' && m.text === '正在搜索' && m.final === false), 'send.js --progress does not end the turn');
   r = await run('send.js', ['not-a-keyid', 'x']);
   ok(r.code === 2, 'send.js rejects a malformed endpoint with exit 2');
 

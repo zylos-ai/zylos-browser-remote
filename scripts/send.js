@@ -4,13 +4,18 @@
  * C4 outbound adapter: comm-bridge runs `node send.js <endpoint> <message>`
  * for `c4-send.js browser-remote <keyId>`. The endpoint is the keyId of the
  * owner's extension; the message becomes a chat bubble in their side panel.
+ * Normal replies end the browser turn. For an intermediate update, use
+ * `node send.js --progress <endpoint> <message>` instead.
  *
  * Exit 0 on delivery, non-zero otherwise (comm-bridge logs the code).
  */
 
 const client = require('./relay-client');
 
-const [endpoint, ...msgParts] = process.argv.slice(2);
+const args = process.argv.slice(2);
+const progress = args[0] === '--progress';
+if (progress) args.shift();
+const [endpoint, ...msgParts] = args;
 const text = msgParts.join(' ');
 
 if (!endpoint || !/^[a-f0-9]{12}$/.test(endpoint)) {
@@ -22,7 +27,7 @@ if (!text.trim()) {
   process.exit(2);
 }
 
-client.chat({ endpoint, text }).then(({ status, body }) => {
+client.chat({ endpoint, text, final: !progress }).then(({ status, body }) => {
   if (body.ok) {
     process.exit(0);
   }

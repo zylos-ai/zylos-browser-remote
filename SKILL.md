@@ -53,7 +53,7 @@ With a single browser connected you may omit `--endpoint`.
 ## Replying to the owner
 
 Incoming chat arrives as `[Browser] <text>` on channel `browser-remote`. Reply the
-usual way; it shows up as a bubble in their side panel:
+usual way when the turn is complete; it shows up as a bubble in their side panel:
 
 ```bash
 cat <<'EOF' | node ~/zylos/.claude/skills/comm-bridge/scripts/c4-send.js browser-remote <keyId>
@@ -61,15 +61,27 @@ cat <<'EOF' | node ~/zylos/.claude/skills/comm-bridge/scripts/c4-send.js browser
 EOF
 ```
 
-Keep side-panel replies short: it is a narrow panel next to the page you are working in.
-Say what you are about to do before long sequences of commands, and what you found after.
+Normal replies are final by default (`final:true`). Once the extension receives one,
+it ends browser control, removes the Working/task card, cancels queued commands,
+detaches the debugger and ungroups the task tabs. Open pages are retained, including
+the video the owner asked you to play. No separate `finish` call is required.
+Do not send the final reply until the tool sequence has ended.
 
-Before the final reply, explicitly finish the browser task. Sending a chat message
-does not end browser control: it may also be an intermediate progress message.
-Use `finalize keep=[...]` with actual tab IDs for pages the owner should keep
-(for example, the video they asked you to play); use `finalize` for disposable tabs.
-Use `pause` for a handoff that will continue, or `finish` to detach temporarily while
-keeping task tabs. The sidebar's browser status is separate from waiting for a chat reply.
+Keep replies short. For an intermediate update before more commands, explicitly use
+the progress adapter instead of the normal C4 final-reply path:
+
+```bash
+node ~/zylos/.claude/skills/browser-remote/scripts/send.js --progress <keyId> '正在搜索，找到后会打开播放。'
+```
+
+This sends `final:false` and keeps the task active while the panel waits for the final
+answer. Use it also when `pause` needs the owner to log in or type a code before you
+continue in the same task. Final answers still go through `c4-send.js` as above.
+
+Optionally call `finalize keep=[...]` with actual tab IDs before the final answer to
+close disposable tabs and retain only selected results; `finalize` alone closes all
+task-owned tabs. `pause` and `finish` detach temporarily without ending the chat turn.
+After a final reply, a new browser task starts in new tabs.
 
 ## Driving the browser
 
@@ -172,9 +184,9 @@ The relay and CLI remain generic; all operations, frame routing and waiting exec
 
 - Only task tabs created by the extension or admitted through a task tab's opener are driven. Never ask the owner to "arm" a personal tab.
 - Read screenshots with the image tool; do not describe a page you have not observed.
-- Logins, payments, OTPs, account settings: `pause`, ask the owner in the panel, wait for their reply.
+- Logins, payments, OTPs, account settings: `pause`, ask the owner with `send.js --progress`, wait for their reply.
 - After a timeout or interrupted mutation, observe the result before retrying. Re-running the CLI generates a new requestId and can repeat the action.
-- When done, `finalize` so the group and temporary tabs disappear; leave `keep=[...]` for pages the owner wants.
+- When done, send the final answer; the extension ends the task and keeps the open pages. Use `finalize keep=[...]` beforehand only if some temporary tabs should close.
 
 ## Ops
 

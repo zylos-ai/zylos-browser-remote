@@ -44,7 +44,7 @@ No auth: the loopback bind is the auth. Bind address is not configurable.
 |---|---|---|---|
 | GET | `/status` | – | `{ok, extensions:{<keyId>:{connected, label, since, version, capabilities, lastSeenMsAgo, pending}}}` |
 | POST | `/rpc` | `{endpoint?, method, params?, requestId?, timeoutMs?}` | see below |
-| POST | `/chat` | `{endpoint?, text}` | `200 {ok:true, endpoint, delivered:true}` |
+| POST | `/chat` | `{endpoint?, text, final?}` | `200 {ok:true, endpoint, delivered:true}` |
 
 `/rpc` responses:
 
@@ -62,6 +62,10 @@ Relay-side validation is shape only: `method` matches `[A-Za-z][A-Za-z0-9_.:-]{0
 body ≤ 256 KiB. The relay does not know which methods exist.
 
 `endpoint` may be omitted when exactly one browser is connected.
+`final` is a boolean, defaulting to `true`. Ordinary replies end the browser turn;
+an intermediate progress message must explicitly set `final:false`. The relay forwards
+this marker; browser cleanup belongs to the extension. `delivered:true` confirms the
+frame was sent to the socket, not that extension cleanup has completed.
 
 ---
 
@@ -86,7 +90,7 @@ old socket fails immediately with `EXT_OFFLINE` rather than after 30 s.
 | ext → relay | `{id, type:'resp', result}` | |
 | ext → relay | `{id, type:'error', code, message, details?}` | `code` is the extension's string code; missing → `EXT_ERROR` |
 | ext → relay | `{type:'chat', id?, text, ts}` | owner typed in the side panel; `id` correlates the intake receipt; text ≤ 8000 chars |
-| relay → ext | `{type:'chat', role:'assistant', text, ts}` | agent's reply from `/chat` |
+| relay → ext | `{type:'chat', role:'assistant', text, ts, final}` | agent's reply from `/chat`; `final:true` by default |
 | relay → ext | `{type:'chat-status', chatId?, state, code?, error?, ts}` | C4 intake receipt: `queued`, `failed`, or `unknown`; `chatId` echoes the user message `id` |
 
 Chat receipts describe transport intake, not Agent thinking or task completion.
@@ -100,9 +104,14 @@ Errors are visible in the panel rather than only in relay logs. Keys and chat co
 
 The extension displays browser activity separately: `running` only while a browser
 command is in flight, `ready` between commands, `paused` after `pause`, and `finished`
-after `finish`. `finalize` removes the task. `info.control.phase` exposes the executor
+after `finish`, until the final reply. `finalize` removes the task. `info.control.phase` exposes the executor
 phase (`ready`, `paused`, `finished`); the sidebar derives `running` from in-flight commands.
-An assistant message is not an implicit `finish`; progress messages may precede more commands.
+An ordinary assistant reply (missing `final` or `final:true`) ends the turn immediately:
+the extension cancels queued actions, revokes control, removes the task card, detaches
+the debugger and hands all open task pages back to the owner without closing them.
+Only explicit `final:false` progress keeps the task active. System messages do not end it.
+The normal C4 `send.js <endpoint> <message>` adapter sends final replies;
+`send.js --progress <endpoint> <message>` explicitly sends progress.
 
 Removed from v1: `state`, `attach`, `detach`, `event`, `lease-lost`, `sessionId`.
 The extension attaches `chrome.debugger` itself per task and never streams CDP

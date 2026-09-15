@@ -280,10 +280,10 @@ class ExtLane extends EventEmitter {
   // ------------------------------------------------------------ outbound
 
   /** Agent's reply, pushed down the panel socket. */
-  sendChat(keyId, { text, role = 'assistant', ts = Date.now() } = {}) {
+  sendChat(keyId, { text, role = 'assistant', ts = Date.now(), final = true } = {}) {
     const conn = this.conns.get(keyId);
     if (!conn) return false;
-    return this._send(conn, { type: 'chat', role, text, ts });
+    return this._send(conn, { type: 'chat', role, text, ts, final });
   }
 
   /**

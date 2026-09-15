@@ -178,7 +178,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok(r.status === 200 && r.body.delivered, 'POST /chat with endpoint delivered');
   const chatB = await extB.waitFor((m) => m.type === 'chat');
   ok(chatB.role === 'assistant' && chatB.text === '你好 beta', 'extension B received the chat frame');
+  ok(chatB.final === true, 'ordinary replies are final by default');
   ok(!extA.frames.some((m) => m.type === 'chat'), 'extension A did not');
+  r = await post(agentPort, '/chat', { endpoint: b.keyId, text: '查询中', final: false });
+  const progress = await extB.waitFor((m) => m.type === 'chat' && m.text === '查询中');
+  ok(r.body.ok && progress.final === false, 'explicit progress stays non-final');
+  r = await post(agentPort, '/chat', { endpoint: b.keyId, text: 'Invalid final', final: 'false' });
+  ok(r.status === 400 && r.body.code === 'BAD_REQUEST', 'invalid final flag rejected');
   extB.ws.close();
   await sleep(50);
 
