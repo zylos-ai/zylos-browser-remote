@@ -96,7 +96,8 @@ events out.
 ### What the extension enforces (not the relay)
 
 - **Method table**: `info start open new-tab switch-tab tabs snapshot observe
-  screenshot click fill type scroll keypress pause finish stop finalize`. Anything
+  screenshot click fill type scroll keypress pause finish stop finalize frames find inspect
+  hover double-click right-click drag select check back forward reload dialog wait`. Anything
   else → `UNKNOWN_METHOD`. Params are zod-validated → `BAD_PARAMS`.
 - **URL guard** (`utils/guard.ts`, the reviewed cdp-bridge blocklist): navigation
   to payment / banking / account-security URLs → `BLOCKED_URL`; while the task tab
@@ -104,12 +105,30 @@ events out.
   keypress` are refused, the exits (`open new-tab switch-tab pause finish stop
   finalize`) stay open.
 - **Task tabs**: commands touch only tabs the extension created for the task
-  (`open` with no task creates one beside the owner's active tab). Never the
+  (`open` with no task creates one beside the owner's active tab), plus new pages
+  Chrome identifies as opened by those task tabs. Never the
   owner's own tab.
 - **Idempotency**: `requestId` on a mutating method replays the recorded answer
   (`replayed:true`) instead of acting twice; 200-entry LRU per worker lifetime.
+  Matching in-flight IDs are coalesced; different method/params with the same ID
+  return `REQUEST_ID_CONFLICT`. Fresh CLI invocations use fresh IDs.
 - **Sensitive input**: password / OTP fields → `SENSITIVE_INPUT`.
 - **Kill switch**: the owner's 停用 closes the socket and releases the task.
+
+### Browser actions v2 (extension 0.11.0+)
+
+`hello` / `info` capabilities add `browser-actions-v2`, `frames-v1`, `popup-v1`,
+`dialog-v1`, and `wait-v1`. Wire envelopes, HTTP endpoints and relay forwarding
+remain unchanged. Method parameters and Agent workflows are documented in
+[SKILL.md](../SKILL.md) and the extension's `docs/BROWSER-ACTIONS.md`.
+
+Commands are queued in the plugin. Stop/pause/finish/finalize cancel preceding
+queued work; dialog handling and info remain accessible while a wait is pending.
+`DIALOG_OPEN` can report a dialog caused by an already dispatched click. The
+caller handles it with `dialog`; it must not blindly retry the click. `wait`
+uses local polling, defaults to 10 seconds, max 60 seconds and never extends
+the `/rpc` deadline. A longer wait therefore also needs a longer `timeoutMs`.
+No child CDP sessions or browser events are exposed on the relay wire.
 
 ### MV3 constraints (unchanged)
 
