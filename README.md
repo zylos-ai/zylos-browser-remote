@@ -1,5 +1,35 @@
 # zylos-browser-remote
 
+## 复制给 Agent
+
+在 GitHub 页面上，将鼠标移到下面的文本块，点击右上角的**复制按钮**，
+再把整段文字粘贴给你线上的 Zylos Agent。
+Agent 会按本文完成安装配置，并通过原来的对话把连接地址和 Key 发给你。
+
+```text
+请帮我安装并配置 Zylos Browser Remote，让我能通过 Chrome 插件和你聊天，并让你操作我的浏览器。我确认安装（confirm）。
+
+请先阅读安装说明：
+https://github.com/zylos-ai/zylos-browser-remote/blob/main/README.md
+
+然后完成：
+1. 检查是否已安装 browser-remote；已安装则复用。
+2. 使用你现有的公网 HTTPS 域名，配置 WebSocket 转发路由。
+3. 启动服务，检查 Relay 和公网入口是否可用。
+4. 为我的 Chrome 插件生成一个连接 Key。
+5. 读取组件 SKILL.md，了解浏览器操作和插件聊天回复方式。
+
+完成后，请直接在当前对话返回：
+地址：wss://你的真实域名/browser-remote/ext
+Key：本次生成的完整密钥，不是 keyId
+
+我会把这两项填入插件设置，然后与你验证聊天和浏览器操作。
+```
+
+需要手动执行或了解安装细节时，见下方的[线上安装步骤](#让线上-agent-安装并返回连接信息)。
+
+## Overview
+
 Lets a Zylos agent drive **the owner's own Chrome** — real profile, real logins —
 from a container that has no public IP and cannot reach the owner's machine.
 The browser dials out; the agent never dials in. The owner talks to the agent
@@ -38,19 +68,7 @@ Browser Remote 与 Core / C4 运行在同一台机器或同一容器的网络空
 在现有反向代理中增加路径转发即可。聊天和工具消息共用这条 WebSocket。
 Relay 的两个端口都绑定 `127.0.0.1`：`3802` 经代理供插件连接，`3803` 只供 Agent 本机调用。
 
-### 用户可以发给 Agent 的说明
-
-把本 README 的链接和下面这段话发给你现有的 Agent：
-
-```text
-请安装并配置 Browser Remote，让我能通过 Zylos Chrome 插件和你聊天、操作浏览器。
-安装说明：https://github.com/zylos-ai/zylos-browser-remote/blob/main/README.md
-
-请使用这台 Agent 已有的公网 HTTPS 地址，完成组件安装、路由配置、服务启动和检查，
-为我的浏览器生成一个 Key，再通过当前对话把完整 WebSocket 地址和 Key 发给我。
-安装后读取组件的 SKILL.md，了解浏览器命令和侧边栏回复方式。
-如果已经安装，请检查并复用现有安装；缺少公网入口信息时再向我询问。
-```
+用户可直接复制本文开头的[安装话术](#复制给-agent)发给 Agent。
 
 ### Agent 执行步骤
 
