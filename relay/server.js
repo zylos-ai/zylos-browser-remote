@@ -123,8 +123,8 @@ function deliverChatToC4({ keyId, text, chatId }, logFn = log, { timeoutMs = C4_
   });
 }
 
-function start({ extPort = EXT_PORT, agentPort = AGENT_PORT, onChat = deliverChatToC4 } = {}) {
-  const ext = new ExtLane({ log });
+function start({ extPort = EXT_PORT, agentPort = AGENT_PORT, onChat = deliverChatToC4, outboxFile } = {}) {
+  const ext = new ExtLane({ log, outboxFile });
   const agent = new AgentLane({ extLane: ext, port: agentPort, log });
 
   // Ingress: panel -> relay -> C4 queue. ext-lane has already bounded the text

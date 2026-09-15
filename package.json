@@ -1,13 +1,13 @@
 {
   "name": "zylos-browser-remote",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Thin relay between the Coco browser extension (in the owner's Chrome) and a Zylos agent: key-authed WebSocket ingress, loopback /rpc + /chat, C4 hop. No browser logic lives here.",
   "main": "relay/server.js",
   "type": "commonjs",
   "scripts": {
     "start": "node relay/server.js",
-    "test": "node --test tools/chat-delivery.test.js && node tools/smoke.js && node tools/test-cli.js",
+    "test": "node --test tools/*.test.js && node tools/smoke.js && node tools/test-cli.js",
     "smoke": "node tools/smoke.js",
     "key": "node scripts/key.js"
   },

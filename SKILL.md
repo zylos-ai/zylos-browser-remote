@@ -1,6 +1,6 @@
 ---
 name: browser-remote
-version: 0.2.0
+version: 0.3.0
 description: >-
   Drive the owner's own Chrome (real profile, real logins) through the Coco
   browser extension, and chat with the owner in the extension's side panel.
@@ -24,6 +24,7 @@ lifecycle:
   preserve:
     - keys.json
     - observations/
+    - chat-outbox.json
 
 upgrade:
   repo: zylos-ai/zylos-browser-remote
@@ -83,6 +84,25 @@ close disposable tabs and retain only selected results; `finalize` alone closes 
 task-owned tabs. `pause` and `finish` detach temporarily without ending the chat turn.
 After a final reply, a new browser task starts in new tabs.
 
+### If the browser disconnects before the final answer
+
+Always submit the final answer to `c4-send.js browser-remote <keyId>`, including
+an honest failure or partial-result report. Do not skip it based on an earlier
+`status` check. A browser being offline does not mean the relay cannot accept replies.
+
+The relay persists final replies and returns `queued:true` with a message ID.
+This means saved for delivery, not yet displayed. The extension receives it on
+reconnect, saves it, ends control and acknowledges it; do not resend it yourself.
+`status.pendingReplies` shows unacknowledged counts by keyId. A new command may
+return `CHAT_PENDING` until those replies are acknowledged; wait for this count
+to clear before issuing further commands.
+
+`RELAY_DOWN`, `OUTBOX_WRITE_FAILED` and `OUTBOX_FULL` mean it was not accepted:
+restore the relay/storage and then submit the original answer. An HTTP response
+timeout is ambiguous; inspect the outbox before retrying to avoid duplicate replies.
+Do not treat a report sent to another channel as delivery to this panel.
+Progress messages (`--progress`) are not stored offline. Browser commands are never replayed.
+
 ## Driving the browser
 
 ```bash
@@ -133,7 +153,7 @@ Every call prints one JSON document: `{ok:true, endpoint, result}` or
 | `dialog` | `action?:get/accept/dismiss`, `promptText?` | inspect or handle alert/confirm/prompt/beforeunload |
 | `wait` | `condition`, `ref?` OR `selector?`, `frameId?`, `text?`, `url?`, `checked?`, `timeoutMs?` | see conditions below |
 | `pause` / `finish` | – | detach debugger, keep tabs; auto-release after 10 min |
-| `stop` | – | drop control; tabs stay |
+| `stop` | – | drop control and close task-owned temporary tabs |
 | `finalize` | `keep?` | close tabs the task opened except `keep`, ungroup the rest |
 
 ### Browser actions v2 workflow
@@ -167,7 +187,11 @@ The relay and CLI remain generic; all operations, frame routing and waiting exec
 
 | code | meaning / what to do |
 |---|---|
-| `EXT_OFFLINE` / `RELAY_DOWN` | no browser connected / relay not running. Tell the owner (via Lark etc., not the panel) |
+| `EXT_OFFLINE` | browser disconnected: stop browser commands and submit the final/partial report to the original panel; the relay queues it |
+| `RELAY_DOWN` | relay unavailable: no reply can be queued yet; restore it before resubmitting the final report |
+| `CHAT_PENDING` | an earlier final reply awaits panel acknowledgement; check `status.pendingReplies` and wait before issuing more commands |
+| `OUTBOX_WRITE_FAILED` / `OUTBOX_FULL` | the reply was not saved; restore storage or deliver pending replies before retrying |
+| `SCREENSHOT_TIMEOUT` | screenshot exceeded its 12-second budget; error names the stage. Inspect browser state and report the outcome; do not repeat the action before the screenshot |
 | `AMBIGUOUS_ENDPOINT` | several browsers connected: pass `--endpoint <keyId>` from `status` |
 | `BLOCKED_URL` | payment / banking / account-security page. Do NOT retry or work around; ask the owner to do that step |
 | `CONTROL_NOT_GRANTED` | no task yet: `open <url>` first |

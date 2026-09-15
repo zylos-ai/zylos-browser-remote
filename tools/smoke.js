@@ -72,12 +72,13 @@ function get(port, p) {
 function fakeExt(port, key, { version = '9.9.9', handler } = {}) {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ext`, [SUBPROTOCOL, `key.${key}`]);
   const ext = { ws, frames: [], closeCode: null, open: new Promise((res, rej) => { ws.on('open', res); ws.on('error', rej); }) };
-  ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', version, capabilities: ['navigate', 'snapshot'] })));
+  ws.on('open', () => ws.send(JSON.stringify({ type: 'hello', version, capabilities: ['navigate', 'snapshot', 'chat-ack-v1'] })));
   ws.on('close', (code) => { ext.closeCode = code; });
   ws.on('message', async (raw) => {
     const m = JSON.parse(raw.toString());
     ext.frames.push(m);
     if (m.type === 'ping') ws.send(JSON.stringify({ type: 'pong', ts: m.ts }));
+    if (m.type === 'chat' && m.id) ws.send(JSON.stringify({ type: 'chat-ack', id: m.id }));
     if (m.type === 'req' && handler) {
       const out = await handler(m);
       if (out) ws.send(JSON.stringify({ id: m.id, ...out }));
@@ -175,7 +176,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   r = await post(agentPort, '/rpc', { method: 'info', endpoint: b.keyId });
   ok(r.body.ok && r.body.result.who === 'beta', 'explicit endpoint routes to the right extension');
   r = await post(agentPort, '/chat', { endpoint: b.keyId, text: '你好 beta' });
-  ok(r.status === 200 && r.body.delivered, 'POST /chat with endpoint delivered');
+  ok(r.status === 202 && r.body.queued && !r.body.delivered, 'POST /chat persisted pending browser acknowledgement');
   const chatB = await extB.waitFor((m) => m.type === 'chat');
   ok(chatB.role === 'assistant' && chatB.text === '你好 beta', 'extension B received the chat frame');
   ok(chatB.final === true, 'ordinary replies are final by default');

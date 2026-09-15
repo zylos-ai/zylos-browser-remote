@@ -9,7 +9,9 @@
  *                 -> 200 {ok:false, code, message, details?}   the extension refused
  *                 -> 4xx/5xx {ok:false, code, message}         relay-level failure
  *   POST /chat    {endpoint?, text, final?}  agent -> side-panel chat bubble
- *   GET  /status  {ok, extensions:{<keyId>:{...}}}
+ *                 -> 202 {ok:true, queued:true, delivered:false, messageId} (final)
+ *                 -> 200 {ok:true, delivered:true} (progress)
+ *   GET  /status  {ok, extensions:{<keyId>:{...}}, pendingReplies:{<keyId>:count}}
  *
  * `method` and `params` are forwarded verbatim; the relay does not know which
  * methods exist. Which extension answers is chosen by `endpoint` (a keyId, the
@@ -34,6 +36,7 @@ const RELAY_ERROR_STATUS = {
   AMBIGUOUS_ENDPOINT: 400,
   BAD_ENDPOINT: 400,
   UNKNOWN_ENDPOINT: 404,
+  CHAT_PENDING: 503,
 };
 
 class AgentLane {
@@ -58,7 +61,7 @@ class AgentLane {
 
     try {
       if (req.method === 'GET' && url.pathname === '/status') {
-        return reply(200, { ok: true, extensions: this.ext.status() });
+        return reply(200, { ok: true, extensions: this.ext.status(), pendingReplies: this.ext.outbox.counts() });
       }
 
       if (req.method === 'POST' && (url.pathname === '/rpc' || url.pathname === '/chat')) {
@@ -71,7 +74,7 @@ class AgentLane {
         if (!body || typeof body !== 'object' || Array.isArray(body)) {
           return fail(400, 'BAD_REQUEST', 'body must be a JSON object');
         }
-        const target = this.ext.resolve(body.endpoint);
+        const target = this.ext.resolve(body.endpoint, { allowOffline: url.pathname === '/chat' && body.final !== false });
         if (target.error) return fail(RELAY_ERROR_STATUS[target.error] || 500, target.error, target.message);
 
         if (url.pathname === '/chat') return this._chat(target.keyId, body, reply, fail);
@@ -124,6 +127,15 @@ class AgentLane {
     }
     if (body.final !== undefined && typeof body.final !== 'boolean') {
       return fail(400, 'BAD_REQUEST', 'final must be a boolean when present');
+    }
+    if (body.final !== false) {
+      try {
+        const messageId = this.ext.queueChat(keyId, text);
+        return reply(202, { ok: true, endpoint: keyId, queued: true, delivered: false, messageId });
+      } catch (error) {
+        const code = error.code === 'OUTBOX_FULL' ? error.code : 'OUTBOX_WRITE_FAILED';
+        return fail(503, code, 'Final reply was not saved; restore the relay outbox before retrying');
+      }
     }
     if (!this.ext.sendChat(keyId, { text, final: body.final ?? true })) {
       return fail(503, 'EXT_OFFLINE', 'extension not connected');

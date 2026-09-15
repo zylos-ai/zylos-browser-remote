@@ -40,7 +40,8 @@ test('chat receipts are correlated, failures reach the browser, and a replaced s
   const previousKey = process.env.BROWSER_REMOTE_KEY;
   process.env.BROWSER_REMOTE_KEY = 'a'.repeat(64);
   const pending = new Map();
-  const relay = await start({ extPort: 0, agentPort: 0, onChat: (message) => {
+  const outboxDir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-receipt-outbox-'));
+  const relay = await start({ extPort: 0, agentPort: 0, outboxFile: path.join(outboxDir, 'outbox.json'), onChat: (message) => {
     if (message.text === 'fail') return { ok: false, code: 'C4_DELIVERY_FAILED' };
     if (message.text === 'throw') throw new Error('test failure');
     if (message.text === 'defer') return new Promise((resolve) => pending.set(message.chatId, resolve));
@@ -50,6 +51,7 @@ test('chat receipts are correlated, failures reach the browser, and a replaced s
   t.after(() => {
     sockets.forEach((ws) => ws.terminate());
     relay.close();
+    fs.rmSync(outboxDir, { recursive: true, force: true });
     if (previousKey === undefined) delete process.env.BROWSER_REMOTE_KEY;
     else process.env.BROWSER_REMOTE_KEY = previousKey;
   });

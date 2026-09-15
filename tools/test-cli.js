@@ -73,7 +73,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   r = await run('browser.js', ['open', 'url=https://example.com']);
   ok(r.code === 1 && r.json.code === 'EXT_OFFLINE', 'open with no extension -> EXT_OFFLINE exit 1');
   r = await run('send.js', [keyId, 'hello']);
-  ok(r.code === 3, 'send.js exits 3 when the browser is offline');
+  ok(r.code === 0 && /Reply saved/.test(r.out), 'send.js saves final replies while the browser is offline');
 
   console.log('-- fake extension joins');
   const seen = [];
@@ -83,13 +83,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const m = JSON.parse(raw.toString());
     seen.push(m);
     if (m.type === 'ping') ws.send(JSON.stringify({ type: 'pong', ts: m.ts }));
+    if (m.type === 'chat' && m.id) ws.send(JSON.stringify({ type: 'chat-ack', id: m.id }));
     if (m.type !== 'req') return;
     if (m.method === 'screenshot') return ws.send(JSON.stringify({ id: m.id, type: 'resp', result: { format: 'png', data: png.toString('base64').repeat(20) } }));
     if (m.method === 'click') return ws.send(JSON.stringify({ id: m.id, type: 'error', code: 'STALE_ELEMENT', message: 'page changed' }));
     ws.send(JSON.stringify({ id: m.id, type: 'resp', result: { method: m.method, params: m.params, requestId: m.requestId } }));
   });
   await new Promise((res) => ws.on('open', res));
-  ws.send(JSON.stringify({ type: 'hello', version: '1.0.0', capabilities: ['open', 'click'] }));
+  ws.send(JSON.stringify({ type: 'hello', version: '1.3.0', capabilities: ['open', 'click', 'chat-ack-v1'] }));
+  for (let i = 0; i < 50 && !seen.some((m) => m.type === 'chat' && m.text === 'hello'); i++) await sleep(20);
+  ok(seen.some((m) => m.type === 'chat' && m.text === 'hello'), 'the saved offline reply arrives after reconnecting');
+  await sleep(50);
+  seen.length = 0;
   await sleep(100);
 
   r = await run('browser.js', ['status']);

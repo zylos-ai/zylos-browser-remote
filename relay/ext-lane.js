@@ -23,6 +23,7 @@ const http = require('http');
 const { EventEmitter } = require('events');
 const { WebSocketServer } = require('ws');
 const { verifyKey, loadKeys } = require('./keys');
+const { ChatOutbox } = require('./chat-outbox');
 
 const SUBPROTOCOL = 'zylos-browser-remote.v2';
 const KEY_PROTO_PREFIX = 'key.';
@@ -47,10 +48,11 @@ const DEFAULT_ERROR_CODE = 'EXT_ERROR';
  *   'chat-refused' ({keyId, reason, length})
  */
 class ExtLane extends EventEmitter {
-  constructor({ log = () => {}, loadKeys: loader = loadKeys } = {}) {
+  constructor({ log = () => {}, loadKeys: loader = loadKeys, outboxFile } = {}) {
     super();
     this.log = log;
     this.loadKeys = loader;
+    this.outbox = new ChatOutbox(outboxFile);
     this.conns = new Map();    // keyId -> Conn
 
     this.server = http.createServer((req, res) => {
@@ -85,8 +87,9 @@ class ExtLane extends EventEmitter {
    *   omitted + exactly one connection -> that one
    *   omitted + several               -> AMBIGUOUS_ENDPOINT
    *   given but not connected          -> EXT_OFFLINE (known key) / UNKNOWN_ENDPOINT
+   *   allowOffline                     -> known key is enough for a queued final reply
    */
-  resolve(endpoint) {
+  resolve(endpoint, { allowOffline = false } = {}) {
     if (endpoint === undefined || endpoint === null || endpoint === '') {
       const ids = this.connectedIds();
       if (ids.length === 1) return { keyId: ids[0] };
@@ -99,6 +102,7 @@ class ExtLane extends EventEmitter {
     if (this.isConnected(endpoint)) return { keyId: endpoint };
     let known = false;
     try { known = Boolean(this.loadKeys()[endpoint]); } catch { /* treat as unknown */ }
+    if (known && allowOffline) return { keyId: endpoint };
     return known
       ? { error: 'EXT_OFFLINE', message: `extension ${endpoint} is not connected` }
       : { error: 'UNKNOWN_ENDPOINT', message: `no such key ${endpoint}` };
@@ -179,6 +183,7 @@ class ExtLane extends EventEmitter {
       capabilities: [],
       nextId: 1,
       pending: new Map(),     // id -> {resolve, reject, timer, method}
+      chatPending: null,
       superseded: false,
     };
     this.conns.set(keyId, conn);
@@ -199,6 +204,7 @@ class ExtLane extends EventEmitter {
   // ------------------------------------------------------------ frames
 
   _onMessage(conn, raw) {
+    if (this.conns.get(conn.keyId) !== conn) return;
     conn.lastSeen = Date.now();
     conn.alive = true;
     let msg;
@@ -218,6 +224,19 @@ class ExtLane extends EventEmitter {
         conn.capabilities = Array.isArray(msg.capabilities) ? msg.capabilities.filter((c) => typeof c === 'string') : [];
         this.log(`ext[${conn.keyId}]: hello v${conn.version || '?'} caps=${conn.capabilities.length}`);
         this.emit('connected', conn.keyId, { label: conn.label, version: conn.version, capabilities: conn.capabilities });
+        this.flushChat(conn.keyId);
+        return;
+      case 'chat-ack':
+        if (typeof msg.id !== 'string' || msg.id !== conn.chatPending) return;
+        try {
+          this.outbox.acknowledge(conn.keyId, msg.id);
+          conn.chatPending = null;
+          this.log(`chat[${conn.keyId}] acknowledged ${msg.id}`);
+          this.flushChat(conn.keyId);
+        } catch (err) {
+          this.log(`chat[${conn.keyId}] acknowledgement could not be saved: ${err.code || 'OUTBOX_WRITE_FAILED'}`);
+          // Keep the envelope for the next connection; a duplicate is safe at the receiver.
+        }
         return;
       case 'chat':
         this._onChat(conn, msg);
@@ -286,6 +305,26 @@ class ExtLane extends EventEmitter {
     return this._send(conn, { type: 'chat', role, text, ts, final });
   }
 
+  queueChat(keyId, text) {
+    this.outbox.discardRevoked(this.loadKeys());
+    const message = this.outbox.enqueue(keyId, text);
+    this.log(`chat[${keyId}] queued reply ${message.id}`);
+    this.flushChat(keyId);
+    return message.id;
+  }
+
+  flushChat(keyId) {
+    const conn = this.conns.get(keyId);
+    if (!conn || conn.chatPending || !conn.capabilities.includes('chat-ack-v1')) return;
+    const message = this.outbox.first(keyId);
+    if (!message) return;
+    const { keyId: _keyId, ...frame } = message;
+    conn.chatPending = message.id;
+    if (this._send(conn, { type: 'chat', ...frame })) {
+      this.log(`chat[${keyId}] -> panel reply ${message.id} (${message.text.length} chars)`);
+    } else conn.chatPending = null;
+  }
+
   /**
    * Forward one command and await its answer. `method`/`params` are opaque to
    * the relay; `requestId` is the agent's idempotency key and is passed through
@@ -298,6 +337,10 @@ class ExtLane extends EventEmitter {
         const err = new Error('extension not connected');
         err.code = 'EXT_OFFLINE';
         reject(err);
+        return;
+      }
+      if (this.outbox.first(keyId)) {
+        reject(Object.assign(new Error('A final reply is awaiting panel acknowledgement; check status.pendingReplies before starting another command'), { code: 'CHAT_PENDING' }));
         return;
       }
       const ms = clampTimeout(timeoutMs);

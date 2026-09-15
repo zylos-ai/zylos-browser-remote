@@ -7,7 +7,7 @@
  * Normal replies end the browser turn. For an intermediate update, use
  * `node send.js --progress <endpoint> <message>` instead.
  *
- * Exit 0 on delivery, non-zero otherwise (comm-bridge logs the code).
+ * Exit 0 when accepted by the channel (final replies are persisted for delivery).
  */
 
 const client = require('./relay-client');
@@ -29,6 +29,7 @@ if (!text.trim()) {
 
 client.chat({ endpoint, text, final: !progress }).then(({ status, body }) => {
   if (body.ok) {
+    if (body.queued) console.log(`[browser-remote] Reply saved (${body.messageId}); the panel will acknowledge it after connecting.`);
     process.exit(0);
   }
   console.error(`send.js: ${body.code || status}: ${body.message || 'delivery failed'}`);

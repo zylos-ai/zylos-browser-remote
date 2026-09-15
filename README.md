@@ -241,6 +241,18 @@ component and `browser-extension` is zylos-browser-channel.
 需要只保留部分结果页面时，可以在最终回复前用 `finalize keep=[...]` 关闭其他临时页面。
 这些收尾逻辑在插件中执行；Relay 只转发聊天的 `final` 标记和工具请求。
 
+**插件离线也要向原面板提交最终回复。** Relay 0.3.0 会先把最终回复保存到数据目录下的
+`chat-outbox.json`，插件重连后补送；插件保存回复后确认，Relay 才移除记录。
+插件需支持 `chat-ack-v1`（当前扩展 0.13.0，协议版本 1.3.0）。
+普通发送返回 `queued:true` / `messageId` 表示已保存，尚不代表用户已经看到。
+`browser.js status` 的 `pendingReplies` 可以检查每个 Key 尚未确认的回复数量。
+等待回复确认期间，新的工具请求返回 `CHAT_PENDING`，避免旧回复结束一个刚启动的新任务。
+仅最终回复参与补送，进度消息和浏览器操作指令不会重放。
+
+队列总量上限为 100 条，满时返回 `OUTBOX_FULL`；写入失败返回 `OUTBOX_WRITE_FAILED`，
+两者都不能当作发送成功。数据文件权限为 `0600`，升级时须保留此文件。
+不要因之前一次 `/status` 显示离线而跳过面板回复，也不要用其他聊天渠道的消息代替。
+
 新版 Relay 会把 C4 入队结果通过 `chat-status` 发回插件。C4 退出失败、Agent 不可用、
 45 秒未拿到入队结果都会产生提示；两分钟未收到聊天回复时，插件显示延迟提示，不自动重发。
 本次状态修复需要同时更新插件和线上 Browser Remote，再重启 Relay、重新加载插件。
@@ -257,6 +269,10 @@ node ~/zylos/.claude/skills/browser-remote/scripts/browser.js status
 出现 `C4 delivery timed out` 或 `C4 returned no queue receipt` 时，投递结果不确定，先检查再重试。
 只有 `ext[...] chat` 而没有入队成功日志时，先检查 C4 接收脚本、运行目录和服务状态。
 `chat[...] -> panel` 表示回复已交给浏览器连接；WebSocket 在线本身不代表 Agent 正常回复。
+最终回复还应有对应 message ID 的 `chat[...] acknowledged`，才表示插件已经保存并确认收到。
+`queued reply` 后没有确认，检查插件是否重连、是否支持 `chat-ack-v1`、是否提示本地存储失败。
+截图过程超过 12 秒会返回 `SCREENSHOT_TIMEOUT` 并指出阶段；该错误不证明之前的网页操作失败。
+`heartbeat missed` 只证明没有及时收到插件数据，仍需浏览器端日志判断是休眠、网络还是插件异常。
 
 ## Safety model
 
@@ -283,6 +299,7 @@ relay/server.js        wiring + C4 hop (spawn c4-receive.js)
 relay/ext-lane.js      :3802  key → connection map, heartbeat, req/resp correlation, chat envelope
 relay/agent-lane.js    :3803  /rpc /chat /status
 relay/keys.js          keys.json, sha256, keyId, timing-safe verify
+relay/chat-outbox.js   bounded, persisted final replies; removed after extension acknowledgement
 scripts/               browser.js · send.js · key.js · relay-client.js
 tools/smoke.js         fake extension ↔ relay, 37 assertions
 tools/test-cli.js      real relay process + real scripts + fake extension, 25 assertions

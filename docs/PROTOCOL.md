@@ -42,9 +42,9 @@ No auth: the loopback bind is the auth. Bind address is not configurable.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/status` | – | `{ok, extensions:{<keyId>:{connected, label, since, version, capabilities, lastSeenMsAgo, pending}}}` |
+| GET | `/status` | – | `{ok, extensions:{<keyId>:{connected, label, since, version, capabilities, lastSeenMsAgo, pending}}, pendingReplies:{<keyId>:count}}` |
 | POST | `/rpc` | `{endpoint?, method, params?, requestId?, timeoutMs?}` | see below |
-| POST | `/chat` | `{endpoint?, text, final?}` | `200 {ok:true, endpoint, delivered:true}` |
+| POST | `/chat` | `{endpoint?, text, final?}` | final: `202 {ok:true, endpoint, queued:true, delivered:false, messageId}`; progress: `200 {ok:true, endpoint, delivered:true}` |
 
 `/rpc` responses:
 
@@ -54,7 +54,7 @@ No auth: the loopback bind is the auth. Bind address is not configurable.
 | 200 | `{ok:false, endpoint, code, message, details?}` | extension refused (its code, e.g. `BLOCKED_URL`, `STALE_ELEMENT`) |
 | 400 | `{ok:false, code:'BAD_REQUEST'\|'BAD_ENDPOINT'\|'AMBIGUOUS_ENDPOINT'}` | malformed, or several browsers and no `endpoint` |
 | 404 | `{ok:false, code:'UNKNOWN_ENDPOINT'}` | no such key |
-| 503 | `{ok:false, code:'EXT_OFFLINE'}` | key known, browser not connected |
+| 503 | `{ok:false, code:'EXT_OFFLINE'\|'CHAT_PENDING'}` | browser disconnected, or an earlier final reply still awaits acknowledgement |
 | 504 | `{ok:false, code:'EXT_TIMEOUT'}` | no answer within `timeoutMs` (default 30 s, max 120 s) |
 
 Relay-side validation is shape only: `method` matches `[A-Za-z][A-Za-z0-9_.:-]{0,127}`,
@@ -63,9 +63,14 @@ body ≤ 256 KiB. The relay does not know which methods exist.
 
 `endpoint` may be omitted when exactly one browser is connected.
 `final` is a boolean, defaulting to `true`. Ordinary replies end the browser turn;
-an intermediate progress message must explicitly set `final:false`. The relay forwards
-this marker; browser cleanup belongs to the extension. `delivered:true` confirms the
-frame was sent to the socket, not that extension cleanup has completed.
+an intermediate progress message must explicitly set `final:false`. Final replies
+are persisted before acceptance, even while the explicitly named, known endpoint is
+offline. Progress messages require a live connection and are not queued.
+`queued:true` means durably accepted by the relay, not yet confirmed by the browser.
+The bounded outbox holds at most 100 replies; `OUTBOX_FULL` or `OUTBOX_WRITE_FAILED`
+returns HTTP 503 without accepting the new reply. RPCs remain live-only and return
+`CHAT_PENDING` (HTTP 503) while earlier final replies await acknowledgement. This
+preserves ordering so an old final reply cannot tear down newly started work.
 
 ---
 
@@ -90,7 +95,8 @@ old socket fails immediately with `EXT_OFFLINE` rather than after 30 s.
 | ext → relay | `{id, type:'resp', result}` | |
 | ext → relay | `{id, type:'error', code, message, details?}` | `code` is the extension's string code; missing → `EXT_ERROR` |
 | ext → relay | `{type:'chat', id?, text, ts}` | owner typed in the side panel; `id` correlates the intake receipt; text ≤ 8000 chars |
-| relay → ext | `{type:'chat', role:'assistant', text, ts, final}` | agent's reply from `/chat`; `final:true` by default |
+| relay → ext | `{type:'chat', id?, role:'assistant', text, ts, final}` | final replies carry a stable UUID `id`; progress has no delivery ID |
+| ext → relay | `{type:'chat-ack', id}` | acknowledge a final reply after local persistence and handling |
 | relay → ext | `{type:'chat-status', chatId?, state, code?, error?, ts}` | C4 intake receipt: `queued`, `failed`, or `unknown`; `chatId` echoes the user message `id` |
 
 Chat receipts describe transport intake, not Agent thinking or task completion.
@@ -112,6 +118,17 @@ the debugger and hands all open task pages back to the owner without closing the
 Only explicit `final:false` progress keeps the task active. System messages do not end it.
 The normal C4 `send.js <endpoint> <message>` adapter sends final replies;
 `send.js --progress <endpoint> <message>` explicitly sends progress.
+
+Extensions advertise `chat-ack-v1`. After `hello`, the relay sends the oldest
+pending final reply for this key, then waits for its exact ID to be acknowledged
+before sending the next. On reconnect, the same ID is replayed. Acknowledgements
+from a different key or superseded connection do not remove the message.
+The extension deduplicates IDs, including after clearing chat history and worker
+restart, so a replay neither duplicates a bubble nor ends a later task.
+The outbox survives relay restarts in `chat-outbox.json` beside `keys.json` (0600).
+Corrupt/unwritable storage fails visibly; it is never replaced with an empty queue.
+Clients without `chat-ack-v1` must be upgraded before queued replies can be delivered.
+No CDP command or other browser action is persisted or replayed by the relay.
 
 Removed from v1: `state`, `attach`, `detach`, `event`, `lease-lost`, `sessionId`.
 The extension attaches `chrome.debugger` itself per task and never streams CDP
@@ -148,6 +165,9 @@ remain unchanged. Method parameters and Agent workflows are documented in
 
 Commands are queued in the plugin. Stop/pause/finish/finalize cancel preceding
 queued work; dialog handling and info remain accessible while a wait is pending.
+The screenshot capture/verification stage has a 12-second budget, also bounded by
+the RPC deadline. `SCREENSHOT_TIMEOUT` identifies the stage; late pixels are ignored.
+WebSocket ping handling runs independently of command promises.
 `DIALOG_OPEN` can report a dialog caused by an already dispatched click. The
 caller handles it with `dialog`; it must not blindly retry the click. `wait`
 uses local polling, defaults to 10 seconds, max 60 seconds and never extends
