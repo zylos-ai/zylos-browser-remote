@@ -20,6 +20,8 @@ const { spawn } = require('child_process');
 const { ExtLane } = require('./ext-lane');
 const { AgentLane } = require('./agent-lane');
 const { loadKeys, keysFile } = require('./keys');
+const { Monitor } = require('./monitor');
+const { AgentTrace } = require('./agent-trace');
 
 const EXT_PORT = Number(process.env.BROWSER_REMOTE_EXT_PORT || 3802);
 const AGENT_PORT = Number(process.env.BROWSER_REMOTE_AGENT_PORT || 3803);
@@ -123,15 +125,27 @@ function deliverChatToC4({ keyId, text, chatId }, logFn = log, { timeoutMs = C4_
   });
 }
 
-function start({ extPort = EXT_PORT, agentPort = AGENT_PORT, onChat = deliverChatToC4, outboxFile } = {}) {
+function start({ extPort = EXT_PORT, agentPort = AGENT_PORT, onChat = deliverChatToC4, outboxFile,
+  monitor = process.env.BROWSER_REMOTE_MONITOR === '1', monitorFile = process.env.BROWSER_REMOTE_MONITOR_FILE,
+  agentMonitorDir = process.env.BROWSER_REMOTE_MONITOR_AGENT_DIR, agentTraceOptions } = {}) {
+  const trace = monitor ? new Monitor({ file: monitorFile }) : null;
+  const agentTrace = trace && agentMonitorDir ? new AgentTrace(trace, { directory: agentMonitorDir, ...agentTraceOptions }).start() : null;
   const ext = new ExtLane({ log, outboxFile });
-  const agent = new AgentLane({ extLane: ext, port: agentPort, log });
+  const agent = new AgentLane({ extLane: ext, port: agentPort, log, monitor: trace });
+  if (trace) {
+    ext.on('connected', keyId => trace.connection(keyId, true));
+    ext.on('disconnected', keyId => trace.connection(keyId, false));
+    ext.on('reply-queued', message => trace.queuedReply(message));
+    ext.on('reply-acknowledged', message => trace.acknowledged(message));
+  }
 
   // Ingress: panel -> relay -> C4 queue. ext-lane has already bounded the text
   // and checked the envelope; nothing here looks at what the owner wrote.
   ext.on('chat', (msg, reportStatus) => {
+    const ticket = trace?.received(msg);
     // Ack only C4 intake. No claim about model progress or task completion.
     Promise.resolve().then(() => onChat(msg)).then((result) => {
+      trace?.intake(ticket, result);
       if (result?.ok === true) return reportStatus({ state: 'queued' });
       const code = typeof result?.code === 'string' ? result.code : 'C4_DELIVERY_UNCONFIRMED';
       const uncertain = ['C4_DELIVERY_TIMEOUT', 'C4_DELIVERY_UNCONFIRMED'].includes(code);
@@ -142,6 +156,7 @@ function start({ extPort = EXT_PORT, agentPort = AGENT_PORT, onChat = deliverCha
           : 'Message could not reach the Agent queue. Check Browser Remote and C4.',
       });
     }).catch((err) => {
+      trace?.intake(ticket, { ok: false, code: 'C4_DELIVERY_UNCONFIRMED' });
       log(`chat: unexpected delivery error: ${err.message}`);
       reportStatus({ state: 'unknown', code: 'C4_DELIVERY_UNCONFIRMED', error: 'Delivery to the Agent queue could not be confirmed. Check the Agent before retrying.' });
     });
@@ -153,9 +168,12 @@ function start({ extPort = EXT_PORT, agentPort = AGENT_PORT, onChat = deliverCha
     return {
       ext,
       agent,
+      monitor: trace,
       close() {
+        agentTrace?.close();
         agent.close();
         ext.close();
+        trace?.close();
       },
     };
   });

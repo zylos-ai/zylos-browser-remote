@@ -232,6 +232,7 @@ class ExtLane extends EventEmitter {
           this.outbox.acknowledge(conn.keyId, msg.id);
           conn.chatPending = null;
           this.log(`chat[${conn.keyId}] acknowledged ${msg.id}`);
+          this.emit('reply-acknowledged', { keyId: conn.keyId, messageId: msg.id });
           this.flushChat(conn.keyId);
         } catch (err) {
           this.log(`chat[${conn.keyId}] acknowledgement could not be saved: ${err.code || 'OUTBOX_WRITE_FAILED'}`);
@@ -309,6 +310,7 @@ class ExtLane extends EventEmitter {
     this.outbox.discardRevoked(this.loadKeys());
     const message = this.outbox.enqueue(keyId, text);
     this.log(`chat[${keyId}] queued reply ${message.id}`);
+    this.emit('reply-queued', { keyId, messageId: message.id, text });
     this.flushChat(keyId);
     return message.id;
   }

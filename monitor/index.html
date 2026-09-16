@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Zylos · 任务执行记录</title>
+  <link rel="stylesheet" href="/monitor/styles.css">
+  <script src="/monitor/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="identity"><span class="mark">Z</span><div><strong>Zylos <span>Browser</span></strong><p>Agent 与浏览器执行记录</p></div></div>
+    <div class="live-area"><span id="connection" class="connection">正在连接</span><span id="updated" class="muted">读取本地服务…</span></div>
+  </header>
+  <div id="warning" class="warning" role="status" hidden></div>
+  <main class="workspace">
+    <aside class="sidebar">
+      <div class="sidebar-heading"><h1>提问记录</h1><span id="run-count" class="count">0</span></div>
+      <p class="sidebar-note">从插件发送问题，这里会自动更新。</p>
+      <nav id="runs" aria-label="选择一次提问"></nav>
+      <div class="sidebar-bottom"><span class="live-dot"></span>每秒同步 · 最近 60 轮记录</div>
+    </aside>
+    <section class="main-panel" aria-label="执行过程">
+      <p id="agent-source" class="source-status" role="status">正在检查 Agent 工具采集…</p>
+      <div class="connection-details" aria-label="当前浏览器连接">
+        <strong>当前浏览器连接</strong>
+        <div id="connection-details">读取连接信息…</div>
+        <p>以下是当前连接，不代表历史任务当时的版本。协议版本与 Chrome 扩展版本使用不同编号。</p>
+      </div>
+      <div id="empty" class="empty">
+        <span class="eyebrow">READY WHEN YOU ARE</span>
+        <h2>等待下一条提问</h2>
+        <p>在浏览器插件侧栏里发送一个问题，<br>从消息入队到最终回复，每一步都会出现在这里。</p>
+        <div class="empty-flow"><span>01 <b>收到提问</b></span><span>02 <b>执行步骤</b></span><span>03 <b>回复送达</b></span></div>
+      </div>
+      <div id="run-view" hidden>
+        <div class="run-heading"><div><span class="eyebrow" id="run-time"></span><h2 id="question"></h2></div><button id="follow" type="button" aria-pressed="true">跟随最新</button></div>
+        <div class="metrics">
+          <div><span>当前状态</span><strong id="run-status"></strong></div>
+          <div><span>浏览器工具调用</span><strong id="commands">0</strong></div>
+          <div><span>Agent 工具调用</span><strong id="agent-commands">0</strong></div>
+          <div><span>本轮耗时</span><strong id="duration">—</strong></div>
+          <div><span>失败记录（分层计数）</span><strong id="errors">0</strong></div>
+        </div>
+        <p id="error-note" class="distribution-note"></p>
+        <p id="run-note" class="run-note"></p>
+        <div class="section-heading"><h3>工具调用分布</h3><span>按实际工具名称统计调用次数</span></div>
+        <div class="tool-distribution">
+          <section class="tool-group browser"><div class="tool-group-heading"><h4>浏览器工具</h4><span id="browser-total"></span></div><p>打开页面、观察、点击、截图等浏览器操作</p><div id="browser-tools"></div></section>
+          <section class="tool-group agent"><div class="tool-group-heading"><h4>Agent 工具</h4><span id="agent-total"></span></div><p>执行命令、读取文件、查看图片等 Agent 调用</p><div id="agent-tools"></div></section>
+        </div>
+        <p class="distribution-note">一次 Agent 命令可能包含浏览器调用，两层分别计数。工具名称按日志原样展示；通过命令读取文件会记为 exec_command。</p>
+        <div class="section-heading"><h3>执行时间线</h3><span>按开始时间排列 · 点击展开详情</span></div>
+        <div id="filters" class="filters" role="group" aria-label="筛选步骤类型">
+          <button type="button" data-filter="all" aria-pressed="true">全部步骤</button>
+          <button type="button" data-filter="command" aria-pressed="false">浏览器工具</button>
+          <button type="button" data-filter="agent" aria-pressed="false">Agent 工具</button>
+          <button type="button" data-filter="message" aria-pressed="false">消息与状态</button>
+        </div>
+        <ol id="timeline" class="timeline"></ol>
+      </div>
+      <footer>展示已捕获的 Agent 工具、浏览器操作、消息和回复回执。没有工具事件时表示等待下一步，不能据此判断模型内部进度。Agent 的「已返回」表示工具有返回记录，不代表任务目标达成。</footer>
+    </section>
+  </main>
+</body>
+</html>

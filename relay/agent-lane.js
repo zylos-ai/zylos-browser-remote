@@ -40,10 +40,11 @@ const RELAY_ERROR_STATUS = {
 };
 
 class AgentLane {
-  constructor({ extLane, port, log = () => {} }) {
+  constructor({ extLane, port, log = () => {}, monitor = null }) {
     this.ext = extLane;
     this.port = port;
     this.log = log;
+    this.monitor = monitor;
     this.server = http.createServer((req, res) => this._onHttp(req, res));
   }
 
@@ -60,6 +61,7 @@ class AgentLane {
     const fail = (status, code, message, extra) => reply(status, { ok: false, code, message, ...extra });
 
     try {
+      if (this.monitor?.handle(req, res, url, this.ext.status())) return;
       if (req.method === 'GET' && url.pathname === '/status') {
         return reply(200, { ok: true, extensions: this.ext.status(), pendingReplies: this.ext.outbox.counts() });
       }
@@ -75,7 +77,14 @@ class AgentLane {
           return fail(400, 'BAD_REQUEST', 'body must be a JSON object');
         }
         const target = this.ext.resolve(body.endpoint, { allowOffline: url.pathname === '/chat' && body.final !== false });
-        if (target.error) return fail(RELAY_ERROR_STATUS[target.error] || 500, target.error, target.message);
+        if (target.error) {
+          if (this.monitor && url.pathname === '/rpc' && typeof body.method === 'string') {
+            const keyId = typeof body.endpoint === 'string' && /^[a-f0-9]{12}$/.test(body.endpoint) ? body.endpoint : 'unresolved';
+            const ticket = this.monitor.rpcStarted(keyId, body);
+            this.monitor.rpcEnded(ticket, undefined, { code: target.error, message: target.message });
+          }
+          return fail(RELAY_ERROR_STATUS[target.error] || 500, target.error, target.message);
+        }
 
         if (url.pathname === '/chat') return this._chat(target.keyId, body, reply, fail);
         return this._rpc(target.keyId, body, reply, fail);
@@ -99,11 +108,14 @@ class AgentLane {
       return fail(400, 'BAD_REQUEST', 'requestId must match [A-Za-z0-9._:-]{1,128}');
     }
     const t0 = Date.now();
+    const ticket = this.monitor?.rpcStarted(keyId, { method, params, requestId });
     try {
       const result = await this.ext.request(keyId, { method, params, requestId, timeoutMs });
+      this.monitor?.rpcEnded(ticket, result);
       this.log(`rpc[${keyId}] ${method} ok (${Date.now() - t0}ms)`);
       return reply(200, { ok: true, endpoint: keyId, result: result === undefined ? null : result });
     } catch (err) {
+      this.monitor?.rpcEnded(ticket, undefined, err);
       const code = err.code || 'EXT_ERROR';
       const relayStatus = RELAY_ERROR_STATUS[code];
       this.log(`rpc[${keyId}] ${method} FAILED ${code} (${Date.now() - t0}ms): ${err.message}`);
@@ -134,6 +146,7 @@ class AgentLane {
         return reply(202, { ok: true, endpoint: keyId, queued: true, delivered: false, messageId });
       } catch (error) {
         const code = error.code === 'OUTBOX_FULL' ? error.code : 'OUTBOX_WRITE_FAILED';
+        this.monitor?.replyFailed(keyId, code);
         return fail(503, code, 'Final reply was not saved; restore the relay outbox before retrying');
       }
     }
@@ -141,6 +154,7 @@ class AgentLane {
       return fail(503, 'EXT_OFFLINE', 'extension not connected');
     }
     this.log(`chat[${keyId}] -> panel (${text.length} chars)`);
+    this.monitor?.progress(keyId, text);
     return reply(200, { ok: true, endpoint: keyId, delivered: true });
   }
 

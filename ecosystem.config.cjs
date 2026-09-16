@@ -11,6 +11,8 @@ module.exports = {
     cwd: path.join(os.homedir(), 'zylos/.claude/skills/browser-remote'),
     env: {
       NODE_ENV: 'production',
+      // Do not inherit a development shell's monitor setting on deployment.
+      BROWSER_REMOTE_MONITOR: '0',
     },
     autorestart: true,
     max_restarts: 10,

@@ -31,11 +31,13 @@ delete env.BROWSER_REMOTE_KEY;
 fs.writeFileSync(env.ZYLOS_C4_RECEIVE, `require('fs').appendFileSync(${JSON.stringify(path.join(tmp, 'c4.log'))}, JSON.stringify(process.argv.slice(2)) + '\\n'); console.log(JSON.stringify({ok:true,action:'queued',id:1}));`);
 
 let passed = 0;
+let relay;
+let ws;
 const ok = (c, m) => { assert(c, m); passed++; console.log('  ok', m); };
 // Async on purpose: the fake extension lives in THIS process, so a blocking
 // spawnSync would stop it from ever answering the relay.
-const run = (script, args) => new Promise((resolve) => {
-  const child = spawn(process.execPath, [path.join(ROOT, 'scripts', script), ...args], { env });
+const run = (script, args, overrides = {}) => new Promise((resolve) => {
+  const child = spawn(process.execPath, [path.join(ROOT, 'scripts', script), ...args], { env: { ...env, ...overrides } });
   let out = '';
   let err = '';
   child.stdout.on('data', (d) => (out += d));
@@ -60,7 +62,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let r = await run('browser.js', ['status']);
   ok(r.code === 1 && r.json.code === 'RELAY_DOWN', 'browser.js reports RELAY_DOWN with exit 1');
 
-  const relay = spawn(process.execPath, [path.join(ROOT, 'relay', 'server.js')], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  relay = spawn(process.execPath, [path.join(ROOT, 'relay', 'server.js')], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   let relayLog = '';
   relay.stdout.on('data', (d) => (relayLog += d));
   relay.stderr.on('data', (d) => (relayLog += d));
@@ -77,20 +79,38 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   console.log('-- fake extension joins');
   const seen = [];
-  const ws = new WebSocket(`ws://127.0.0.1:${EXT_PORT}/ext`, ['zylos-browser-remote.v2', `key.${key}`]);
-  const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+  ws = new WebSocket(`ws://127.0.0.1:${EXT_PORT}/ext`, ['zylos-browser-remote.v2', `key.${key}`]);
+  // A complete, readable 1x1 PNG, deliberately below the old 256-character cutoff.
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+  let screenshotResult = { data: png.toString('base64') }; // Actual CDP shape: no format.
+  const observation = {
+    observationId: 'fixture-observation', tabId: 12, url: 'https://example.com/',
+    title: 'Fixture', pageVersion: 'fixture:1', startedAt: '2026-09-16T00:00:00.000Z',
+    capturedAt: '2026-09-16T00:00:00.010Z',
+    viewport: { width: 800, height: 600, scrollX: 0, scrollY: 0, dpr: 1, readyState: 'complete' },
+    text: '@fixture-e1 button "Search"', warnings: ['fixture warning'],
+  };
+  let observationImage = { mimeType: 'image/png', data: png.toString('base64') };
+  const catalog = { schemaVersion: 1, extensionVersion: 'fixture', instructions: 'Fixture extension-owned instructions',
+    tools: [{ name: 'future-preview', description: 'A tool the Relay has never heard of' }] };
   ws.on('message', (raw) => {
     const m = JSON.parse(raw.toString());
     seen.push(m);
     if (m.type === 'ping') ws.send(JSON.stringify({ type: 'pong', ts: m.ts }));
     if (m.type === 'chat' && m.id) ws.send(JSON.stringify({ type: 'chat-ack', id: m.id }));
     if (m.type !== 'req') return;
-    if (m.method === 'screenshot') return ws.send(JSON.stringify({ id: m.id, type: 'resp', result: { format: 'png', data: png.toString('base64').repeat(20) } }));
+    if (m.method === 'describe') return ws.send(JSON.stringify({ id: m.id, type: 'resp', result: catalog }));
+    if (m.method === 'future-preview') return ws.send(JSON.stringify({ id: m.id, type: 'resp', result: {
+      label: 'new tool result', items: [{ attachment: { mimeType: 'image/png', data: png.toString('base64') }, value: 42 }],
+      metadata: { mimeType: 'image/png', width: 1 },
+    } }));
+    if (m.method === 'screenshot') return ws.send(JSON.stringify({ id: m.id, type: 'resp', result: screenshotResult }));
+    if (m.method === 'observe') return ws.send(JSON.stringify({ id: m.id, type: 'resp', result: { ...observation, screenshot: observationImage } }));
     if (m.method === 'click') return ws.send(JSON.stringify({ id: m.id, type: 'error', code: 'STALE_ELEMENT', message: 'page changed' }));
     ws.send(JSON.stringify({ id: m.id, type: 'resp', result: { method: m.method, params: m.params, requestId: m.requestId } }));
   });
   await new Promise((res) => ws.on('open', res));
-  ws.send(JSON.stringify({ type: 'hello', version: '1.3.0', capabilities: ['open', 'click', 'chat-ack-v1'] }));
+  ws.send(JSON.stringify({ type: 'hello', version: '1.3.0', capabilities: ['open', 'click', 'screenshot', 'observe', 'chat-ack-v1'] }));
   for (let i = 0; i < 50 && !seen.some((m) => m.type === 'chat' && m.text === 'hello'); i++) await sleep(20);
   ok(seen.some((m) => m.type === 'chat' && m.text === 'hello'), 'the saved offline reply arrives after reconnecting');
   await sleep(50);
@@ -112,11 +132,56 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   r = await run('browser.js', ['click', 'garbage']);
   ok(r.code === 2, 'bad k=v -> usage exit 2');
 
+  console.log('-- extension-owned discovery and new tools');
+  r = await run('browser.js', ['describe']);
+  assert.deepStrictEqual(r.json.result, catalog);
+  ok(r.code === 0, 'the extension guide and unknown tool index pass through unchanged');
+  r = await run('browser.js', ['future-preview', 'custom=value']);
+  const attachment = r.json.result.items[0].attachment;
+  ok(r.code === 0 && r.json.result.label === 'new tool result' && r.json.result.items[0].value === 42, 'a new extension method needs no Remote method registration');
+  ok(!r.out.includes(png.toString('base64')) && !attachment.data && fs.readFileSync(attachment.path).equals(png), 'an unknown tool nested in an array gets generic image attachment handling');
+  ok(seen.some(m => m.method === 'future-preview' && m.params.custom === 'value'), 'new tool parameters reach the extension verbatim');
+  assert.deepStrictEqual(r.json.result.metadata, { mimeType: 'image/png', width: 1 });
+  ok(true, 'image metadata without encoded data is preserved');
+
   console.log('-- screenshot stashing');
   r = await run('browser.js', ['screenshot']);
   ok(r.code === 0 && r.json.result.path && !r.json.result.data && r.json.result.imageReadRequired === true, 'base64 replaced by a file path');
-  ok(fs.existsSync(r.json.result.path) && fs.readFileSync(r.json.result.path).subarray(0, 8).equals(png.subarray(0, 8)), 'file is the decoded PNG');
+  ok(fs.readFileSync(r.json.result.path).equals(png), 'the complete PNG bytes survive the WebSocket, relay and CLI');
+  ok(r.json.result.mimeType === 'image/png' && r.json.result.path.endsWith('.png'), 'bare CDP data gets the correct PNG MIME type and extension');
+  ok(r.json.result.bytes === png.length && !r.out.includes(png.toString('base64')), 'even a small screenshot is removed from stdout with an accurate byte count');
   ok(r.json.result.path.startsWith(env.BROWSER_REMOTE_OBS_DIR), 'stored under the observations dir');
+  ok(path.isAbsolute(r.json.result.path) && (fs.statSync(r.json.result.path).mode & 0o777) === 0o600, 'the agent receives an absolute path to a private image file');
+  const screenshotPath = r.json.result.path;
+
+  screenshotResult = { format: 'png', data: png.toString('base64') };
+  r = await run('browser.js', ['screenshot']);
+  ok(r.code === 0 && r.json.result.format === 'png' && r.json.result.path.endsWith('.png'), 'legacy format metadata remains supported');
+
+  console.log('-- observe stashing');
+  r = await run('browser.js', ['observe', 'interactive=true']);
+  const image = r.json.result.screenshot;
+  ok(r.code === 0 && !Object.hasOwn(image, 'data') && !r.out.includes(observationImage.data), 'observe also removes the nested image encoding from stdout');
+  ok(image.path.endsWith('.png') && image.mimeType === 'image/png' && image.bytes === png.length && image.imageReadRequired === true, 'observe returns the same image metadata as screenshot');
+  ok(image.path !== screenshotPath && fs.readFileSync(image.path).equals(png), 'observe saves a separate readable image on the CLI host');
+  const { screenshot: _image, ...rest } = r.json.result;
+  assert.deepStrictEqual(rest, observation);
+  ok(true, 'observe preserves text, viewport, page version, timestamps and other observation fields');
+  ok(seen.some((m) => m.method === 'observe' && m.params.interactive === true), 'observe params still reach the extension unchanged');
+
+  const blockedDir = path.join(tmp, 'not-a-directory');
+  fs.writeFileSync(blockedDir, 'fixture');
+  for (const method of ['screenshot', 'observe']) {
+    r = await run('browser.js', [method], { BROWSER_REMOTE_OBS_DIR: blockedDir });
+    ok(r.code === 1 && r.json.code === 'CLI_ERROR' && !r.out.includes(observationImage.data), `${method} storage failure reports an error without leaking image data`);
+  }
+  observationImage = { mimeType: 'image/jpeg', data: png.toString('base64') };
+  r = await run('browser.js', ['observe']);
+  ok(r.code === 1 && r.json.code === 'CLI_ERROR' && !r.out.includes(observationImage.data), 'a MIME mismatch fails without returning raw image data');
+  observationImage = { mimeType: 'image/png', data: 'invalid-image-fixture' };
+  r = await run('browser.js', ['observe']);
+  ok(r.code === 1 && r.json.code === 'CLI_ERROR' && !r.out.includes(observationImage.data), 'invalid image bytes fail without returning the payload');
+  observationImage = { mimeType: 'image/png', data: png.toString('base64') };
 
   console.log('-- chat both ways');
   r = await run('send.js', [keyId, '找到了', '第一条']);
@@ -151,6 +216,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   console.log(`\ntest-cli: ${passed} assertions passed`);
   process.exit(0);
 })().catch((err) => {
+  ws?.terminate();
+  relay?.kill('SIGTERM');
+  fs.rmSync(tmp, { recursive: true, force: true });
   console.error('\ntest-cli FAILED:', err);
   process.exit(1);
 });

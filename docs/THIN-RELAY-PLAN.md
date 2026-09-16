@@ -134,7 +134,7 @@ skills/browser-remote/     （repo 根即 skill 根，与 zylos-telegram 一致�
   与 `[TG DM]`/`[Lark]` 的惯例一致，让 agent 和以后的记忆总结都能分辨来源）。
 - 出：agent `cat <<'EOF' | c4-send.js browser-remote <keyId>` → comm-bridge 找到 `skills/browser-remote/scripts/send.js` → `/chat`。
   这补上了 `docs/SIDEPANEL-SPEC.md:44-51` 承诺但一直不存在的那一段。
-- 操作浏览器：agent 直接跑 `scripts/browser.js`，SKILL.md 教方法名和参数（§4），
+- 操作浏览器：agent 直接跑 `scripts/browser.js`，SKILL.md 只说明传输入口；方法名、参数和指南通过插件的 describe 获取，
   截图结果落到 `~/zylos/components/browser-remote/observations/*.png` 让 agent 用图片工具读（借 zylos-browser-channel `src/observations.ts` 的做法）。
 
 `SKILL.md` 里必须写清：C4 消息的 endpoint 就是浏览器的 keyId，回聊天和操作浏览器要用同一个 keyId。

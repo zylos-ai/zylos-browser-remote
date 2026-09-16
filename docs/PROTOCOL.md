@@ -19,6 +19,35 @@ allowlist, URL guard, idempotency — now lives in the extension
 (`zylos-browser-extension`, `remote` build). The relay is trusted with exactly
 one thing: knowing which key is which browser.
 
+Optional development diagnostics (`BROWSER_REMOTE_MONITOR=1`) add read-only
+`GET /monitor/`, its static assets, and `GET /monitor/api` to the loopback agent
+lane only. The public extension lane is unchanged. These routes require a local
+Host header and reject cross-origin browser reads; they expose bounded summaries,
+not screenshot data or a browser-command endpoint. The API uses a revision token
+for lightweight polling. Diagnostics observe existing chat/RPC/reply events and
+do not add fields to extension messages or modify command execution policy.
+With `BROWSER_REMOTE_MONITOR_AGENT_DIR` set to the Zylos runtime directory, an
+optional read-only Codex CLI rollout adapter adds `kind: "agent"` steps. Browser
+RPC steps keep `kind: "command"`. The API exposes `agentSource` availability and
+per-run `toolCounts.browser` / `toolCounts.agent` arrays of `{name, count}`.
+The adapter scopes sessions by exact working directory and CLI source, associates
+calls through the C4 reply-routing suffix, and omits ambiguous mixed-message
+calls. It persists tool names, bounded input metadata, return byte counts and
+timestamps; never raw Agent tool output or reasoning. `exec_command` steps also
+include `invocation: {json, originalBytes, redacted, truncated}`: a display copy
+of the invocation arguments (including `cmd` and `workdir` when present), with
+recognized credentials/encoded images removed and a 16 KiB size limit. C4 user
+messages observed in the rollout use `kind: "agent-input"` and the same display
+envelope; these are message steps, not tool calls. Retained legacy steps may be
+enriched only by exact session/call-ID matches in the currently scanned rollouts.
+`returned` means a return was observed without an explicit success/failure signal.
+Tool counts can exceed retained timeline length; nested Agent/browser calls are
+separate layers, not a unique-operation total. This adds no wire-protocol fields.
+There is no additional listener: the existing agent-lane HTTP server routes
+`/monitor/*` only when enabled. The production PM2 config explicitly disables
+monitoring; with it disabled no rollout reader, persistence timer or monitor
+route is started.
+
 ---
 
 ## Identity: keys and keyIds
@@ -134,45 +163,48 @@ Removed from v1: `state`, `attach`, `detach`, `event`, `lease-lost`, `sessionId`
 The extension attaches `chrome.debugger` itself per task and never streams CDP
 events out.
 
-### What the extension enforces (not the relay)
+### Extension-owned discovery and execution
 
-- **Method table**: `info start open new-tab switch-tab tabs snapshot observe
-  screenshot click fill type scroll keypress pause finish stop finalize frames find inspect
-  hover double-click right-click drag select check back forward reload dialog wait`. Anything
-  else → `UNKNOWN_METHOD`. Params are zod-validated → `BAD_PARAMS`.
-- **URL guard** (`utils/guard.ts`, the reviewed cdp-bridge blocklist): navigation
-  to payment / banking / account-security URLs → `BLOCKED_URL`; while the task tab
-  sits on such a page, `snapshot observe screenshot click fill type scroll
-  keypress` are refused, the exits (`open new-tab switch-tab pause finish stop
-  finalize`) stay open.
-- **Task tabs**: commands touch only tabs the extension created for the task
-  (`open` with no task creates one beside the owner's active tab), plus new pages
-  Chrome identifies as opened by those task tabs. Never the
-  owner's own tab.
-- **Idempotency**: `requestId` on a mutating method replays the recorded answer
-  (`replayed:true`) instead of acting twice; 200-entry LRU per worker lifetime.
-  Matching in-flight IDs are coalesced; different method/params with the same ID
-  return `REQUEST_ID_CONFLICT`. Fresh CLI invocations use fresh IDs.
-- **Sensitive input**: password / OTP fields → `SENSITIVE_INPUT`.
-- **Kill switch**: the owner's 停用 closes the socket and releases the task.
+The connected extension owns browser methods, parameter validation, instructions,
+URL/task/input policies, action queues and idempotency. The relay has no browser
+method registry. The extension advertises `tool-catalog-v1` and a read-only
+`describe` method. Forward it through the same `/rpc` path:
 
-### Browser actions v2 (extension 0.11.0+)
+- `describe {}` returns `schemaVersion`, `extensionVersion`, bundled `instructions`,
+  a compact `tools:[{name,description}]` index and a parameter lookup hint.
+- `describe {method:"..."}` or `{methods:[...]}` (up to 8 names) returns the chosen
+  tools with JSON parameter shapes derived from the execution Zod schemas,
+  explicit runtime constraints and examples. Supply one selector, not both.
+- Discovery does not acquire browser control and remains available during waits.
+  Unknown tool names are rejected by the extension, not guessed by Remote.
+- The initial contract version is 1, advertised by extension transport version
+  1.4.0+. Older plugins answer UNKNOWN_METHOD; update/reload the extension.
 
-`hello` / `info` capabilities add `browser-actions-v2`, `frames-v1`, `popup-v1`,
-`dialog-v1`, and `wait-v1`. Wire envelopes, HTTP endpoints and relay forwarding
-remain unchanged. Method parameters and Agent workflows are documented in
-[SKILL.md](../SKILL.md) and the extension's `docs/BROWSER-ACTIONS.md`.
+The Agent reuses descriptions within a task and refetches for another endpoint
+or extension update. Descriptions belong to the target browser, not to the Relay
+installation; no plugin source files need to be present on the Agent server.
+Browser semantics are maintained in the extension's `agent/browser-guide.md` and
+`utils/tool-catalog.ts`, alongside its implementation. See that repository for
+browser-specific policy and recovery details.
 
-Commands are queued in the plugin. Stop/pause/finish/finalize cancel preceding
-queued work; dialog handling and info remain accessible while a wait is pending.
-The screenshot capture/verification stage has a 12-second budget, also bounded by
-the RPC deadline. `SCREENSHOT_TIMEOUT` identifies the stage; late pixels are ignored.
-WebSocket ping handling runs independently of command promises.
-`DIALOG_OPEN` can report a dialog caused by an already dispatched click. The
-caller handles it with `dialog`; it must not blindly retry the click. `wait`
-uses local polling, defaults to 10 seconds, max 60 seconds and never extends
-the `/rpc` deadline. A longer wait therefore also needs a longer `timeoutMs`.
-No child CDP sessions or browser events are exposed on the relay wire.
+### Generic image attachments and CLI output
+
+Image bytes travel as Base64 in the existing result envelope. The relay does not
+rewrite results. New extensions label image objects with `mimeType` and `data`.
+The CLI recursively walks result objects and arrays, identifies image attachments
+by data type (with legacy format/PNG/JPEG-header compatibility), and stores them
+on the Agent host before printing JSON. There is no method-name dispatch here.
+
+The same object keeps its metadata and receives `path`, `mimeType`, decoded
+`bytes` and `imageReadRequired:true`; `data` is removed. PNG/JPEG are supported.
+The CLI rejects declared unsupported/mismatched image types, excessive attachment
+count/depth, or storage failures with CLI_ERROR rather than printing the payload.
+At most 12 images are accepted per result, with 12 retained overall. Current-batch
+files are protected from retention cleanup. Other result data passes through.
+
+Paths require a filesystem shared with the consuming Agent; they are not paths
+on the owner's computer or public URLs. This generic output adapter requires no
+Remote change when an extension adds a new method returning typed images.
 
 ### MV3 constraints (unchanged)
 
