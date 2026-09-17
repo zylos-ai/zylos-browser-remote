@@ -116,6 +116,14 @@ function render() {
     content.append(el('p', 'muted', `开始于 ${time(step.startedAt, true)}${step.endedAt ? ` · 返回于 ${time(step.endedAt, true)}` : ''}`));
     if (step.text) content.append(el('p', '', step.text));
     if (step.error) content.append(el('p', '', `错误：${step.error}`));
+    if (Array.isArray(step.parts) && step.parts.length) {
+      const parts = el('ol', 'compound-parts');
+      for (const part of step.parts) parts.append(el('li', '',
+        `${part.method} · ${{ success: '已执行', error: '失败', skipped: '未执行' }[part.status] || part.status}` +
+        (part.durationMs === undefined ? '' : ` · ${duration(part.durationMs)}`) +
+        (part.error ? ` · ${part.error}` : '')));
+      content.append(el('p', 'muted', '一次调用内的步骤（返回后更新）'), parts);
+    }
     addDetail(content, '参数摘要', step.params);
     addDetail(content, '随消息附带的上下文', step.context);
     if (step.invocation) {

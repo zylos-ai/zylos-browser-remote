@@ -56,6 +56,36 @@ test('monitor merges overlapping prompts and bounds/redacts diagnostic payloads'
   monitor.close();
 });
 
+test('composite diagnostics preserve partial progress and redact nested input without counting child RPCs', () => {
+  const monitor = new Monitor();
+  const call = monitor.rpcStarted('a', { method: 'step', params: {
+    action: { op: 'fill', ref: '@input', text: 'private-nested-input' },
+    wait: { condition: 'text', text: 'private-expected-text' },
+    read: { op: 'find', selector: '#result' },
+  } });
+  const steps = [
+    { method: 'fill', status: 'success', durationMs: 12, result: { done: true } },
+    { method: 'wait', status: 'error', durationMs: 200, error: { code: 'WAIT_TIMEOUT', message: 'not ready' } },
+    { method: 'find', status: 'skipped' },
+  ];
+  monitor.rpcEnded(call, undefined, { code: 'STEP_INCOMPLETE', message: 'Partial result', details: { completed: false, steps } });
+  assert.equal(call.step.status, 'error');
+  assert.deepEqual(call.step.parts, [
+    { method: 'fill', status: 'success', durationMs: 12 },
+    { method: 'wait', status: 'error', durationMs: 200, error: 'WAIT_TIMEOUT' },
+    { method: 'find', status: 'skipped' },
+  ]);
+  const saved = JSON.stringify(monitor.runs);
+  assert(!saved.includes('private-nested-input'));
+  assert(!saved.includes('private-expected-text'));
+  assert(call.step.result.includes('completed'));
+  assert.deepEqual(call.run.toolCounts.browser, [{ name: 'step', count: 1 }]);
+  const success = monitor.rpcStarted('a', { method: 'step' });
+  monitor.rpcEnded(success, { completed: true, steps: [{ method: 'snapshot', status: 'success', durationMs: 4 }] });
+  assert.equal(success.step.parts[0].method, 'snapshot');
+  monitor.close();
+});
+
 test('monitor persists history, marks interrupted commands and accepts delayed final receipts', t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'br-monitor-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

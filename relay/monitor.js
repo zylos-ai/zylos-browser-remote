@@ -17,24 +17,25 @@ const ASSETS = {
 };
 const secret = /^(?:data|password|passwd|token|authorization|cookie|secret|apiKey|accessKey|connectionKey|promptText)$/i;
 
-function summarize(value, depth = 0) {
+function summarize(value, depth = 0, input = false) {
   if (depth > 4) return '[省略深层内容]';
   if (typeof value === 'string') return value.length > 1000 ? value.slice(0, 1000) + '… [已截断]' : value;
   if (value === null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) return value.slice(0, 12).map(item => summarize(item, depth + 1));
+  if (Array.isArray(value)) return value.slice(0, 12).map(item => summarize(item, depth + 1, input));
   const result = Object.create(null);
   for (const [key, item] of Object.entries(value).slice(0, 24)) {
-    if (secret.test(key)) result[key] = '[内容未记录]';
+    if (input && key === 'text' && typeof item === 'string') result[key] = `[输入 ${item.length} 个字符，内容未记录]`;
+    else if (secret.test(key)) result[key] = '[内容未记录]';
     else if (key === 'url' && typeof item === 'string') {
       try { const url = new URL(item); url.username = ''; url.password = ''; url.search = ''; url.hash = ''; result[key] = url.href; }
       catch { result[key] = '[无效 URL]'; }
-    } else result[key] = summarize(item, depth + 1);
+    } else result[key] = summarize(item, depth + 1, input);
   }
   return result;
 }
 
-function detail(value) {
-  const text = JSON.stringify(summarize(value));
+function detail(value, input = false) {
+  const text = JSON.stringify(summarize(value, 0, input));
   return text && text.length > 3500 ? text.slice(0, 3500) + '… [已截断]' : text;
 }
 
@@ -187,9 +188,7 @@ class Monitor {
   rpcStarted(keyId, { method, params, requestId }) {
     const run = this.run(keyId);
     this.countTool(run, 'browser', method);
-    const shownParams = typeof params?.text === 'string'
-      ? { ...params, text: `[输入 ${params.text.length} 个字符，内容未记录]` } : params;
-    const step = this.add(run, 'command', method, { status: 'running', requestId, params: detail(shownParams || {}) });
+    const step = this.add(run, 'command', method, { status: 'running', requestId, params: detail(params || {}, true) });
     run.status = 'running';
     return { run, step };
   }
@@ -199,8 +198,15 @@ class Monitor {
     const { run, step } = ticket;
     step.endedAt = this.now(); step.durationMs = step.endedAt - step.startedAt;
     step.status = error ? 'error' : 'success';
-    if (error) { step.error = String(error.code || 'EXT_ERROR'); step.result = detail({ message: error.message }); }
+    if (error) { step.error = String(error.code || 'EXT_ERROR'); step.result = detail({ message: error.message, details: error.details }); }
     else step.result = detail(result);
+    // Display generic ordered result parts; this never schedules browser work.
+    const parts = error?.details?.steps ?? result?.steps;
+    if (Array.isArray(parts)) step.parts = parts.slice(0, 12).filter(part =>
+      part && typeof part.method === 'string' && ['success', 'error', 'skipped'].includes(part.status)
+    ).map(part => ({ method: part.method.slice(0, 128), status: part.status,
+      ...(Number.isFinite(part.durationMs) ? { durationMs: Math.max(0, part.durationMs) } : {}),
+      ...(typeof part.error?.code === 'string' ? { error: part.error.code.slice(0, 64) } : {}) }));
     if (this.active.get(run.keyId) === run) run.status = run.steps.some(item => item.status === 'running') ? 'running' : 'waiting';
     run.updatedAt = this.now(); this.changed();
   }
