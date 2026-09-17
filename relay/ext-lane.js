@@ -37,6 +37,7 @@ const MAX_COMMAND_TIMEOUT_MS = 120_000;
 // unbounded argv at c4-receive. Over the cap the frame is REFUSED and said so,
 // never silently shortened: half an instruction is worse than no instruction.
 const MAX_CHAT_TEXT = 8000;
+const MAX_CHAT_CONTEXT = 16000;
 // Sent by the extension in `error` frames when it did not supply a code itself.
 const DEFAULT_ERROR_CODE = 'EXT_ERROR';
 
@@ -292,9 +293,14 @@ class ExtLane extends EventEmitter {
     if (text.length > MAX_CHAT_TEXT) {
       return refuse(`text too long (${text.length} > ${MAX_CHAT_TEXT} chars) -- send it in parts`);
     }
+    // Opaque client context: only the envelope size/type belongs to the relay.
+    if (msg.context !== undefined && (typeof msg.context !== 'string' || msg.context.length > MAX_CHAT_CONTEXT)) {
+      return refuse('context must be a string of at most 16000 chars');
+    }
 
     this.log(`ext[${conn.keyId}]: chat (${text.length} chars)`);
-    this.emit('chat', { keyId: conn.keyId, label: conn.label, text, ts, chatId }, reportStatus);
+    this.emit('chat', { keyId: conn.keyId, label: conn.label, text, ts, chatId,
+      ...(msg.context === undefined ? {} : { context: msg.context }) }, reportStatus);
   }
 
   // ------------------------------------------------------------ outbound

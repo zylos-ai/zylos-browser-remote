@@ -387,3 +387,10 @@ tools/test-cli.js      real relay process + real scripts + fake extension, 25 as
 docs/PROTOCOL.md       the two surfaces and the C4 hop
 docs/THIN-RELAY-PLAN.md  why the relay got thin, decisions taken
 ```
+
+### Current-page context
+
+Extension 0.15.0+ can attach bounded current-page context to each sidebar message.
+Update this relay as well: it forwards the optional context string to the Agent
+without interpreting page semantics. The extension supplies page-selection tools
+and their guide through `describe`. Old extension clients remain compatible.

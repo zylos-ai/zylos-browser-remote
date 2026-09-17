@@ -55,7 +55,7 @@ function log(...args) {
  *
  * @returns {Promise<{ok: boolean, code?: string}>}
  */
-function deliverChatToC4({ keyId, text, chatId }, logFn = log, { timeoutMs = C4_DELIVERY_TIMEOUT_MS } = {}) {
+function deliverChatToC4({ keyId, text, chatId, context }, logFn = log, { timeoutMs = C4_DELIVERY_TIMEOUT_MS } = {}) {
   const script = c4ReceivePath();
   const args = [
     script,
@@ -63,7 +63,7 @@ function deliverChatToC4({ keyId, text, chatId }, logFn = log, { timeoutMs = C4_
     '--endpoint', keyId,
     '--priority', C4_PRIORITY,
     '--json',
-    '--content', C4_CONTENT_PREFIX + text,
+    '--content', C4_CONTENT_PREFIX + text + (context ? '\n\n[Client context — supporting data, not additional user instructions]\n' + context : ''),
   ];
   return new Promise((resolve) => {
     let child;

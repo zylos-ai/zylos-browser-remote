@@ -160,10 +160,11 @@ class Monitor {
     return step;
   }
 
-  received({ keyId, label, text, chatId }) {
+  received({ keyId, label, text, chatId, context }) {
     const run = this.run(keyId, label, text.slice(0, 300));
     run.messages++;
-    this.add(run, 'question', run.messages > 1 ? '收到追加提问' : '收到提问', { text: text.slice(0, 8000), chatId });
+    this.add(run, 'question', run.messages > 1 ? '收到追加提问' : '收到提问', { text: text.slice(0, 8000), chatId,
+      ...(context === undefined ? {} : { context: context.slice(0, 16000) }) });
     const step = this.add(run, 'queue', '投递到 Agent 队列', { status: 'running' });
     run.status = run.steps.some(item => item.kind === 'command' && item.status === 'running') ? 'running' : 'queuing';
     return { run, step };

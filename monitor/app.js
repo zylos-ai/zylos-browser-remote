@@ -117,6 +117,7 @@ function render() {
     if (step.text) content.append(el('p', '', step.text));
     if (step.error) content.append(el('p', '', `错误：${step.error}`));
     addDetail(content, '参数摘要', step.params);
+    addDetail(content, '随消息附带的上下文', step.context);
     if (step.invocation) {
       let args;
       try { args = JSON.parse(step.invocation.json); } catch { /* older diagnostic format */ }

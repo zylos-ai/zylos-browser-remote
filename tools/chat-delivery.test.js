@@ -87,3 +87,38 @@ test('chat receipts are correlated, failures reach the browser, and a replaced s
   await waitFor(() => replacement.frames.some((frame) => frame.chatId === 'five'));
   assert.equal(replacement.frames.some((frame) => frame.chatId === 'four'), false);
 });
+
+test('bounded opaque client context reaches C4 verbatim and malformed context is refused', async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'br-context-'));
+  const previousKey = process.env.BROWSER_REMOTE_KEY;
+  const previousC4 = process.env.ZYLOS_C4_RECEIVE;
+  process.env.BROWSER_REMOTE_KEY = 'c'.repeat(64);
+  const output = path.join(tmp, 'delivered.json');
+  process.env.ZYLOS_C4_RECEIVE = path.join(tmp, 'c4.js');
+  fs.writeFileSync(process.env.ZYLOS_C4_RECEIVE, `const fs=require('fs');fs.writeFileSync(${JSON.stringify(output)},JSON.stringify(process.argv.slice(2)));console.log(JSON.stringify({ok:true,action:'queued'}));`);
+  const relay = await start({ extPort: 0, agentPort: 0, outboxFile: path.join(tmp, 'outbox.json') });
+  const ws = new WebSocket(`ws://127.0.0.1:${relay.ext.server.address().port}/ext`, ['zylos-browser-remote.v2', `key.${process.env.BROWSER_REMOTE_KEY}`]);
+  t.after(() => {
+    ws.terminate(); relay.close(); fs.rmSync(tmp, { recursive: true, force: true });
+    for (const [key, value] of [['BROWSER_REMOTE_KEY', previousKey], ['ZYLOS_C4_RECEIVE', previousC4]]) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  });
+  await once(ws, 'open');
+  const send = async message => {
+    const reply = once(ws, 'message');
+    ws.send(JSON.stringify(message));
+    return JSON.parse((await reply)[0]);
+  };
+  const context = JSON.stringify({ type: 'fixture-client-data', title: 'Quoted "title"', text: '页面内容\n$(literal text)', contextId: 'fixture-id' });
+  assert.equal((await send({ type: 'chat', id: 'context-1', text: 'Read this page', context })).state, 'queued');
+  const args = JSON.parse(fs.readFileSync(output, 'utf8'));
+  const content = args[args.indexOf('--content') + 1];
+  assert.ok(content.startsWith('[Browser] Read this page\n\n'));
+  assert.ok(content.endsWith(context));
+  for (const bad of [{ data: 'not opaque text' }, 'x'.repeat(16001)]) {
+    const receipt = await send({ type: 'chat', id: 'bad-context', text: 'Read this page', context: bad });
+    assert.equal(receipt.state, 'failed');
+    assert.equal(receipt.code, 'CHAT_REFUSED');
+  }
+});

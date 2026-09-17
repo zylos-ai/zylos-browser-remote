@@ -123,7 +123,7 @@ old socket fails immediately with `EXT_OFFLINE` rather than after 30 s.
 | relay → ext | `{id, type:'req', method, params, requestId?, deadline}` | verbatim from `/rpc`; `deadline` = epoch ms |
 | ext → relay | `{id, type:'resp', result}` | |
 | ext → relay | `{id, type:'error', code, message, details?}` | `code` is the extension's string code; missing → `EXT_ERROR` |
-| ext → relay | `{type:'chat', id?, text, ts}` | owner typed in the side panel; `id` correlates the intake receipt; text ≤ 8000 chars |
+| ext → relay | `{type:'chat', id?, text, ts, context?}` | owner typed in the side panel; `id` correlates the intake receipt; text ≤ 8000 chars; optional opaque context string ≤ 16000 chars |
 | relay → ext | `{type:'chat', id?, role:'assistant', text, ts, final}` | final replies carry a stable UUID `id`; progress has no delivery ID |
 | ext → relay | `{type:'chat-ack', id}` | acknowledge a final reply after local persistence and handling |
 | relay → ext | `{type:'chat-status', chatId?, state, code?, error?, ts}` | C4 intake receipt: `queued`, `failed`, or `unknown`; `chatId` echoes the user message `id` |
@@ -228,3 +228,15 @@ These messages enter the agent's normal conversation queue and therefore its
 session memory — a deliberate decision (see `THIN-RELAY-PLAN.md` §3.3). If that
 ever needs to change, the hook is an `--ephemeral` flag on `c4-receive.js`, not
 anything in this relay.
+
+## Optional client context
+
+Side-panel chat may include an optional `context` string (maximum 16,000 JavaScript
+characters). The relay validates only its type and size, then appends it unchanged
+to the C4 message under a supporting-data label. User `text` is preserved verbatim.
+The extension owns the context format, capture policy, references and tool rules;
+Remote does not select tabs or interpret page content. Without context, existing
+clients behave as before. Update Remote before relying on context from newer
+extensions; old relays ignore the extra field. Development Monitor shows it under
+the originating question. Context can contain page text and is only collected by
+Monitor when the existing optional monitor is enabled.
