@@ -163,6 +163,7 @@ class Monitor {
 
   received({ keyId, label, text, chatId, context }) {
     const run = this.run(keyId, label, text.slice(0, 300));
+    if (!run.messages) { run.question = text.slice(0, 300); if (label) run.label = label; }
     run.messages++;
     this.add(run, 'question', run.messages > 1 ? '收到追加提问' : '收到提问', { text: text.slice(0, 8000), chatId,
       ...(context === undefined ? {} : { context: context.slice(0, 16000) }) });
@@ -183,6 +184,22 @@ class Monitor {
       if (run.status === 'delivery_failed') { run.endedAt = this.now(); this.active.delete(run.keyId); }
     }
     run.updatedAt = this.now(); this.changed();
+  }
+
+  decisionRequested({ keyId, request }) {
+    const run = this.run(keyId);
+    const step = this.add(run, 'queue', `请求 Agent 决策 · 第 ${request.round} 轮`, { status: 'running' });
+    run.status = 'queuing';
+    return { run, step };
+  }
+
+  extensionEnded({ keyId, status, text }) {
+    const run = this.active.get(keyId);
+    if (!run) return;
+    this.add(run, 'final', status === 'done' ? '插件已保存最终回复，本轮结束' : '插件结束本轮任务',
+      { status: status === 'done' ? 'success' : 'unknown', text });
+    run.status = status === 'done' ? 'delivered' : 'interrupted';
+    run.endedAt = this.now(); run.updatedAt = this.now(); this.active.delete(keyId); this.changed();
   }
 
   rpcStarted(keyId, { method, params, requestId }) {

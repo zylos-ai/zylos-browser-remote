@@ -40,11 +40,12 @@ const RELAY_ERROR_STATUS = {
 };
 
 class AgentLane {
-  constructor({ extLane, port, log = () => {}, monitor = null }) {
+  constructor({ extLane, port, log = () => {}, monitor = null, exchange = null }) {
     this.ext = extLane;
     this.port = port;
     this.log = log;
     this.monitor = monitor;
+    this.exchange = exchange;
     this.server = http.createServer((req, res) => this._onHttp(req, res));
   }
 
@@ -66,7 +67,7 @@ class AgentLane {
         return reply(200, { ok: true, extensions: this.ext.status(), pendingReplies: this.ext.outbox.counts() });
       }
 
-      if (req.method === 'POST' && (url.pathname === '/rpc' || url.pathname === '/chat')) {
+      if (req.method === 'POST' && ['/rpc', '/chat', '/decision'].includes(url.pathname)) {
         let body;
         try {
           body = await readJson(req, BODY_LIMIT_BYTES);
@@ -87,6 +88,12 @@ class AgentLane {
         }
 
         if (url.pathname === '/chat') return this._chat(target.keyId, body, reply, fail);
+        if (url.pathname === '/decision') {
+          if (!this.exchange || typeof body.id !== 'string' || !REQUEST_ID_RE.test(body.id) ||
+            !body.decision || typeof body.decision !== 'object' || Array.isArray(body.decision))
+            return fail(400, 'BAD_REQUEST', 'id and a structured decision are required');
+          return reply(200, await this.exchange.respond(target.keyId, body.id, body.decision));
+        }
         return this._rpc(target.keyId, body, reply, fail);
       }
 
@@ -108,7 +115,7 @@ class AgentLane {
       return fail(400, 'BAD_REQUEST', 'requestId must match [A-Za-z0-9._:-]{1,128}');
     }
     const t0 = Date.now();
-    const ticket = this.monitor?.rpcStarted(keyId, { method, params, requestId });
+    const ticket = method === 'agent-decision' ? undefined : this.monitor?.rpcStarted(keyId, { method, params, requestId });
     try {
       const result = await this.ext.request(keyId, { method, params, requestId, timeoutMs });
       this.monitor?.rpcEnded(ticket, result);
@@ -126,6 +133,8 @@ class AgentLane {
   }
 
   _chat(keyId, body, reply, fail) {
+    if (this.ext.conns.get(keyId)?.agentTurn) return fail(409, 'DECISION_REQUIRED',
+      'This turn is controlled by the extension. Respond to its request ID using scripts/decision.js, including the final answer.');
     // Egress half of the side-panel chat. It lives HERE, on the loopback lane,
     // and must never be added to :3802: that port is routed by Caddy, and an
     // unauthenticated /chat there would let anyone who learns the public URL

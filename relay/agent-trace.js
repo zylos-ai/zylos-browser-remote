@@ -90,7 +90,8 @@ class RolloutSession {
       if (!text.trim()) return;
       // C4 appends this routing suffix. Match the final suffix, never quoted
       // examples or an endpoint merely mentioned in a tool's output.
-      const endpoint = text.match(/---- reply via: node [^\n]*\bc4-send\.js "browser-remote" "([a-f0-9]{12})"\s*$/)?.[1];
+      const endpoint = text.match(/---- reply via: node [^\n]*\bc4-send\.js "browser-remote" "([a-f0-9]{12})"\s*$/)?.[1]
+        || text.match(/^(?:Meanwhile, )?\[Browser\] \[Extension decision request ([a-f0-9]{12})\/[A-Za-z0-9._:-]{1,128}\]/)?.[1];
       const next = endpoint && /(?:^|\n|Meanwhile, )\[Browser\] /.test(text) ? this.monitor.agentRun(endpoint, at) : null;
       if (this.promptSeen && this.run !== next) {
         this.mixed = true;

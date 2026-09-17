@@ -197,6 +197,14 @@ node ~/zylos/.claude/skills/browser-remote/scripts/browser.js --endpoint '<keyId
 
 ## 插件是浏览器能力的唯一来源
 
+### 插件控制任务循环
+
+新版握手声明 `agent-loop-v1`。插件通过 `agent-request` 发送请求 ID、任务 ID、轮次及不透明的动作契约/页面状态；首次请求通过现有 C4 通道交给 Agent（使用 no-reply，避免附加旧聊天回复指令）。Agent 将一个 JSON 决策写入 `scripts/decision.js <endpoint> <request-id>` 的 stdin。插件自行校验、执行动作、观察页面并发起下一轮；`/decision` 将这份新状态直接作为同一次 CLI 的返回值交给 Agent，后续轮次不再排入 C4。最终答复保存后返回 finished。单次请求最长等 120 秒，超时不能推断动作没有执行。
+
+Remote 不选择浏览器动作、不猜地址、不处理页面等待。它只关联和传递请求、将图片附件保存在 Agent 机器、转发入队状态并记录插件执行事件。原有直接 RPC 继续兼容，但插件循环运行时拒绝并发控制，旧聊天出口返回 `DECISION_REQUIRED`。停止、断线或插件重载后不自动重放动作。首次 C4 排队和 Agent 推理耗时仍然存在，本改动不等于直连模型流式 API。
+
+部署本改动需同时更新插件与 Remote（含 SKILL.md、scripts/decision.js），重启 Relay 并重新加载插件；zylos-core 无需修改。协议依能力握手启用，旧 Relay 使用原来的调用方式。Monitor 显示插件本地执行的浏览器动作及每轮决策入队，决策投递本身不会算成一个浏览器工具。
+
 Remote 的 Skill 只说明连接、通用调用、附件读取与消息投递。浏览器工具名、参数和操作策略
 均由当前连接的插件提供，服务端不维护另一份表，也不从相邻源码目录读取文档。
 

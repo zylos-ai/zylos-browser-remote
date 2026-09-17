@@ -4,7 +4,8 @@ version: 0.3.0
 description: >-
   Transport between the Agent and a connected Coco browser extension, including
   side-panel messages on channel browser-remote. Ordinary chat needs no browser
-  calls. When a request needs the connected browser, use scripts/browser.js to
+  calls. Extension decision requests are answered with scripts/decision.js using
+  the attached contract and request ID. For legacy requests use scripts/browser.js to
   call describe before the first browser action, then follow the returned guide.
   The extension owns all browser operations, parameters and policies. Service: pm2
   zylos-browser-remote. Connection keys: scripts/key.js.
@@ -37,6 +38,45 @@ The connected extension supplies the browser tools and their instructions. There
 is no browser method list or parameter table to maintain in this component.
 
 ## When to discover and use browser tools
+
+### Extension-owned turns (agent-loop-v1)
+
+An `Extension decision request` includes a request ID, owner request and a
+contract supplied by the connected extension. In this mode the extension owns
+execution and continuation. Read its contract and return ONE structured JSON
+response through the correlated adapter:
+
+```bash
+cat <<'EOF' | node ~/zylos/.claude/skills/browser-remote/scripts/decision.js <keyId> <requestId>
+<JSON response matching the extension's contract>
+EOF
+```
+
+Use this route for both intermediate decisions and the final answer, including
+ordinary conversation. Do not call browser.js or c4-send for this turn: direct
+commands are refused while the extension owns it. The command waits for client
+execution and returns `{ok:true,next:{id,taskId,round,text,payload}}` or
+`{ok:true,finished:true,status}`. Use that next ID and payload to decide again;
+end only when finished, blocked or disconnected. Do not poll or execute the
+actions yourself. Allow up to 120 seconds and an output budget large enough for
+the returned schema/state (roughly 12,000 tokens). Prefer an initial execution
+wait of at least 10 seconds when supported. If the shell tool yields a running
+process, wait on that same process; do not invoke decision.js again to poll.
+The extension validates the response and schedules any continuation.
+BAD_DECISION can be corrected for the same pending ID. STALE_DECISION means the
+request ended or was cancelled; do not resend it using another ID. An identical
+accepted response is safe to resubmit after an ambiguous transport failure
+within the connected worker's receipt cache; changed contents conflict.
+
+Only the first request goes through C4 (without its legacy chat reply suffix).
+Later observations return directly in the same CLI call through /decision;
+they do not create new C4 conversations. Images in either path are materialized
+on the Agent host before output.
+Read their paths with an image tool. No browser-side filesystem path is used.
+After disconnect/reload, unfinished turns stop and are not automatically replayed.
+These transport rules contain no browser action list: that remains in the extension.
+
+### Legacy chat and direct RPC
 
 First decide whether the user's request needs the connected browser. The
 `browser-remote` channel and `[Browser]` message prefix identify the message's

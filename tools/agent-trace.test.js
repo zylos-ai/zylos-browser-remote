@@ -25,6 +25,16 @@ function fixture(t) {
   return { dir, monitor, run, session: new RolloutSession(monitor, 'zylos-session', 1000) };
 }
 
+test('extension decision header correlates even in the 100-character C4 preview without a reply suffix', t => {
+  const {run,session}=fixture(t);
+  const header=`[Browser] [Extension decision request ${endpoint}/11111111-1111-4111-8111-111111111111]\n`;
+  assert.ok(header.length<100);
+  session.event(event(1200,'response_item',{type:'message',role:'user',content:[{type:'input_text',text:header+'[C4] TRUNCATED — read complete message file'}]}));
+  session.event(call(1300)); session.event(output(1400));
+  assert.equal(run.steps.find(step=>step.kind==='agent').status,'success');
+  assert.equal(run.agentObserved,true);
+});
+
 test('Agent and browser calls are counted separately, correlated by route, deduplicated and timed', t => {
   const { monitor, run, session } = fixture(t);
   session.event(event(1100, 'event_msg', { type: 'task_started', turn_id: 'turn-1' }));

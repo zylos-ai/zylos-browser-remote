@@ -17,7 +17,7 @@ function call(method, pathname, body) {
       return;
     }
     const data = body === undefined ? null : JSON.stringify(body);
-    const timeoutMs = pathname === '/rpc'
+    const timeoutMs = pathname === '/decision' ? 125000 : pathname === '/rpc'
       ? Math.min(Math.max(Number(body?.timeoutMs) || 30000, 1000), 120000) + 5000
       : 10000;
     let timer;
@@ -56,4 +56,5 @@ module.exports = {
   status: () => call('GET', '/status'),
   rpc: (body) => call('POST', '/rpc', body),
   chat: (body) => call('POST', '/chat', body),
+  decision: (body) => call('POST', '/decision', body),
 };

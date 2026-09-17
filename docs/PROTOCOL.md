@@ -3,6 +3,44 @@
 Two surfaces and one hop. The relay owns the surfaces; it does **not** own the
 meaning of anything that crosses them.
 
+## Extension-owned decision exchange (agent-loop-v1)
+
+This additive mode is negotiated by the extension's hello capability and the
+relay's `{type:"ready",capabilities:["agent-loop-v1"]}`. Older peers keep the
+direct RPC/chat flow documented below.
+
+The client sends `{type:"agent-request",id,taskId,round,text,context,payload}`.
+IDs are bounded identifiers; round is 1–30; text/context retain their existing
+limits; the WebSocket message cap is 8 MiB. Payload semantics, operation schemas,
+page state, decisions and task limits belong to the extension. The first request
+is delivered through C4 with `--no-reply` (no legacy reply suffix); the message
+includes the correlated CLI response route. Later rounds return directly to that
+CLI rather than creating new C4 conversations.
+
+`POST /decision {endpoint?,id,decision}` on loopback forwards an `agent-decision`
+request to the client and waits up to 120 seconds for its next request or terminal
+event. It returns `{ok:true,accepted:true,next:{id,taskId,round,text,payload}}` or
+`{ok:true,accepted:true,finished:true,status}`. Read stdout and submit the next
+decision ID until finished. The relay does not interpret the decision body.
+`scripts/decision.js <endpoint> <requestId>` reads that body from stdin.
+
+Images are materialized on the Agent host before either C4 or CLI output, using
+the same attachment adapter as browser.js. Only metadata/path, never Base64,
+reaches stdout. One exchange may be pending per endpoint. Receipts are bounded
+to 32 per connected turn; a duplicate still goes to the client for content/ID
+validation, then returns its previous exchange result. A wait timeout leaves the
+outcome uncertain: only retry the same ID/body. Disconnect discards the exchange;
+the extension rejects stale decisions and never automatically replays input.
+
+`agent-status` correlates intake errors by requestId. `agent-turn-end` correlates
+final/stopped/interrupted state by taskId. While a client-owned turn is active,
+POST /chat returns DECISION_REQUIRED; the extension gates concurrent direct
+browser RPCs. It sends bounded `agent-event` start/end records for diagnostics,
+so Monitor can show locally executed operations without scheduling them. The
+Agent trace also recognizes the initial decision header within C4's preview.
+
+---
+
 ```
 agent (scripts/browser.js)          relay                          owner's Chrome
 ──────────────────────────          ─────                          ──────────────

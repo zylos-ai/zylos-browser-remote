@@ -49,10 +49,11 @@ const DEFAULT_ERROR_CODE = 'EXT_ERROR';
  *   'chat-refused' ({keyId, reason, length})
  */
 class ExtLane extends EventEmitter {
-  constructor({ log = () => {}, loadKeys: loader = loadKeys, outboxFile } = {}) {
+  constructor({ log = () => {}, loadKeys: loader = loadKeys, outboxFile, agentLoop = true } = {}) {
     super();
     this.log = log;
     this.loadKeys = loader;
+    this.agentLoop = agentLoop;
     this.outbox = new ChatOutbox(outboxFile);
     this.conns = new Map();    // keyId -> Conn
 
@@ -61,7 +62,7 @@ class ExtLane extends EventEmitter {
       res.writeHead(426, { 'content-type': 'text/plain' });
       res.end('upgrade required\n');
     });
-    this.wss = new WebSocketServer({ noServer: true });
+    this.wss = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024 });
     this.server.on('upgrade', (req, socket, head) => this._onUpgrade(req, socket, head));
 
     this.heartbeat = setInterval(() => this._beat(), HEARTBEAT_MS);
@@ -120,6 +121,7 @@ class ExtLane extends EventEmitter {
         capabilities: c.capabilities || [],
         lastSeenMsAgo: Date.now() - c.lastSeen,
         pending: c.pending.size,
+        agentTurn: c.agentTurn || null,
       };
     }
     return extensions;
@@ -225,6 +227,7 @@ class ExtLane extends EventEmitter {
         conn.capabilities = Array.isArray(msg.capabilities) ? msg.capabilities.filter((c) => typeof c === 'string') : [];
         this.log(`ext[${conn.keyId}]: hello v${conn.version || '?'} caps=${conn.capabilities.length}`);
         this.emit('connected', conn.keyId, { label: conn.label, version: conn.version, capabilities: conn.capabilities });
+        this._send(conn, { type: 'ready', capabilities: this.agentLoop ? ['agent-loop-v1'] : [] });
         this.flushChat(conn.keyId);
         return;
       case 'chat-ack':
@@ -242,6 +245,21 @@ class ExtLane extends EventEmitter {
         return;
       case 'chat':
         this._onChat(conn, msg);
+        return;
+      case 'agent-request':
+        return this._onAgentRequest(conn, msg);
+      case 'agent-turn-end':
+        if (msg.taskId !== conn.agentTurn) return;
+        conn.agentTurn = null;
+        this.emit('agent-turn-end', { keyId: conn.keyId, taskId: msg.taskId,
+          status: ['done', 'blocked', 'interrupted', 'stopped'].includes(msg.status) ? msg.status : 'interrupted',
+          text: typeof msg.text === 'string' ? msg.text.slice(0, MAX_CHAT_TEXT) : '' });
+        return;
+      case 'agent-event':
+        if (msg.taskId !== conn.agentTurn || typeof msg.id !== 'string' || msg.id.length > 160 ||
+          typeof msg.method !== 'string' || msg.method.length > 128 || !['start', 'end'].includes(msg.phase) ||
+          Buffer.byteLength(JSON.stringify(msg)) > 32000) return;
+        this.emit('agent-event', { ...msg, keyId: conn.keyId });
         return;
       case 'resp':
       case 'error':
@@ -304,6 +322,28 @@ class ExtLane extends EventEmitter {
   }
 
   // ------------------------------------------------------------ outbound
+
+  _onAgentRequest(conn, msg) {
+    const validId = value => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(value);
+    const reportStatus = status => {
+      if (this.conns.get(conn.keyId) === conn) this._send(conn, { type: 'agent-status', requestId: msg.id, ...status });
+    };
+    if (!this.agentLoop || !conn.capabilities.includes('agent-loop-v1') || !validId(msg.id) || !validId(msg.taskId) ||
+      !Number.isInteger(msg.round) || msg.round < 1 || msg.round > 30 ||
+      typeof msg.text !== 'string' || !msg.text.trim() || msg.text.length > MAX_CHAT_TEXT ||
+      typeof msg.context !== 'string' || msg.context.length > MAX_CHAT_CONTEXT ||
+      !msg.payload || typeof msg.payload !== 'object' || Array.isArray(msg.payload)) {
+      return reportStatus({ state: 'failed', code: 'BAD_AGENT_REQUEST' });
+    }
+    if (conn.agentTurn && conn.agentTurn !== msg.taskId) return reportStatus({ state: 'failed', code: 'TURN_BUSY' });
+    conn.agentRequests ||= new Set();
+    if (conn.agentRequests.has(msg.id)) return; // Never enqueue a decision twice.
+    conn.agentRequests.add(msg.id);
+    while (conn.agentRequests.size > 100) conn.agentRequests.delete(conn.agentRequests.values().next().value);
+    conn.agentTurn = msg.taskId;
+    this.emit('agent-request', { keyId: conn.keyId, label: conn.label, text: msg.text,
+      chatId: msg.taskId, context: msg.context, request: { id: msg.id, round: msg.round, payload: msg.payload } }, reportStatus);
+  }
 
   /** Agent's reply, pushed down the panel socket. */
   sendChat(keyId, { text, role = 'assistant', ts = Date.now(), final = true } = {}) {
