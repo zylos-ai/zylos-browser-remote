@@ -1,4 +1,4 @@
-'use strict';
+"use strict";
 /*
  * Extension lane -- :3802, the ONLY publicly reachable surface.
  *
@@ -19,16 +19,15 @@
  * heartbeat, and bounding the chat envelope.
  */
 
-const http = require('http');
-const { EventEmitter } = require('events');
-const { WebSocketServer } = require('ws');
-const { verifyKey, loadKeys } = require('./keys');
-const { ChatOutbox } = require('./chat-outbox');
+const http = require("http");
+const { EventEmitter } = require("events");
+const { WebSocketServer } = require("ws");
+const { verifyKey, loadKeys } = require("./keys");
 
-const SUBPROTOCOL = 'zylos-browser-remote.v2';
-const KEY_PROTO_PREFIX = 'key.';
-const EXT_PATH = '/ext';
-const HEARTBEAT_MS = 17_000;       // app-level: a proxy may swallow raw ping frames
+const SUBPROTOCOL = "zylos-browser-remote.v2";
+const KEY_PROTO_PREFIX = "key.";
+const EXT_PATH = "/ext";
+const HEARTBEAT_MS = 17_000; // app-level: a proxy may swallow raw ping frames
 const COMMAND_TIMEOUT_MS = 30_000;
 const MAX_COMMAND_TIMEOUT_MS = 120_000;
 
@@ -39,31 +38,33 @@ const MAX_COMMAND_TIMEOUT_MS = 120_000;
 const MAX_CHAT_TEXT = 8000;
 const MAX_CHAT_CONTEXT = 16000;
 // Sent by the extension in `error` frames when it did not supply a code itself.
-const DEFAULT_ERROR_CODE = 'EXT_ERROR';
+const DEFAULT_ERROR_CODE = "EXT_ERROR";
 
 /**
  * Emits:
  *   'connected'    (keyId, {label, version, capabilities})
  *   'disconnected' (keyId, code)
- *   'chat'         ({keyId, label, text, ts})
- *   'chat-refused' ({keyId, reason, length})
+ *   'agent-request' ({keyId, label, text, request})
  */
 class ExtLane extends EventEmitter {
-  constructor({ log = () => {}, loadKeys: loader = loadKeys, outboxFile, agentLoop = true } = {}) {
+  constructor({ log = () => {}, loadKeys: loader = loadKeys } = {}) {
     super();
     this.log = log;
     this.loadKeys = loader;
-    this.agentLoop = agentLoop;
-    this.outbox = new ChatOutbox(outboxFile);
-    this.conns = new Map();    // keyId -> Conn
+    this.conns = new Map(); // keyId -> Conn
 
     this.server = http.createServer((req, res) => {
       // Plain HTTP here is a misrouted probe (or someone poking the public URL).
-      res.writeHead(426, { 'content-type': 'text/plain' });
-      res.end('upgrade required\n');
+      res.writeHead(426, { "content-type": "text/plain" });
+      res.end("upgrade required\n");
     });
-    this.wss = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024 });
-    this.server.on('upgrade', (req, socket, head) => this._onUpgrade(req, socket, head));
+    this.wss = new WebSocketServer({
+      noServer: true,
+      maxPayload: 8 * 1024 * 1024,
+    });
+    this.server.on("upgrade", (req, socket, head) =>
+      this._onUpgrade(req, socket, head),
+    );
 
     this.heartbeat = setInterval(() => this._beat(), HEARTBEAT_MS);
     if (this.heartbeat.unref) this.heartbeat.unref();
@@ -76,12 +77,12 @@ class ExtLane extends EventEmitter {
   // ------------------------------------------------------------ lookups
 
   connectedIds() {
-    return [...this.conns.keys()];
+    return [...this.conns.keys()].filter((keyId) => this.isConnected(keyId));
   }
 
   isConnected(keyId) {
     const c = this.conns.get(keyId);
-    return Boolean(c) && c.ws.readyState === c.ws.OPEN;
+    return Boolean(c?.ready) && c.ws.readyState === c.ws.OPEN;
   }
 
   /**
@@ -89,32 +90,44 @@ class ExtLane extends EventEmitter {
    *   omitted + exactly one connection -> that one
    *   omitted + several               -> AMBIGUOUS_ENDPOINT
    *   given but not connected          -> EXT_OFFLINE (known key) / UNKNOWN_ENDPOINT
-   *   allowOffline                     -> known key is enough for a queued final reply
    */
-  resolve(endpoint, { allowOffline = false } = {}) {
-    if (endpoint === undefined || endpoint === null || endpoint === '') {
+  resolve(endpoint) {
+    if (endpoint === undefined || endpoint === null || endpoint === "") {
       const ids = this.connectedIds();
       if (ids.length === 1) return { keyId: ids[0] };
-      if (ids.length === 0) return { error: 'EXT_OFFLINE', message: 'no extension connected' };
-      return { error: 'AMBIGUOUS_ENDPOINT', message: `several extensions connected; pass endpoint (one of ${ids.join(', ')})` };
+      if (ids.length === 0)
+        return { error: "EXT_OFFLINE", message: "no extension connected" };
+      return {
+        error: "AMBIGUOUS_ENDPOINT",
+        message: `several extensions connected; pass endpoint (one of ${ids.join(", ")})`,
+      };
     }
-    if (typeof endpoint !== 'string' || !/^[a-f0-9]{12}$/.test(endpoint)) {
-      return { error: 'BAD_ENDPOINT', message: 'endpoint must be a 12-hex keyId' };
+    if (typeof endpoint !== "string" || !/^[a-f0-9]{12}$/.test(endpoint)) {
+      return {
+        error: "BAD_ENDPOINT",
+        message: "endpoint must be a 12-hex keyId",
+      };
     }
     if (this.isConnected(endpoint)) return { keyId: endpoint };
     let known = false;
-    try { known = Boolean(this.loadKeys()[endpoint]); } catch { /* treat as unknown */ }
-    if (known && allowOffline) return { keyId: endpoint };
+    try {
+      known = Boolean(this.loadKeys()[endpoint]);
+    } catch {
+      /* treat as unknown */
+    }
     return known
-      ? { error: 'EXT_OFFLINE', message: `extension ${endpoint} is not connected` }
-      : { error: 'UNKNOWN_ENDPOINT', message: `no such key ${endpoint}` };
+      ? {
+          error: "EXT_OFFLINE",
+          message: `extension ${endpoint} is not connected`,
+        }
+      : { error: "UNKNOWN_ENDPOINT", message: `no such key ${endpoint}` };
   }
 
   status() {
     const extensions = {};
     for (const [keyId, c] of this.conns) {
       extensions[keyId] = {
-        connected: true,
+        connected: !!c.ready,
         label: c.label,
         since: c.since,
         version: c.version || null,
@@ -130,17 +143,17 @@ class ExtLane extends EventEmitter {
   // ------------------------------------------------------------ upgrade/auth
 
   _onUpgrade(req, socket, head) {
-    const url = new URL(req.url, 'http://localhost');
+    const url = new URL(req.url, "http://localhost");
     if (url.pathname !== EXT_PATH) {
-      socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
+      socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
       socket.destroy();
       return;
     }
     // Auth rides in Sec-WebSocket-Protocol: an MV3 service worker cannot set
     // custom headers on a WebSocket, and a subprotocol -- unlike ?key= -- is
     // not written to every proxy access log along the path.
-    const offered = String(req.headers['sec-websocket-protocol'] || '')
-      .split(',')
+    const offered = String(req.headers["sec-websocket-protocol"] || "")
+      .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
     const keyProto = offered.find((p) => p.startsWith(KEY_PROTO_PREFIX));
@@ -155,13 +168,17 @@ class ExtLane extends EventEmitter {
       }
     }
     if (!identity) {
-      this.log(`ext: upgrade REJECTED (key ${presented ? 'present/bad' : 'absent'})`);
-      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+      this.log(
+        `ext: upgrade REJECTED (key ${presented ? "present/bad" : "absent"})`,
+      );
+      socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
       socket.destroy();
       return;
     }
     // ws echoes back only the first offered protocol we accept, never the key one.
-    this.wss.handleUpgrade(req, socket, head, (ws) => this._onConnected(ws, req, identity));
+    this.wss.handleUpgrade(req, socket, head, (ws) =>
+      this._onConnected(ws, req, identity),
+    );
   }
 
   _onConnected(ws, req, { keyId, label }) {
@@ -173,11 +190,21 @@ class ExtLane extends EventEmitter {
       // MV3 recycles the service worker routinely, so this is the common path.
       this.log(`ext[${keyId}]: superseding previous connection`);
       prev.superseded = true;
-      this._failAllPending(prev, 'extension reconnected; in-flight request abandoned');
-      try { prev.ws.close(4001, 'superseded by newer connection'); } catch { /* gone */ }
+      this.emit("disconnected", keyId, 4001);
+      this._failAllPending(
+        prev,
+        "extension reconnected; in-flight request abandoned",
+      );
+      try {
+        prev.ws.close(4001, "superseded by newer connection");
+      } catch {
+        /* gone */
+      }
     }
     const conn = {
-      keyId, label, ws,
+      keyId,
+      label,
+      ws,
       since: new Date().toISOString(),
       remote: req.socket.remoteAddress,
       alive: true,
@@ -185,23 +212,24 @@ class ExtLane extends EventEmitter {
       version: null,
       capabilities: [],
       nextId: 1,
-      pending: new Map(),     // id -> {resolve, reject, timer, method}
-      chatPending: null,
+      pending: new Map(), // id -> {resolve, reject, timer, method}
       superseded: false,
     };
     this.conns.set(keyId, conn);
-    this.log(`ext[${keyId}]: connected${label ? ` (${label})` : ''}`);
+    this.log(`ext[${keyId}]: connected${label ? ` (${label})` : ""}`);
 
-    ws.on('message', (raw) => this._onMessage(conn, raw));
-    ws.on('close', (code) => {
+    ws.on("message", (raw) => this._onMessage(conn, raw));
+    ws.on("close", (code) => {
       if (this.conns.get(keyId) === conn) {
         this.conns.delete(keyId);
-        this._failAllPending(conn, 'extension disconnected');
-        this.emit('disconnected', keyId, code);
+        this._failAllPending(conn, "extension disconnected");
+        this.emit("disconnected", keyId, code);
       }
       this.log(`ext[${keyId}]: closed (${code})`);
     });
-    ws.on('error', (err) => this.log(`ext[${keyId}]: socket error`, err.message));
+    ws.on("error", (err) =>
+      this.log(`ext[${keyId}]: socket error`, err.message),
+    );
   }
 
   // ------------------------------------------------------------ frames
@@ -217,52 +245,65 @@ class ExtLane extends EventEmitter {
       this.log(`ext[${conn.keyId}]: dropped unparseable frame`);
       return;
     }
-    if (!msg || typeof msg !== 'object') return;
+    if (!msg || typeof msg !== "object") return;
 
     switch (msg.type) {
-      case 'pong':
+      case "pong":
         return;
-      case 'hello':
-        conn.version = typeof msg.version === 'string' ? msg.version : null;
-        conn.capabilities = Array.isArray(msg.capabilities) ? msg.capabilities.filter((c) => typeof c === 'string') : [];
-        this.log(`ext[${conn.keyId}]: hello v${conn.version || '?'} caps=${conn.capabilities.length}`);
-        this.emit('connected', conn.keyId, { label: conn.label, version: conn.version, capabilities: conn.capabilities });
-        this._send(conn, { type: 'ready', capabilities: this.agentLoop ? ['agent-loop-v1'] : [] });
-        this.flushChat(conn.keyId);
-        return;
-      case 'chat-ack':
-        if (typeof msg.id !== 'string' || msg.id !== conn.chatPending) return;
-        try {
-          this.outbox.acknowledge(conn.keyId, msg.id);
-          conn.chatPending = null;
-          this.log(`chat[${conn.keyId}] acknowledged ${msg.id}`);
-          this.emit('reply-acknowledged', { keyId: conn.keyId, messageId: msg.id });
-          this.flushChat(conn.keyId);
-        } catch (err) {
-          this.log(`chat[${conn.keyId}] acknowledgement could not be saved: ${err.code || 'OUTBOX_WRITE_FAILED'}`);
-          // Keep the envelope for the next connection; a duplicate is safe at the receiver.
+      case "hello":
+        conn.version = typeof msg.version === "string" ? msg.version : null;
+        conn.capabilities = Array.isArray(msg.capabilities)
+          ? msg.capabilities.filter((c) => typeof c === "string")
+          : [];
+        if (!conn.capabilities.includes("agent-loop-v1")) {
+          conn.ws.close(4002, "agent-loop-v1 required");
+          return;
         }
+        conn.ready = true;
+        this.log(
+          `ext[${conn.keyId}]: hello v${conn.version || "?"} caps=${conn.capabilities.length}`,
+        );
+        this.emit("connected", conn.keyId, {
+          label: conn.label,
+          version: conn.version,
+          capabilities: conn.capabilities,
+        });
+        this._send(conn, { type: "ready", capabilities: ["agent-loop-v1"] });
         return;
-      case 'chat':
-        this._onChat(conn, msg);
-        return;
-      case 'agent-request':
+      case "agent-request":
         return this._onAgentRequest(conn, msg);
-      case 'agent-turn-end':
+      case "agent-turn-end":
         if (msg.taskId !== conn.agentTurn) return;
         conn.agentTurn = null;
-        this.emit('agent-turn-end', { keyId: conn.keyId, taskId: msg.taskId,
-          status: ['done', 'blocked', 'interrupted', 'stopped'].includes(msg.status) ? msg.status : 'interrupted',
-          text: typeof msg.text === 'string' ? msg.text.slice(0, MAX_CHAT_TEXT) : '' });
+        this.emit("agent-turn-end", {
+          keyId: conn.keyId,
+          taskId: msg.taskId,
+          status: ["done", "blocked", "interrupted", "stopped"].includes(
+            msg.status,
+          )
+            ? msg.status
+            : "interrupted",
+          text:
+            typeof msg.text === "string"
+              ? msg.text.slice(0, MAX_CHAT_TEXT)
+              : "",
+        });
         return;
-      case 'agent-event':
-        if (msg.taskId !== conn.agentTurn || typeof msg.id !== 'string' || msg.id.length > 160 ||
-          typeof msg.method !== 'string' || msg.method.length > 128 || !['start', 'end'].includes(msg.phase) ||
-          Buffer.byteLength(JSON.stringify(msg)) > 32000) return;
-        this.emit('agent-event', { ...msg, keyId: conn.keyId });
+      case "agent-event":
+        if (
+          msg.taskId !== conn.agentTurn ||
+          typeof msg.id !== "string" ||
+          msg.id.length > 160 ||
+          typeof msg.method !== "string" ||
+          msg.method.length > 128 ||
+          !["start", "end"].includes(msg.phase) ||
+          Buffer.byteLength(JSON.stringify(msg)) > 32000
+        )
+          return;
+        this.emit("agent-event", { ...msg, keyId: conn.keyId });
         return;
-      case 'resp':
-      case 'error':
+      case "resp":
+      case "error":
         break;
       default:
         this.log(`ext[${conn.keyId}]: ignored frame type=${msg.type}`);
@@ -270,12 +311,21 @@ class ExtLane extends EventEmitter {
     }
 
     const p = conn.pending.get(msg.id);
-    if (!p) return;                       // late or duplicate; the timer already fired
+    if (!p) return; // late or duplicate; the timer already fired
     clearTimeout(p.timer);
     conn.pending.delete(msg.id);
-    if (msg.type === 'error') {
-      const err = new Error(typeof msg.message === 'string' ? msg.message : (typeof msg.error === 'string' ? msg.error : 'extension error'));
-      err.code = typeof msg.code === 'string' && msg.code ? msg.code : DEFAULT_ERROR_CODE;
+    if (msg.type === "error") {
+      const err = new Error(
+        typeof msg.message === "string"
+          ? msg.message
+          : typeof msg.error === "string"
+            ? msg.error
+            : "extension error",
+      );
+      err.code =
+        typeof msg.code === "string" && msg.code
+          ? msg.code
+          : DEFAULT_ERROR_CODE;
       err.details = msg.details;
       p.reject(err);
     } else {
@@ -283,112 +333,65 @@ class ExtLane extends EventEmitter {
     }
   }
 
-  /**
-   * Owner typed in the side panel: {type:'chat', text, ts}. Envelope only --
-   * the text belongs to the owner and goes to the agent verbatim (server.js
-   * hands it to c4-receive as one argv element, so no shell ever sees it).
-   */
-  _onChat(conn, msg) {
-    const text = typeof msg.text === 'string' ? msg.text : null;
-    const ts = Number.isFinite(msg.ts) ? msg.ts : Date.now();
-    const chatId = typeof msg.id === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(msg.id) ? msg.id : undefined;
-    // Keep acknowledgements on the socket that submitted the message. A late
-    // C4 result must not be sent to a replacement connection using this key.
-    const reportStatus = (status) => {
-      if (this.conns.get(conn.keyId) !== conn) return false;
-      return this._send(conn, { type: 'chat-status', ...status, chatId, ts: Date.now() });
-    };
-
-    const refuse = (reason) => {
-      // Loud on both sides: a dropped owner message must never be silent.
-      this.log(`ext[${conn.keyId}]: chat REFUSED (${reason})`);
-      reportStatus({ state: 'failed', code: 'CHAT_REFUSED', error: `message refused: ${reason}` });
-      this.emit('chat-refused', { keyId: conn.keyId, reason, length: text == null ? 0 : text.length });
-    };
-
-    if (text == null) return refuse('missing text');
-    if (text.length === 0) return refuse('empty text');
-    if (text.length > MAX_CHAT_TEXT) {
-      return refuse(`text too long (${text.length} > ${MAX_CHAT_TEXT} chars) -- send it in parts`);
-    }
-    // Opaque client context: only the envelope size/type belongs to the relay.
-    if (msg.context !== undefined && (typeof msg.context !== 'string' || msg.context.length > MAX_CHAT_CONTEXT)) {
-      return refuse('context must be a string of at most 16000 chars');
-    }
-
-    this.log(`ext[${conn.keyId}]: chat (${text.length} chars)`);
-    this.emit('chat', { keyId: conn.keyId, label: conn.label, text, ts, chatId,
-      ...(msg.context === undefined ? {} : { context: msg.context }) }, reportStatus);
-  }
-
-  // ------------------------------------------------------------ outbound
-
   _onAgentRequest(conn, msg) {
-    const validId = value => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(value);
-    const reportStatus = status => {
-      if (this.conns.get(conn.keyId) === conn) this._send(conn, { type: 'agent-status', requestId: msg.id, ...status });
+    const validId = (value) =>
+      typeof value === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(value);
+    const reportStatus = (status) => {
+      if (this.conns.get(conn.keyId) === conn)
+        this._send(conn, {
+          type: "agent-status",
+          requestId: msg.id,
+          ...status,
+        });
     };
-    if (!this.agentLoop || !conn.capabilities.includes('agent-loop-v1') || !validId(msg.id) || !validId(msg.taskId) ||
-      !Number.isInteger(msg.round) || msg.round < 1 || msg.round > 30 ||
-      typeof msg.text !== 'string' || !msg.text.trim() || msg.text.length > MAX_CHAT_TEXT ||
-      typeof msg.context !== 'string' || msg.context.length > MAX_CHAT_CONTEXT ||
-      !msg.payload || typeof msg.payload !== 'object' || Array.isArray(msg.payload)) {
-      return reportStatus({ state: 'failed', code: 'BAD_AGENT_REQUEST' });
+    if (
+      !conn.ready ||
+      !validId(msg.id) ||
+      !validId(msg.taskId) ||
+      !Number.isInteger(msg.round) ||
+      msg.round < 1 ||
+      msg.round > 30 ||
+      typeof msg.text !== "string" ||
+      !msg.text.trim() ||
+      msg.text.length > MAX_CHAT_TEXT ||
+      typeof msg.context !== "string" ||
+      msg.context.length > MAX_CHAT_CONTEXT ||
+      !msg.payload ||
+      typeof msg.payload !== "object" ||
+      Array.isArray(msg.payload)
+    ) {
+      return reportStatus({ state: "failed", code: "BAD_AGENT_REQUEST" });
     }
-    if (conn.agentTurn && conn.agentTurn !== msg.taskId) return reportStatus({ state: 'failed', code: 'TURN_BUSY' });
+    if (conn.agentTurn && conn.agentTurn !== msg.taskId)
+      return reportStatus({ state: "failed", code: "TURN_BUSY" });
     conn.agentRequests ||= new Set();
     if (conn.agentRequests.has(msg.id)) return; // Never enqueue a decision twice.
     conn.agentRequests.add(msg.id);
-    while (conn.agentRequests.size > 100) conn.agentRequests.delete(conn.agentRequests.values().next().value);
+    while (conn.agentRequests.size > 100)
+      conn.agentRequests.delete(conn.agentRequests.values().next().value);
     conn.agentTurn = msg.taskId;
-    this.emit('agent-request', { keyId: conn.keyId, label: conn.label, text: msg.text,
-      chatId: msg.taskId, context: msg.context, request: { id: msg.id, round: msg.round, payload: msg.payload } }, reportStatus);
+    this.emit(
+      "agent-request",
+      {
+        keyId: conn.keyId,
+        label: conn.label,
+        text: msg.text,
+        chatId: msg.taskId,
+        context: msg.context,
+        request: { id: msg.id, round: msg.round, payload: msg.payload },
+      },
+      reportStatus,
+    );
   }
 
-  /** Agent's reply, pushed down the panel socket. */
-  sendChat(keyId, { text, role = 'assistant', ts = Date.now(), final = true } = {}) {
-    const conn = this.conns.get(keyId);
-    if (!conn) return false;
-    return this._send(conn, { type: 'chat', role, text, ts, final });
-  }
-
-  queueChat(keyId, text) {
-    this.outbox.discardRevoked(this.loadKeys());
-    const message = this.outbox.enqueue(keyId, text);
-    this.log(`chat[${keyId}] queued reply ${message.id}`);
-    this.emit('reply-queued', { keyId, messageId: message.id, text });
-    this.flushChat(keyId);
-    return message.id;
-  }
-
-  flushChat(keyId) {
-    const conn = this.conns.get(keyId);
-    if (!conn || conn.chatPending || !conn.capabilities.includes('chat-ack-v1')) return;
-    const message = this.outbox.first(keyId);
-    if (!message) return;
-    const { keyId: _keyId, ...frame } = message;
-    conn.chatPending = message.id;
-    if (this._send(conn, { type: 'chat', ...frame })) {
-      this.log(`chat[${keyId}] -> panel reply ${message.id} (${message.text.length} chars)`);
-    } else conn.chatPending = null;
-  }
-
-  /**
-   * Forward one command and await its answer. `method`/`params` are opaque to
-   * the relay; `requestId` is the agent's idempotency key and is passed through
-   * untouched for the extension to honour.
-   */
+  /** Correlated transport for a client decision; browser actions remain opaque. */
   request(keyId, { method, params, requestId, timeoutMs } = {}) {
     return new Promise((resolve, reject) => {
       const conn = this.conns.get(keyId);
-      if (!conn || conn.ws.readyState !== conn.ws.OPEN) {
-        const err = new Error('extension not connected');
-        err.code = 'EXT_OFFLINE';
+      if (!conn?.ready || conn.ws.readyState !== conn.ws.OPEN) {
+        const err = new Error("extension not connected");
+        err.code = "EXT_OFFLINE";
         reject(err);
-        return;
-      }
-      if (this.outbox.first(keyId)) {
-        reject(Object.assign(new Error('A final reply is awaiting panel acknowledgement; check status.pendingReplies before starting another command'), { code: 'CHAT_PENDING' }));
         return;
       }
       const ms = clampTimeout(timeoutMs);
@@ -396,17 +399,23 @@ class ExtLane extends EventEmitter {
       const timer = setTimeout(() => {
         conn.pending.delete(id);
         const err = new Error(`timeout after ${ms}ms waiting for ${method}`);
-        err.code = 'EXT_TIMEOUT';
+        err.code = "EXT_TIMEOUT";
         reject(err);
       }, ms);
       conn.pending.set(id, { method, timer, resolve, reject });
-      const frame = { id, type: 'req', method, params: params || {}, deadline: Date.now() + ms };
+      const frame = {
+        id,
+        type: "req",
+        method,
+        params: params || {},
+        deadline: Date.now() + ms,
+      };
       if (requestId) frame.requestId = requestId;
       if (!this._send(conn, frame)) {
         clearTimeout(timer);
         conn.pending.delete(id);
-        const err = new Error('send failed');
-        err.code = 'EXT_OFFLINE';
+        const err = new Error("send failed");
+        err.code = "EXT_OFFLINE";
         reject(err);
       }
     });
@@ -427,7 +436,7 @@ class ExtLane extends EventEmitter {
       clearTimeout(p.timer);
       conn.pending.delete(id);
       const err = new Error(reason);
-      err.code = 'EXT_OFFLINE';
+      err.code = "EXT_OFFLINE";
       p.reject(err);
     }
   }
@@ -440,19 +449,27 @@ class ExtLane extends EventEmitter {
       if (conn.ws.readyState !== conn.ws.OPEN) continue;
       if (!conn.alive) {
         this.log(`ext[${conn.keyId}]: heartbeat missed, terminating`);
-        try { conn.ws.terminate(); } catch { /* noop */ }
+        try {
+          conn.ws.terminate();
+        } catch {
+          /* noop */
+        }
         continue;
       }
       conn.alive = false;
-      this._send(conn, { type: 'ping', ts: Date.now() });
+      this._send(conn, { type: "ping", ts: Date.now() });
     }
   }
 
   close() {
     clearInterval(this.heartbeat);
     for (const conn of this.conns.values()) {
-      this._failAllPending(conn, 'relay shutting down');
-      try { conn.ws.close(1001, 'relay shutting down'); } catch { /* noop */ }
+      this._failAllPending(conn, "relay shutting down");
+      try {
+        conn.ws.close(1001, "relay shutting down");
+      } catch {
+        /* noop */
+      }
     }
     this.server.close();
   }
@@ -465,6 +482,13 @@ function clampTimeout(ms) {
 }
 
 module.exports = {
-  ExtLane, SUBPROTOCOL, KEY_PROTO_PREFIX, EXT_PATH, HEARTBEAT_MS,
-  COMMAND_TIMEOUT_MS, MAX_COMMAND_TIMEOUT_MS, MAX_CHAT_TEXT, DEFAULT_ERROR_CODE,
+  ExtLane,
+  SUBPROTOCOL,
+  KEY_PROTO_PREFIX,
+  EXT_PATH,
+  HEARTBEAT_MS,
+  COMMAND_TIMEOUT_MS,
+  MAX_COMMAND_TIMEOUT_MS,
+  MAX_CHAT_TEXT,
+  DEFAULT_ERROR_CODE,
 };

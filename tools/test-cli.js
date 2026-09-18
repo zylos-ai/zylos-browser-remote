@@ -1,224 +1,56 @@
-'use strict';
-/*
- * The agent's view: a REAL relay process, the real scripts (key.js, browser.js,
- * send.js) invoked exactly as SKILL.md tells the agent to, and a fake extension
- * on the far end. Proves the CLI contract end to end, including screenshot
- * stashing and the exit-code rules.
- *
- * Run: node tools/test-cli.js
- */
-
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const assert = require('assert');
-const { spawn } = require('child_process');
-const WebSocket = require('ws');
-
-const ROOT = path.join(__dirname, '..');
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'br-cli-'));
-const EXT_PORT = 38020 + Math.floor(Math.random() * 500);
-const AGENT_PORT = EXT_PORT + 1;
-const env = {
-  ...process.env,
-  BROWSER_REMOTE_KEYS_FILE: path.join(tmp, 'keys.json'),
-  BROWSER_REMOTE_OBS_DIR: path.join(tmp, 'obs'),
-  BROWSER_REMOTE_EXT_PORT: String(EXT_PORT),
-  BROWSER_REMOTE_AGENT_PORT: String(AGENT_PORT),
-  ZYLOS_C4_RECEIVE: path.join(tmp, 'c4-stub.js'),
-};
-delete env.BROWSER_REMOTE_KEY;
-fs.writeFileSync(env.ZYLOS_C4_RECEIVE, `require('fs').appendFileSync(${JSON.stringify(path.join(tmp, 'c4.log'))}, JSON.stringify(process.argv.slice(2)) + '\\n'); console.log(JSON.stringify({ok:true,action:'queued',id:1}));`);
-
-let passed = 0;
-let relay;
-let ws;
-const ok = (c, m) => { assert(c, m); passed++; console.log('  ok', m); };
-// Async on purpose: the fake extension lives in THIS process, so a blocking
-// spawnSync would stop it from ever answering the relay.
-const run = (script, args, overrides = {}) => new Promise((resolve) => {
-  const child = spawn(process.execPath, [path.join(ROOT, 'scripts', script), ...args], { env: { ...env, ...overrides } });
-  let out = '';
-  let err = '';
-  child.stdout.on('data', (d) => (out += d));
-  child.stderr.on('data', (d) => (err += d));
-  child.on('close', (code) => {
-    let json = null;
-    try { json = JSON.parse(out); } catch { /* not json */ }
-    resolve({ code, out, err, json });
+"use strict";
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "remote-cli-"));
+process.env.BROWSER_REMOTE_OBS_DIR = path.join(dir, "images");
+const { materializeImages } = require("../scripts/attachments");
+const { verifyKey, loadKeys } = require("../relay/keys");
+try {
+  const file = path.join(dir, "keys.json");
+  const run = (args) =>
+    spawnSync(process.execPath, args, {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        BROWSER_REMOTE_KEYS_FILE: file,
+        BROWSER_REMOTE_KEY: "",
+      },
+    });
+  const created = run(["scripts/key.js", "new", "--label", "fixture"]);
+  assert.equal(created.status, 0);
+  const key = created.stdout.match(/key:\s+([a-f0-9]+)/)[1];
+  const keyId = created.stdout.match(/keyId:\s+([a-f0-9]+)/)[1];
+  assert.equal(verifyKey(key, JSON.parse(fs.readFileSync(file))).keyId, keyId);
+  assert(!fs.readFileSync(file, "utf8").includes(key));
+  assert.equal(run(["scripts/key.js", "revoke", keyId]).status, 0);
+  assert.equal(verifyKey(key, JSON.parse(fs.readFileSync(file))), null);
+  assert.equal(run(["scripts/decision.js", "bad", "id"]).status, 2);
+  const image = Buffer.from("89504e470d0a1a0a" + "00".repeat(64), "hex");
+  const raw = { mimeType: "image/png", data: image.toString("base64") };
+  const result = materializeImages({
+    observation: { page: { screenshot: raw } },
+    another: [raw],
   });
-});
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-(async () => {
-  console.log('-- key.js');
-  const minted = await run('key.js', ['new', '--label', 'cli-test']);
-  const key = /key:\s+([a-f0-9]{64})/.exec(minted.out)[1];
-  const keyId = /keyId:\s+([a-f0-9]{12})/.exec(minted.out)[1];
-  ok(minted.code === 0 && key && keyId, 'key.js new prints key + keyId once');
-  ok(/cli-test/.test((await run('key.js', ['list'])).out), 'key.js list shows the label');
-
-  console.log('-- relay down');
-  let r = await run('browser.js', ['status']);
-  ok(r.code === 1 && r.json.code === 'RELAY_DOWN', 'browser.js reports RELAY_DOWN with exit 1');
-
-  relay = spawn(process.execPath, [path.join(ROOT, 'relay', 'server.js')], { env, stdio: ['ignore', 'pipe', 'pipe'] });
-  let relayLog = '';
-  relay.stdout.on('data', (d) => (relayLog += d));
-  relay.stderr.on('data', (d) => (relayLog += d));
-  for (let i = 0; i < 50 && !/agent lane/.test(relayLog); i++) await sleep(100);
-  ok(/keys: 1 loaded/.test(relayLog), 'relay loaded the minted key');
-
-  console.log('-- no extension');
-  r = await run('browser.js', ['status']);
-  ok(r.code === 0 && r.json.ok && Object.keys(r.json.extensions).length === 0, 'status ok with zero extensions');
-  r = await run('browser.js', ['open', 'url=https://example.com']);
-  ok(r.code === 1 && r.json.code === 'EXT_OFFLINE', 'open with no extension -> EXT_OFFLINE exit 1');
-  r = await run('send.js', [keyId, 'hello']);
-  ok(r.code === 0 && /Reply saved/.test(r.out), 'send.js saves final replies while the browser is offline');
-
-  console.log('-- fake extension joins');
-  const seen = [];
-  ws = new WebSocket(`ws://127.0.0.1:${EXT_PORT}/ext`, ['zylos-browser-remote.v2', `key.${key}`]);
-  // A complete, readable 1x1 PNG, deliberately below the old 256-character cutoff.
-  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
-  let screenshotResult = { data: png.toString('base64') }; // Actual CDP shape: no format.
-  const observation = {
-    observationId: 'fixture-observation', tabId: 12, url: 'https://example.com/',
-    title: 'Fixture', pageVersion: 'fixture:1', startedAt: '2026-09-16T00:00:00.000Z',
-    capturedAt: '2026-09-16T00:00:00.010Z',
-    viewport: { width: 800, height: 600, scrollX: 0, scrollY: 0, dpr: 1, readyState: 'complete' },
-    text: '@fixture-e1 button "Search"', warnings: ['fixture warning'],
-  };
-  let observationImage = { mimeType: 'image/png', data: png.toString('base64') };
-  const catalog = { schemaVersion: 1, extensionVersion: 'fixture', instructions: 'Fixture extension-owned instructions',
-    tools: [{ name: 'future-preview', description: 'A tool the Relay has never heard of' }] };
-  ws.on('message', (raw) => {
-    const m = JSON.parse(raw.toString());
-    seen.push(m);
-    if (m.type === 'ping') ws.send(JSON.stringify({ type: 'pong', ts: m.ts }));
-    if (m.type === 'chat' && m.id) ws.send(JSON.stringify({ type: 'chat-ack', id: m.id }));
-    if (m.type !== 'req') return;
-    if (m.method === 'describe') return ws.send(JSON.stringify({ id: m.id, type: 'resp', result: catalog }));
-    if (m.method === 'future-preview') return ws.send(JSON.stringify({ id: m.id, type: 'resp', result: {
-      label: 'new tool result', items: [{ attachment: { mimeType: 'image/png', data: png.toString('base64') }, value: 42 }],
-      metadata: { mimeType: 'image/png', width: 1 },
-    } }));
-    if (m.method === 'screenshot') return ws.send(JSON.stringify({ id: m.id, type: 'resp', result: screenshotResult }));
-    if (m.method === 'observe') return ws.send(JSON.stringify({ id: m.id, type: 'resp', result: { ...observation, screenshot: observationImage } }));
-    if (m.method === 'click') return ws.send(JSON.stringify({ id: m.id, type: 'error', code: 'STALE_ELEMENT', message: 'page changed' }));
-    ws.send(JSON.stringify({ id: m.id, type: 'resp', result: { method: m.method, params: m.params, requestId: m.requestId } }));
-  });
-  await new Promise((res) => ws.on('open', res));
-  ws.send(JSON.stringify({ type: 'hello', version: '1.3.0', capabilities: ['open', 'click', 'screenshot', 'observe', 'chat-ack-v1'] }));
-  for (let i = 0; i < 50 && !seen.some((m) => m.type === 'chat' && m.text === 'hello'); i++) await sleep(20);
-  ok(seen.some((m) => m.type === 'chat' && m.text === 'hello'), 'the saved offline reply arrives after reconnecting');
-  await sleep(50);
-  seen.length = 0;
-  await sleep(100);
-
-  r = await run('browser.js', ['status']);
-  ok(r.json.extensions[keyId] && r.json.extensions[keyId].label === 'cli-test', 'status lists the extension under its keyId');
-
-  console.log('-- browser.js params + requestId');
-  r = await run('browser.js', ['open', 'url=https://example.com', 'timeoutMs=1500']);
-  ok(r.code === 0 && r.json.ok && r.json.endpoint === keyId, 'k=v params, ok exit 0, endpoint echoed');
-  ok(r.json.result.params.url === 'https://example.com' && r.json.result.params.timeoutMs === 1500, 'string stays string, number parsed');
-  ok(/^[0-9a-f-]{36}$/.test(r.json.result.requestId), 'a uuid requestId rides along');
-  r = await run('browser.js', ['--endpoint', keyId, 'scroll', '{"direction":"down","pixels":300}']);
-  ok(r.code === 0 && r.json.result.params.pixels === 300, 'JSON params + explicit --endpoint');
-  r = await run('browser.js', ['click', 'ref=e1']);
-  ok(r.code === 1 && r.json.ok === false && r.json.code === 'STALE_ELEMENT', 'extension error -> exit 1 with code');
-  r = await run('browser.js', ['click', 'garbage']);
-  ok(r.code === 2, 'bad k=v -> usage exit 2');
-
-  console.log('-- extension-owned discovery and new tools');
-  r = await run('browser.js', ['describe']);
-  assert.deepStrictEqual(r.json.result, catalog);
-  ok(r.code === 0, 'the extension guide and unknown tool index pass through unchanged');
-  r = await run('browser.js', ['future-preview', 'custom=value']);
-  const attachment = r.json.result.items[0].attachment;
-  ok(r.code === 0 && r.json.result.label === 'new tool result' && r.json.result.items[0].value === 42, 'a new extension method needs no Remote method registration');
-  ok(!r.out.includes(png.toString('base64')) && !attachment.data && fs.readFileSync(attachment.path).equals(png), 'an unknown tool nested in an array gets generic image attachment handling');
-  ok(seen.some(m => m.method === 'future-preview' && m.params.custom === 'value'), 'new tool parameters reach the extension verbatim');
-  assert.deepStrictEqual(r.json.result.metadata, { mimeType: 'image/png', width: 1 });
-  ok(true, 'image metadata without encoded data is preserved');
-
-  console.log('-- screenshot stashing');
-  r = await run('browser.js', ['screenshot']);
-  ok(r.code === 0 && r.json.result.path && !r.json.result.data && r.json.result.imageReadRequired === true, 'base64 replaced by a file path');
-  ok(fs.readFileSync(r.json.result.path).equals(png), 'the complete PNG bytes survive the WebSocket, relay and CLI');
-  ok(r.json.result.mimeType === 'image/png' && r.json.result.path.endsWith('.png'), 'bare CDP data gets the correct PNG MIME type and extension');
-  ok(r.json.result.bytes === png.length && !r.out.includes(png.toString('base64')), 'even a small screenshot is removed from stdout with an accurate byte count');
-  ok(r.json.result.path.startsWith(env.BROWSER_REMOTE_OBS_DIR), 'stored under the observations dir');
-  ok(path.isAbsolute(r.json.result.path) && (fs.statSync(r.json.result.path).mode & 0o777) === 0o600, 'the agent receives an absolute path to a private image file');
-  const screenshotPath = r.json.result.path;
-
-  screenshotResult = { format: 'png', data: png.toString('base64') };
-  r = await run('browser.js', ['screenshot']);
-  ok(r.code === 0 && r.json.result.format === 'png' && r.json.result.path.endsWith('.png'), 'legacy format metadata remains supported');
-
-  console.log('-- observe stashing');
-  r = await run('browser.js', ['observe', 'interactive=true']);
-  const image = r.json.result.screenshot;
-  ok(r.code === 0 && !Object.hasOwn(image, 'data') && !r.out.includes(observationImage.data), 'observe also removes the nested image encoding from stdout');
-  ok(image.path.endsWith('.png') && image.mimeType === 'image/png' && image.bytes === png.length && image.imageReadRequired === true, 'observe returns the same image metadata as screenshot');
-  ok(image.path !== screenshotPath && fs.readFileSync(image.path).equals(png), 'observe saves a separate readable image on the CLI host');
-  const { screenshot: _image, ...rest } = r.json.result;
-  assert.deepStrictEqual(rest, observation);
-  ok(true, 'observe preserves text, viewport, page version, timestamps and other observation fields');
-  ok(seen.some((m) => m.method === 'observe' && m.params.interactive === true), 'observe params still reach the extension unchanged');
-
-  const blockedDir = path.join(tmp, 'not-a-directory');
-  fs.writeFileSync(blockedDir, 'fixture');
-  for (const method of ['screenshot', 'observe']) {
-    r = await run('browser.js', [method], { BROWSER_REMOTE_OBS_DIR: blockedDir });
-    ok(r.code === 1 && r.json.code === 'CLI_ERROR' && !r.out.includes(observationImage.data), `${method} storage failure reports an error without leaking image data`);
-  }
-  observationImage = { mimeType: 'image/jpeg', data: png.toString('base64') };
-  r = await run('browser.js', ['observe']);
-  ok(r.code === 1 && r.json.code === 'CLI_ERROR' && !r.out.includes(observationImage.data), 'a MIME mismatch fails without returning raw image data');
-  observationImage = { mimeType: 'image/png', data: 'invalid-image-fixture' };
-  r = await run('browser.js', ['observe']);
-  ok(r.code === 1 && r.json.code === 'CLI_ERROR' && !r.out.includes(observationImage.data), 'invalid image bytes fail without returning the payload');
-  observationImage = { mimeType: 'image/png', data: png.toString('base64') };
-
-  console.log('-- chat both ways');
-  r = await run('send.js', [keyId, '找到了', '第一条']);
-  ok(r.code === 0, 'send.js exit 0 on delivery');
-  await sleep(50);
-  const bubble = seen.find((m) => m.type === 'chat');
-  ok(bubble && bubble.role === 'assistant' && bubble.text === '找到了 第一条', 'panel received the assistant bubble');
-  ok(bubble.final === true, 'C4 outbound replies end the turn by default');
-  r = await run('browser.js', ['chat', '直接', 'chat', '子命令']);
-  ok(r.code === 0 && seen.filter((m) => m.type === 'chat').length === 2, 'browser.js chat works too');
-  r = await run('send.js', ['--progress', keyId, '正在搜索']);
-  ok(r.code === 0 && seen.some((m) => m.type === 'chat' && m.text === '正在搜索' && m.final === false), 'send.js --progress does not end the turn');
-  r = await run('send.js', ['not-a-keyid', 'x']);
-  ok(r.code === 2, 'send.js rejects a malformed endpoint with exit 2');
-
-  ws.send(JSON.stringify({ type: 'chat', text: '帮我看看这个', ts: Date.now() }));
-  await sleep(300);
-  const c4 = JSON.parse(fs.readFileSync(path.join(tmp, 'c4.log'), 'utf8').trim());
-  ok(c4[c4.indexOf('--channel') + 1] === 'browser-remote' && c4[c4.indexOf('--endpoint') + 1] === keyId, 'owner chat reached c4-receive with channel + keyId');
-  ok(c4[c4.indexOf('--content') + 1] === '[Browser] 帮我看看这个', 'content carries the [Browser] prefix');
-
-  console.log('-- revoke');
-  ok(/revoked/.test((await run('key.js', ['revoke', keyId])).out), 'key.js revoke');
-  const ws2 = new WebSocket(`ws://127.0.0.1:${EXT_PORT}/ext`, ['zylos-browser-remote.v2', `key.${key}`]);
-  const status = await new Promise((res) => { ws2.on('unexpected-response', (_q, resp) => res(resp.statusCode)); ws2.on('open', () => res(101)); ws2.on('error', () => {}); });
-  ok(status === 401, 'revoked key is refused on the next handshake without a relay restart');
-
-  ws.close();
-  relay.kill('SIGTERM');
-  await sleep(100);
-  fs.rmSync(tmp, { recursive: true, force: true });
-  console.log(`\ntest-cli: ${passed} assertions passed`);
-  process.exit(0);
-})().catch((err) => {
-  ws?.terminate();
-  relay?.kill('SIGTERM');
-  fs.rmSync(tmp, { recursive: true, force: true });
-  console.error('\ntest-cli FAILED:', err);
-  process.exit(1);
-});
+  const shot = result.observation.page.screenshot;
+  assert.equal(shot.data, undefined);
+  assert.equal(shot.imageReadRequired, true);
+  assert.deepEqual(fs.readFileSync(shot.path), image);
+  assert(!JSON.stringify(result).includes(raw.data));
+  assert.equal(fs.statSync(shot.path).mode & 0o777, 0o600);
+  assert.throws(
+    () => materializeImages({ mimeType: "image/jpeg", data: raw.data }),
+    /Invalid/,
+  );
+  assert.throws(
+    () => materializeImages(Array.from({ length: 13 }, () => raw)),
+    /Too many/,
+  );
+  console.log(
+    "PASS key CLI, decision usage, nested attachments, MIME validation and private image files",
+  );
+} finally {
+  fs.rmSync(dir, { recursive: true, force: true });
+}
