@@ -89,7 +89,11 @@ class AgentLane {
           );
         return reply(
           200,
-          await this.exchange.respond(target.keyId, body.id, body.decision),
+          await this.exchange.respond(
+            target.endpointId,
+            body.id,
+            body.decision,
+          ),
         );
       }
 

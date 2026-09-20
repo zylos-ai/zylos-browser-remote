@@ -53,7 +53,7 @@ function log(...args) {
  * @returns {Promise<{ok: boolean, code?: string}>}
  */
 function deliverRequestToC4(
-  { keyId, text, chatId, request },
+  { endpointId, text, chatId, request },
   logFn = log,
   { timeoutMs = C4_DELIVERY_TIMEOUT_MS } = {},
 ) {
@@ -61,10 +61,10 @@ function deliverRequestToC4(
   // Generic Agent adapter: operation schemas and browser rules are opaque
   // extension data. Images are materialized on THIS Agent host, never Chrome.
   const payload = JSON.stringify(materializeImages(request.payload));
-  const commands = replyCommands(keyId, request.id);
+  const commands = replyCommands(endpointId, request.id);
   const content =
     C4_CONTENT_PREFIX +
-    `[Extension decision request ${keyId}/${request.id}]\n` +
+    `[Extension decision request ${endpointId}/${request.id}]\n` +
     "Use the attached extension contract to decide. For actions, pipe the JSON decision into replyCommands.actions. For done/blocked (including ordinary chat), pipe only the final answer text into the matching replyCommands.done/blocked C4 command, not JSON. Do not submit the same final reply through both routes.\n" +
     `replyCommands: ${JSON.stringify(commands)}\n` +
     "Use quoted heredoc delimiters to preserve literal message content. Each command waits for client execution or completion. Actions return the next request and fresh replyCommands in stdout; use the NEW request's commands. End only when finished:true or an explicit stop/disconnect is returned. Do not poll or call browser actions yourself. Allow 125 seconds and enough output tokens for the schema/state JSON.\n" +
@@ -76,7 +76,7 @@ function deliverRequestToC4(
     "--channel",
     C4_CHANNEL,
     "--endpoint",
-    keyId,
+    endpointId,
     "--priority",
     C4_PRIORITY,
     "--json",
@@ -100,7 +100,7 @@ function deliverRequestToC4(
       });
     } catch (err) {
       logFn(
-        `chat: c4-receive spawn threw for ${keyId}: ${err.message} (MESSAGE NOT DELIVERED)`,
+        `chat: c4-receive spawn threw for ${endpointId}: ${err.message} (MESSAGE NOT DELIVERED)`,
       );
       complete({ ok: false, code: "C4_DELIVERY_FAILED" });
       return;
@@ -117,7 +117,7 @@ function deliverRequestToC4(
     });
     timer = setTimeout(() => {
       logFn(
-        `chat: C4 delivery timed out (endpoint ${keyId}, chat ${chatId || "-"}; delivery unknown)`,
+        `chat: C4 delivery timed out (endpoint ${endpointId}, chat ${chatId || "-"}; delivery unknown)`,
       );
       complete({ ok: false, code: "C4_DELIVERY_TIMEOUT" });
       child.kill("SIGTERM");
@@ -127,7 +127,7 @@ function deliverRequestToC4(
     }, timeoutMs);
     child.on("error", (err) => {
       logFn(
-        `chat: c4-receive failed to start for ${keyId}: ${err.message} (MESSAGE NOT DELIVERED)`,
+        `chat: c4-receive failed to start for ${endpointId}: ${err.message} (MESSAGE NOT DELIVERED)`,
       );
       complete({ ok: false, code: "C4_DELIVERY_FAILED" });
     });
@@ -142,7 +142,7 @@ function deliverRequestToC4(
         }
         if (result?.ok === true && result.action === "queued") {
           logFn(
-            `chat: queued in C4 (endpoint ${keyId}, chat ${chatId || "-"}, conversation ${result.id})`,
+            `chat: queued in C4 (endpoint ${endpointId}, chat ${chatId || "-"}, conversation ${result.id})`,
           );
           complete({ ok: true });
         } else if (
@@ -150,19 +150,19 @@ function deliverRequestToC4(
           ["delivered", "suppressed"].includes(result.action)
         ) {
           logFn(
-            `chat: Agent unavailable (endpoint ${keyId}, chat ${chatId || "-"}, action ${result.action})`,
+            `chat: Agent unavailable (endpoint ${endpointId}, chat ${chatId || "-"}, action ${result.action})`,
           );
           complete({ ok: false, code: "AGENT_UNAVAILABLE" });
         } else {
           logFn(
-            `chat: C4 returned no queue receipt (endpoint ${keyId}, chat ${chatId || "-"})`,
+            `chat: C4 returned no queue receipt (endpoint ${endpointId}, chat ${chatId || "-"})`,
           );
           complete({ ok: false, code: "C4_DELIVERY_UNCONFIRMED" });
         }
         return;
       }
       logFn(
-        `chat: c4-receive exited ${code} for ${keyId} (MESSAGE NOT DELIVERED): ${stderr.trim().slice(0, 400) || "<no stderr>"}`,
+        `chat: c4-receive exited ${code} for ${endpointId} (MESSAGE NOT DELIVERED): ${stderr.trim().slice(0, 400) || "<no stderr>"}`,
       );
       complete({ ok: false, code: "C4_DELIVERY_FAILED" });
     });
@@ -196,8 +196,8 @@ function start({
     exchange,
   });
   if (trace) {
-    ext.on("connected", (keyId) => trace.connection(keyId, true));
-    ext.on("disconnected", (keyId) => trace.connection(keyId, false));
+    ext.on("connected", (endpointId) => trace.connection(endpointId, true));
+    ext.on("disconnected", (endpointId) => trace.connection(endpointId, false));
   }
 
   // Ingress: panel -> relay -> C4 queue. ext-lane has already bounded the text
@@ -256,10 +256,10 @@ function start({
   const localSteps = new Map();
   ext.on("agent-event", (event) => {
     if (!trace) return;
-    const id = `${event.keyId}:${event.id}`;
+    const id = `${event.endpointId}:${event.id}`;
     if (event.phase === "start") {
       if (localSteps.has(id) || localSteps.size >= 100) return;
-      localSteps.set(id, trace.actionStarted(event.keyId, event));
+      localSteps.set(id, trace.actionStarted(event.endpointId, event));
     } else {
       const ticket = localSteps.get(id);
       if (!ticket) return;
@@ -267,20 +267,20 @@ function start({
       trace.actionEnded(ticket, event.result, event.error);
     }
   });
-  const discardSteps = (keyId) => {
+  const discardSteps = (endpointId) => {
     for (const [id, ticket] of localSteps)
-      if (id.startsWith(keyId + ":")) {
+      if (id.startsWith(endpointId + ":")) {
         trace?.actionEnded(ticket, undefined, { code: "INTERRUPTED" });
         localSteps.delete(id);
       }
   };
   ext.on("agent-turn-end", (event) => {
-    discardSteps(event.keyId);
+    discardSteps(event.endpointId);
     trace?.extensionEnded(event);
   });
-  ext.on("disconnected", (keyId) => {
-    discardSteps(keyId);
-    trace?.extensionEnded({ keyId, status: "interrupted" });
+  ext.on("disconnected", (endpointId) => {
+    discardSteps(endpointId);
+    trace?.extensionEnded({ endpointId, status: "interrupted" });
   });
 
   return Promise.all([ext.listen(extPort, EXT_BIND), agent.listen()]).then(

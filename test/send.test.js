@@ -82,7 +82,7 @@ async function finalReplyScenario(t, useC4) {
   });
   const ws = new WebSocket(
     `ws://127.0.0.1:${relay.ext.server.address().port}/ext`,
-    ["zylos-browser-remote.v2", `key.${process.env.BROWSER_REMOTE_KEY}`],
+    ["zylos-browser-remote.v3", `key.${process.env.BROWSER_REMOTE_KEY}`],
   );
   const frames = [],
     saved = [],
@@ -141,7 +141,8 @@ async function finalReplyScenario(t, useC4) {
     JSON.stringify({
       type: "hello",
       version: "fixture",
-      capabilities: ["agent-loop-v1"],
+      capabilities: ["agent-loop-v1", "browser-instance-v1"],
+      browserId: "12345678-1234-4567-89ab-123456789abc",
     }),
   );
   await waitFor(() => frames.some((f) => f.type === "ready"));

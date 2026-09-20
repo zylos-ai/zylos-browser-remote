@@ -78,6 +78,7 @@ class Monitor {
           )
           .slice(-MAX_RUNS);
         for (const run of this.runs) {
+          run.endpointId ||= run.keyId;
           run.steps = run.steps.slice(-MAX_STEPS);
           if (!TERMINAL.has(run.status)) {
             run.status = "interrupted";
@@ -157,13 +158,13 @@ class Monitor {
     item.count++;
   }
 
-  agentRun(keyId, at) {
+  agentRun(endpointId, at) {
     return (
       [...this.runs]
         .reverse()
         .find(
           (run) =>
-            run.keyId === keyId &&
+            run.endpointId === endpointId &&
             run.messages > 0 &&
             run.startedAt <= at &&
             (!run.endedAt || at <= run.endedAt) &&
@@ -186,7 +187,7 @@ class Monitor {
       invocation,
       startedAt: at,
     });
-    if (this.active.get(run.keyId) === run) run.status = "running";
+    if (this.active.get(run.endpointId) === run) run.status = "running";
     return { run, step };
   }
 
@@ -197,7 +198,7 @@ class Monitor {
       endedAt: at,
       durationMs: Math.max(0, at - step.startedAt),
     });
-    if (this.active.get(run.keyId) === run)
+    if (this.active.get(run.endpointId) === run)
       run.status = run.steps.some((item) => item.status === "running")
         ? "running"
         : "waiting";
@@ -205,13 +206,13 @@ class Monitor {
     this.changed();
   }
 
-  run(keyId, label, question = "未捕获提问的浏览器调用") {
-    let run = this.active.get(keyId);
+  run(endpointId, label, question = "未捕获提问的浏览器调用") {
+    let run = this.active.get(endpointId);
     if (run) return run;
     run = {
       id: crypto.randomUUID(),
-      keyId,
-      label: label || keyId,
+      endpointId,
+      label: label || endpointId,
       question,
       startedAt: this.now(),
       updatedAt: this.now(),
@@ -223,10 +224,10 @@ class Monitor {
     this.runs.push(run);
     if (this.runs.length > MAX_RUNS) {
       const removed = this.runs.shift();
-      if (this.active.get(removed.keyId) === removed)
-        this.active.delete(removed.keyId);
+      if (this.active.get(removed.endpointId) === removed)
+        this.active.delete(removed.endpointId);
     }
-    this.active.set(keyId, run);
+    this.active.set(endpointId, run);
     return run;
   }
 
@@ -250,8 +251,10 @@ class Monitor {
     return step;
   }
 
-  received({ keyId, label, text, chatId, context }) {
-    const run = this.run(keyId, label, text.slice(0, 300));
+  received({ endpointId, keyId, browserId, label, text, chatId, context }) {
+    const run = this.run(endpointId, label, text.slice(0, 300));
+    run.keyId = keyId;
+    run.browserId = browserId;
     if (!run.messages) {
       run.question = text.slice(0, 300);
       if (label) run.label = label;
@@ -296,15 +299,15 @@ class Monitor {
             : "delivery_failed";
       if (run.status === "delivery_failed") {
         run.endedAt = this.now();
-        this.active.delete(run.keyId);
+        this.active.delete(run.endpointId);
       }
     }
     run.updatedAt = this.now();
     this.changed();
   }
 
-  decisionRequested({ keyId, request }) {
-    const run = this.run(keyId);
+  decisionRequested({ endpointId, request }) {
+    const run = this.run(endpointId);
     const step = this.add(
       run,
       "queue",
@@ -315,8 +318,8 @@ class Monitor {
     return { run, step };
   }
 
-  extensionEnded({ keyId, status, text }) {
-    const run = this.active.get(keyId);
+  extensionEnded({ endpointId, status, text }) {
+    const run = this.active.get(endpointId);
     if (!run) return;
     this.add(
       run,
@@ -327,12 +330,12 @@ class Monitor {
     run.status = status === "done" ? "delivered" : "interrupted";
     run.endedAt = this.now();
     run.updatedAt = this.now();
-    this.active.delete(keyId);
+    this.active.delete(endpointId);
     this.changed();
   }
 
-  actionStarted(keyId, { method, params, requestId }) {
-    const run = this.run(keyId);
+  actionStarted(endpointId, { method, params, requestId }) {
+    const run = this.run(endpointId);
     this.countTool(run, "browser", method);
     const step = this.add(run, "command", method, {
       status: "running",
@@ -353,7 +356,7 @@ class Monitor {
       step.error = String(error.code || "EXT_ERROR");
       step.result = detail({ message: error.message, details: error.details });
     } else step.result = detail(result);
-    if (this.active.get(run.keyId) === run)
+    if (this.active.get(run.endpointId) === run)
       run.status = run.steps.some((item) => item.status === "running")
         ? "running"
         : "waiting";
@@ -361,8 +364,8 @@ class Monitor {
     this.changed();
   }
 
-  connection(keyId, connected) {
-    const run = this.active.get(keyId);
+  connection(endpointId, connected) {
+    const run = this.active.get(endpointId);
     if (run)
       this.add(
         run,

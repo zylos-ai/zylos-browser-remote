@@ -12,8 +12,8 @@ class AgentExchange {
     ext.on("agent-turn-end", (event) => this.ended(event));
   }
   ingest(message) {
-    const { keyId, chatId, text, request } = message;
-    let state = this.states.get(keyId);
+    const { endpointId, chatId, text, request } = message;
+    let state = this.states.get(endpointId);
     if (!state || state.taskId !== chatId) {
       if (state?.waiter)
         state.waiter.resolve({
@@ -22,15 +22,16 @@ class AgentExchange {
           message: "Turn was replaced",
         });
       state = { taskId: chatId, mode: false, receipts: new Map() };
-      this.states.set(keyId, state);
+      this.states.set(endpointId, state);
     }
     state.next = {
+      endpointId,
       id: request.id,
       taskId: chatId,
       round: request.round,
       text,
       payload: request.payload,
-      replyCommands: replyCommands(keyId, request.id),
+      replyCommands: replyCommands(endpointId, request.id),
     };
     if (!state.mode) return false; // First delivery uses the existing C4 adapter.
     if (state.waiter) this.deliver(state);
@@ -60,8 +61,8 @@ class AgentExchange {
     clearTimeout(waiter.timer);
     waiter.resolve(response);
   }
-  async respond(keyId, id, decision) {
-    const state = this.states.get(keyId);
+  async respond(endpointId, id, decision) {
+    const state = this.states.get(endpointId);
     if (!state)
       return {
         ok: false,
@@ -102,7 +103,7 @@ class AgentExchange {
     try {
       // Client validates both the schema and idempotent contents, including
       // retries whose earlier browser actions have already happened.
-      await this.ext.request(keyId, {
+      await this.ext.request(endpointId, {
         method: "agent-decision",
         params: { id, decision },
         timeoutMs: 10000,
@@ -129,15 +130,15 @@ class AgentExchange {
     }
     return next;
   }
-  ended({ keyId, taskId, status }) {
-    const state = this.states.get(keyId);
+  ended({ endpointId, taskId, status }) {
+    const state = this.states.get(endpointId);
     if (!state || state.taskId !== taskId) return;
     state.terminal = status;
     if (state.waiter) this.deliver(state);
   }
-  disconnected(keyId) {
-    const state = this.states.get(keyId);
-    this.states.delete(keyId);
+  disconnected(endpointId) {
+    const state = this.states.get(endpointId);
+    this.states.delete(endpointId);
     if (state?.waiter) {
       clearTimeout(state.waiter.timer);
       state.waiter.resolve({

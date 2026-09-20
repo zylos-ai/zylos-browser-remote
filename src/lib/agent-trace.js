@@ -1,4 +1,5 @@
 "use strict";
+const { ENDPOINT_SOURCE } = require("./endpoint");
 
 // Read-only adapter for the Zylos Codex CLI rollout. Never execute log content,
 // copy reasoning, or expose unredacted credentials / raw tool output.
@@ -156,15 +157,14 @@ class RolloutSession {
         )
         .join("\n");
       if (!text.trim()) return;
-      // C4 appends this routing suffix. Match the final suffix, never quoted
-      // examples or an endpoint merely mentioned in a tool's output.
+      // C4's 100-character preview can cut off the request ID. The complete
+      // endpoint precedes it; only recognize it in the transport header.
       const endpoint = text.match(
-        /\[Extension decision request ([a-f0-9]{12})\/[A-Za-z0-9._:-]{1,128}\]/,
+        new RegExp(
+          `(?:^|\\n|Meanwhile, )\\[Browser\\] \\[Extension decision request (${ENDPOINT_SOURCE})/`,
+        ),
       )?.[1];
-      const next =
-        endpoint && /(?:^|\n|Meanwhile, )\[Browser\] /.test(text)
-          ? this.monitor.agentRun(endpoint, at)
-          : null;
+      const next = endpoint ? this.monitor.agentRun(endpoint, at) : null;
       if (this.promptSeen && this.run !== next) {
         this.mixed = true;
         if (this.run) {

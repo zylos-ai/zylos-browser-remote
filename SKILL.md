@@ -38,6 +38,10 @@ requests and responses. Browser behavior belongs entirely to the extension.
 ## Respond to a request
 
 An `Extension decision request` identifies the endpoint and current request ID.
+The endpoint identifies this browser instance (`keyId.browserId`), not just
+its authentication key. Several browsers can share a key. Preserve the exact
+endpoint and request ID from the current request; never guess another browser
+or substitute the bare keyId. Agent context remains shared.
 Read its attached contract and `replyCommands`. Use exactly one response route:
 
 - Actions: pipe the structured actions JSON into `replyCommands.actions`.
@@ -47,7 +51,7 @@ Read its attached contract and `replyCommands`. Use exactly one response route:
 For example, send a final answer using the CURRENT request's endpoint:
 
 ```bash
-cat <<'EOF_REPLY' | node ~/zylos/.claude/skills/comm-bridge/scripts/c4-send.js browser-remote '<keyId>|req:<requestId>|status:done'
+cat <<'EOF_REPLY' | node ~/zylos/.claude/skills/comm-bridge/scripts/c4-send.js browser-remote '<endpointId>|req:<requestId>|status:done'
 Your final answer, with Markdown if useful.
 EOF_REPLY
 ```
@@ -61,14 +65,14 @@ explicit status into the extension's terminal decision, using the existing
 Actions continue through:
 
 ```bash
-cat <<'EOF_JSON' | node ~/zylos/.claude/skills/browser-remote/scripts/decision.js <keyId> <requestId>
+cat <<'EOF_JSON' | node ~/zylos/.claude/skills/browser-remote/scripts/decision.js <endpointId> <requestId>
 <actions JSON matching the attached extension contract>
 EOF_JSON
 ```
 
 The command waits for extension execution and returns either:
 
-- `{ok:true,accepted:true,next:{id,taskId,round,text,payload,replyCommands}}`: use
+- `{ok:true,accepted:true,next:{endpointId,id,taskId,round,text,payload,replyCommands}}`: use
   the NEW request's commands and evidence. Never finalize using a previous ID.
 - `{ok:true,accepted:true,finished:true,status}`: the turn has ended.
 - `{ok:false,code,message}`: handle the transport error without inventing a new
@@ -118,5 +122,5 @@ curl --fail --silent --show-error http://127.0.0.1:3803/status
 
 The extension connects using a relay URL and full Key. Proxy
 `/browser-remote/*` to `127.0.0.1:3802`; keep the Agent HTTP lane on
-`127.0.0.1:3803` private. Both peers must support `agent-loop-v1`.
+`127.0.0.1:3803` private. New plugins require WebSocket v3, `agent-loop-v1` and `browser-instance-v1`.
 See README for installation and routing.

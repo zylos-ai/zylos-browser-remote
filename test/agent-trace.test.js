@@ -13,7 +13,7 @@ const {
   outputSummary,
 } = require("../src/lib/agent-trace");
 const { inputDetails, MAX_INPUT_BYTES } = require("../src/lib/monitor-input");
-const endpoint = "a".repeat(12);
+const endpoint = "a".repeat(12) + ".12345678-1234-4567-89ab-123456789abc";
 const event = (at, type, payload) => ({
   timestamp: new Date(at).toISOString(),
   type,
@@ -55,7 +55,10 @@ function fixture(t) {
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const monitor = new Monitor({ now: () => 1000 });
   t.after(() => monitor.close());
-  const { run } = monitor.received({ keyId: endpoint, text: "Read example" });
+  const { run } = monitor.received({
+    endpointId: endpoint,
+    text: "Read example",
+  });
   return {
     dir,
     monitor,
@@ -67,7 +70,7 @@ function fixture(t) {
 test("extension decision header correlates even in the 100-character C4 preview without a reply suffix", (t) => {
   const { run, session } = fixture(t);
   const header = `[Browser] [Extension decision request ${endpoint}/11111111-1111-4111-8111-111111111111]\n`;
-  assert.ok(header.length < 100);
+  assert.ok(header.length > 100);
   session.event(
     event(1200, "response_item", {
       type: "message",
@@ -75,7 +78,9 @@ test("extension decision header correlates even in the 100-character C4 preview 
       content: [
         {
           type: "input_text",
-          text: header + "[C4] TRUNCATED — read complete message file",
+          text:
+            header.slice(0, 100) +
+            "[C4] TRUNCATED — read complete message file",
         },
       ],
     }),
@@ -129,7 +134,11 @@ test("Agent and browser calls are counted separately, correlated by route, dedup
   });
   session.event(call(1500, "c2", "view_image"));
   // A reply acknowledgement can arrive before the collector reads a tool result.
-  monitor.extensionEnded({ keyId: endpoint, status: "done", text: "done" });
+  monitor.extensionEnded({
+    endpointId: endpoint,
+    status: "done",
+    text: "done",
+  });
   session.event(
     output(
       1650,

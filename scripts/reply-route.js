@@ -1,7 +1,10 @@
 "use strict";
+const { ENDPOINT_SOURCE, ENDPOINT_RE } = require("../src/lib/endpoint");
 
 // Transport addresses only: browser actions and completion remain extension-owned.
 function replyCommands(endpoint, id) {
+  if (!ENDPOINT_RE.test(endpoint) || !/^[A-Za-z0-9._:-]{1,128}$/.test(id))
+    throw new Error("Invalid reply route");
   const root = "~/zylos/.claude/skills";
   const final = (status) =>
     `node ${root}/comm-bridge/scripts/c4-send.js browser-remote '${endpoint}|req:${id}|status:${status}'`;
@@ -13,13 +16,12 @@ function replyCommands(endpoint, id) {
 }
 
 function parseReplyEndpoint(value) {
-  const match =
-    /^([a-f0-9]{12})\|req:([A-Za-z0-9._:-]{1,128})\|status:(done|blocked)$/.exec(
-      value || "",
-    );
+  const match = new RegExp(
+    `^(${ENDPOINT_SOURCE})\\|req:([A-Za-z0-9._:-]{1,128})\\|status:(done|blocked)$`,
+  ).exec(value || "");
   if (!match)
     throw new Error(
-      "Expected <keyId>|req:<requestId>|status:<done|blocked>; use the current request's reply command",
+      "Expected <endpointId>|req:<requestId>|status:<done|blocked>; use the current request's reply command",
     );
   return { endpoint: match[1], id: match[2], status: match[3] };
 }

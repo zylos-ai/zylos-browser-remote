@@ -14,7 +14,7 @@ test("monitor follows intake, running tools, failures and completion without equ
   let now = 1000;
   const monitor = new Monitor({ now: () => now });
   const ticket = monitor.received({
-    keyId: "a",
+    endpointId: "a",
     label: "Browser",
     text: "Search something",
     chatId: "question-1",
@@ -38,17 +38,17 @@ test("monitor follows intake, running tools, failures and completion without equ
   assert.equal(call.step.durationMs, 25);
   assert.equal(call.step.status, "error");
   assert.equal(ticket.run.status, "waiting");
-  monitor.extensionEnded({ keyId: "a", status: "done", text: "Done" });
+  monitor.extensionEnded({ endpointId: "a", status: "done", text: "Done" });
   assert.equal(ticket.run.status, "delivered");
-  const next = monitor.received({ keyId: "a", text: "Next question" });
+  const next = monitor.received({ endpointId: "a", text: "Next question" });
   assert.notEqual(next.run.id, ticket.run.id);
   monitor.close();
 });
 
 test("monitor merges overlapping prompts and bounds/redacts diagnostic payloads", () => {
   const monitor = new Monitor();
-  const first = monitor.received({ keyId: "a", text: "One" });
-  const followup = monitor.received({ keyId: "a", text: "Two" });
+  const first = monitor.received({ endpointId: "a", text: "One" });
+  const followup = monitor.received({ endpointId: "a", text: "Two" });
   assert.equal(first.run, followup.run);
   assert.equal(first.run.messages, 2);
   const call = monitor.actionStarted("a", {
@@ -74,11 +74,11 @@ test("monitor merges overlapping prompts and bounds/redacts diagnostic payloads"
     assert(!serialized.includes(value));
   assert(call.step.result.length <= 3520);
   for (let i = 0; i < MAX_STEPS + 5; i++)
-    monitor.decisionRequested({ keyId: "a", request: { round: 2 } });
+    monitor.decisionRequested({ endpointId: "a", request: { round: 2 } });
   assert.equal(first.run.steps.length, MAX_STEPS);
   assert(first.run.omittedSteps > 0);
   for (let i = 0; i < MAX_RUNS + 5; i++)
-    monitor.received({ keyId: `browser-${i}`, text: "bounded" });
+    monitor.received({ endpointId: `browser-${i}`, text: "bounded" });
   assert.equal(monitor.runs.length, MAX_RUNS);
   assert(monitor.active.size <= MAX_RUNS);
   monitor.close();
@@ -89,10 +89,10 @@ test("monitor persists history, marks interrupted commands and retains completed
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, "monitor.json");
   const first = new Monitor({ file });
-  first.received({ keyId: "a", text: "Pending action" });
+  first.received({ endpointId: "a", text: "Pending action" });
   first.actionStarted("a", { method: "wait" });
-  first.received({ keyId: "b", text: "Pending reply" });
-  first.extensionEnded({ keyId: "b", status: "done", text: "Done" });
+  first.received({ endpointId: "b", text: "Pending reply" });
+  first.extensionEnded({ endpointId: "b", status: "done", text: "Done" });
   first.close();
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   const restored = new Monitor({ file });
@@ -102,7 +102,7 @@ test("monitor persists history, marks interrupted commands and retains completed
   restored.close();
   fs.writeFileSync(file, "broken-json");
   const broken = new Monitor({ file });
-  broken.received({ keyId: "a", text: "Still records in memory" });
+  broken.received({ endpointId: "a", text: "Still records in memory" });
   broken.close();
   assert(broken.storageError);
   assert.equal(fs.readFileSync(file, "utf8"), "broken-json");
@@ -188,7 +188,7 @@ test("local monitor exposes request/action/completion events, never appears on t
           content: [
             {
               type: "input_text",
-              text: `[Browser] [Extension decision request ${snapshot.runs[0].keyId}/q1] Find an example`,
+              text: `[Browser] [Extension decision request ${snapshot.runs[0].endpointId}/q1] Find an example`,
             },
           ],
         },

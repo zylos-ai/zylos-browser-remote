@@ -191,7 +191,8 @@ function render() {
   $("run-view").hidden = !run;
   if (!run) return;
   $("question").textContent = run.question;
-  $("run-time").textContent = `${time(run.startedAt, true)} · ${run.label}`;
+  $("run-time").textContent =
+    `${time(run.startedAt, true)} · ${run.label} · ${run.endpointId || run.keyId || ""}`;
   $("run-status").textContent = states[run.status] || run.status;
   $("commands").textContent = renderTools(run, "browser");
   $("agent-commands").textContent = renderTools(run, "agent");
@@ -387,7 +388,7 @@ async function refresh() {
         el(
           "p",
           "",
-          `${item.label || id} · 协议 ${item.version || "未上报"} · 连入于 ${time(item.since, true)} · 上报能力 ${item.capabilities?.length || 0} 项`,
+          `${item.label || id}${item.browserId ? ` · 浏览器 ${item.browserId.slice(0, 8)}` : ""} · 协议 ${item.version || "未上报"} · 连入于 ${time(item.since, true)} · 上报能力 ${item.capabilities?.length || 0} 项`,
         ),
       );
     }

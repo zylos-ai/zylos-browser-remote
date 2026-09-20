@@ -3,7 +3,7 @@
 /*
  * Extension key management. The plaintext is printed ONCE at `new`; only the
  * sha256 digest is kept in keys.json. Hand the owner `relayUrl + key`; the
- * keyId shown next to it is the C4 endpoint their side-panel messages arrive on.
+ * keyId identifies the credential; browser reply endpoints also include the instance ID.
  *
  *   node scripts/key.js new --label bobo-mac
  *   node scripts/key.js list

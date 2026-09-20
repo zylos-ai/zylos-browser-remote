@@ -4,9 +4,9 @@
  *
  * A key is the ONLY thing an extension needs to join: `relayUrl + key`. The
  * relay never stores the key itself, only sha256(key); the first 12 hex chars
- * of that digest are the `keyId`, which doubles as the C4 endpoint the agent
- * replies to. Whoever holds the key IS that endpoint -- there is no second
- * identity layer on purpose.
+ * of that digest are the `keyId`, the authentication namespace. Browsers in
+ * that namespace identify their installation in hello; their reply address
+ * is keyId.browserId. The browser ID is not a separate credential.
  *
  *   keys.json  { "<keyId>": { "sha256": "<64 hex>", "label": "bobo-mac", "createdAt": "..." } }
  *

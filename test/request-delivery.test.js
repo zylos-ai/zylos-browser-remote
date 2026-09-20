@@ -22,7 +22,7 @@ test("C4 queue receipts distinguish accepted, unavailable, failed and uncertain 
   const deliver = (timeoutMs = 2000) =>
     deliverRequestToC4(
       {
-        keyId: "a".repeat(12),
+        endpointId: "a".repeat(12),
         text: "hello",
         chatId: "chat-1",
         request: { id: "r1", round: 1, payload: { text: "hello" } },

@@ -90,8 +90,16 @@ node scripts/key.js revoke <keyId>
 ```
 
 `new` 生成 32 字节随机密钥，显示完整 Key 一次；服务器只保存 SHA-256 摘要、备注和时间。
-摘要的前 12 位为 `keyId`，也是连接路由标识。用户在插件设置填写地址与完整 Key。
-每个 Chrome profile 使用独立 Key；同一 Key 的新连接替换现有连接。
+摘要的前 12 位为 `keyId`，用于标识鉴权凭据。用户在插件设置填写地址与完整 Key。
+同一个 Key 可以同时连接多个浏览器插件实例（最多 32 个）。插件自动生成并在本地保存
+`browserId`，Remote 用 `keyId.browserId` 路由请求、决定、最终回复和诊断事件。
+不同实例不会互相替换；同一个实例重新连接时才替换自己的旧连接，并中断旧任务。
+同一 Chrome profile 的多个窗口共享一个实例；不同 profile 或设备有各自的实例。
+
+先升级 Remote，再重新加载新版插件。新版插件使用 WebSocket v3 和
+`browser-instance-v1` 握手；旧版 Remote 会拒绝连接，不会回退到按 Key 抢占连接。
+升级期间 Remote 仍接受 v2 插件，其单 Key 连接与新版实例路由分别保存。
+Agent 的上下文仍然共用，这项能力只隔离浏览器路由。
 
 默认密钥文件是 `~/zylos/components/browser-remote/keys.json`，可以通过
 `BROWSER_REMOTE_KEYS_FILE` 指定。每次握手重新读取。撤销阻止后续握手，
@@ -104,7 +112,7 @@ node scripts/key.js revoke <keyId>
 把首轮交给 C4，并附上关联回复命令。Agent 的动作通过标准输入提交契约规定的 JSON：
 
 ```sh
-node scripts/decision.js <keyId> <requestId> < decision.json
+node scripts/decision.js <endpointId> <requestId> < decision.json
 ```
 
 命令调用 `/decision`，等待插件返回下一轮请求或任务结束。Remote 不解释动作名称和参数，
@@ -115,7 +123,7 @@ Agent 使用说明见 [SKILL.md](SKILL.md)。
 `replyCommands.blocked`。标准输入是回复正文，不是 JSON：
 
 ```sh
-cat <<'EOF_REPLY' | node ~/zylos/.claude/skills/comm-bridge/scripts/c4-send.js browser-remote '<keyId>|req:<requestId>|status:done'
+cat <<'EOF_REPLY' | node ~/zylos/.claude/skills/comm-bridge/scripts/c4-send.js browser-remote '<endpointId>|req:<requestId>|status:done'
 已完成，下面是结果。
 EOF_REPLY
 ```
@@ -169,14 +177,14 @@ Agent 应按请求中的契约持续提交决策，直到 `finished:true` 或明
 
 ## 代码入口
 
-| 文件                                             | 职责                                 |
-| ------------------------------------------------ | ------------------------------------ |
+| 文件                                             | 职责                                    |
+| ------------------------------------------------ | --------------------------------------- |
 | `src/index.js`                                   | 入口；启动两个监听入口，首轮请求交给 C4 |
-| `src/lib/ext-lane.js`                            | Key 认证、WebSocket、心跳与连接关联  |
-| `src/lib/agent-lane.js`                          | 私有 HTTP 决策入口和状态查询         |
-| `src/lib/agent-exchange.js`                      | 关联决策、下一轮请求、重试与结束状态 |
-| `src/lib/keys.js`、`scripts/key.js`              | Key 生成、校验与管理                 |
-| `scripts/decision.js`、`scripts/relay-client.js` | Agent 命令行传输适配                 |
-| `scripts/send.js`、`scripts/reply-route.js`      | C4 最终回复适配与当前请求的命令地址  |
-| `scripts/attachments.js`                         | Agent 主机图片附件处理               |
-| `src/lib/monitor.js`、`src/lib/agent-trace.js`   | 可选执行诊断                         |
+| `src/lib/ext-lane.js`                            | Key 认证、WebSocket、心跳与连接关联     |
+| `src/lib/agent-lane.js`                          | 私有 HTTP 决策入口和状态查询            |
+| `src/lib/agent-exchange.js`                      | 关联决策、下一轮请求、重试与结束状态    |
+| `src/lib/keys.js`、`scripts/key.js`              | Key 生成、校验与管理                    |
+| `scripts/decision.js`、`scripts/relay-client.js` | Agent 命令行传输适配                    |
+| `scripts/send.js`、`scripts/reply-route.js`      | C4 最终回复适配与当前请求的命令地址     |
+| `scripts/attachments.js`                         | Agent 主机图片附件处理                  |
+| `src/lib/monitor.js`、`src/lib/agent-trace.js`   | 可选执行诊断                            |
