@@ -1,13 +1,13 @@
 {
   "name": "zylos-browser-remote",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Decision transport between a Zylos Agent and the Coco browser extension.",
   "main": "relay/server.js",
   "type": "commonjs",
   "scripts": {
     "start": "node relay/server.js",
-    "test": "node --test tools/*.test.js && node tools/smoke.js && node tools/test-cli.js",
+    "test": "node --test test/*.test.js && node tools/smoke.js && node tools/test-cli.js",
     "smoke": "node tools/smoke.js",
     "key": "node scripts/key.js"
   },

@@ -1,6 +1,6 @@
 ---
 name: browser-remote
-version: 0.3.0
+version: 0.4.0
 description: >-
   Decision transport between the Agent and a connected Coco browser extension.
   Submit actions through scripts/decision.js; send final answers through C4
@@ -14,6 +14,11 @@ lifecycle:
     name: zylos-browser-remote
     entry: relay/server.js
   data_dir: ~/zylos/components/browser-remote
+  hooks:
+    configure: hooks/configure.js
+    post-install: hooks/post-install.js
+    pre-upgrade: hooks/pre-upgrade.js
+    post-upgrade: hooks/post-upgrade.js
   preserve:
     - keys.json
     - observations/
