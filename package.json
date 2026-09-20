@@ -3,10 +3,10 @@
   "version": "0.4.0",
   "private": true,
   "description": "Decision transport between a Zylos Agent and the Coco browser extension.",
-  "main": "relay/server.js",
+  "main": "src/index.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node relay/server.js",
+    "start": "node src/index.js",
     "test": "node --test test/*.test.js && node tools/smoke.js && node tools/test-cli.js",
     "smoke": "node tools/smoke.js",
     "key": "node scripts/key.js"

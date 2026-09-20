@@ -24,7 +24,9 @@ Agent ── c4-send ── send.js ── Remote ── 插件保存最终回�
 zylos add https://github.com/zylos-ai/zylos-browser-remote --branch main --yes --json
 ```
 
-服务入口是 `relay/server.js`。组件管理器使用 `ecosystem.config.cjs` 注册 PM2 服务
+声明的组件入口是 `src/index.js`（`package.json` 的 `main`、`SKILL.md` 的 `entry`），它是一层
+薄壳，实现仍在 `relay/server.js`——见下文「为什么实现不在 `src/index.js`」。组件管理器使用
+`ecosystem.config.cjs` 注册 PM2 服务
 `zylos-browser-remote`，持久化注册由 Core 的 `~/zylos/pm2/ecosystem.config.cjs` 管理。
 生产配置关闭 Monitor。安装后检查：
 
@@ -33,7 +35,20 @@ pm2 status zylos-browser-remote
 curl --fail --silent --show-error http://127.0.0.1:3803/status
 ```
 
-从源码本地运行：
+### 为什么实现不在 `src/index.js`
+
+组件规范要求入口是 `src/index.js`，但本仓库把实现留在了 `relay/server.js`，这是刻意的偏离。
+
+Core 的机器本地文件 `~/zylos/pm2/ecosystem.config.cjs` 不只把 `relay/server.js` 写死成启动
+路径，还拿**这个文件存不存在**当注册开关：文件不在，那段配置返回空数组，服务不是启动失败，
+而是**压根不再被注册**。更麻烦的是时机——改完当下 `pm2 status` 一切正常（运行中的进程早已把
+旧文件载入内存），要到下一次容器重启才发作，没有报错也没有崩溃日志，而重启时机不由本仓库决定。
+
+把文件留在原地，这个失效路径就不可达。`src/index.js` 因此是一层薄壳：re-export 全部公开接口，
+并在自己作为主模块运行时调用 `relay/server.js` 导出的 `main()`——PM2 直接拉 `relay/server.js`
+时走的是同一个 `main()`，两条路径行为一致。
+
+### 从源码本地运行
 
 ```sh
 npm ci
@@ -41,7 +56,7 @@ node scripts/key.js new --label my-chrome
 npm start
 ```
 
-`npm start` 执行 `node relay/server.js`，一个 Node.js 进程监听两个入口：
+`npm start` 执行 `node src/index.js`，一个 Node.js 进程监听两个入口：
 
 | 入口       | 默认地址             | 用途                                         |
 | ---------- | -------------------- | -------------------------------------------- |
@@ -159,6 +174,7 @@ Agent 应按请求中的契约持续提交决策，直到 `finished:true` 或明
 
 | 文件                                             | 职责                                 |
 | ------------------------------------------------ | ------------------------------------ |
+| `src/index.js`                                   | 声明入口；薄壳，转交 `relay/server.js` |
 | `relay/server.js`                                | 启动两个监听入口，首轮请求交给 C4    |
 | `relay/ext-lane.js`                              | Key 认证、WebSocket、心跳与连接关联  |
 | `relay/agent-lane.js`                            | 私有 HTTP 决策入口和状态查询         |

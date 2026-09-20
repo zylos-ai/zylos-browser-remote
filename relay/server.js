@@ -305,7 +305,12 @@ function start({
   );
 }
 
-if (require.main === module) {
+// Service entry. Called directly when this file is run as the process main
+// (how PM2 launches it), and by src/index.js, which is the entry point the
+// component spec declares. Keep both paths working: ~/zylos/pm2/ecosystem.config.cjs
+// uses the existence of relay/server.js as its registration switch, so this
+// file must stay put and stay self-starting.
+function main() {
   let count = 0;
   try {
     count = Object.keys(loadKeys()).length;
@@ -333,7 +338,12 @@ if (require.main === module) {
   });
 }
 
+if (require.main === module) {
+  main();
+}
+
 module.exports = {
+  main,
   start,
   deliverRequestToC4,
   c4ReceivePath,

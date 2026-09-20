@@ -14,8 +14,10 @@ component installable and to close the gaps against
 [`COMPONENT-SPEC.md`](https://github.com/zylos-ai/zylos-component-template)
 tracked in issue #1.
 
-No relay, extension-protocol, or CLI behavior changes: every runtime code
-path is byte-identical to 0.3.0.
+No relay, extension-protocol, or CLI behavior changes. The only edit to a
+runtime file wraps `relay/server.js`'s existing startup block in a `main()`
+function so a second entry point can reach it; the block's contents and its
+`require.main === module` trigger are unchanged.
 
 ### Added
 - `hooks/post-install.js` — creates the data directory, `logs/` (which
@@ -32,6 +34,13 @@ path is byte-identical to 0.3.0.
   `config.required` items, so zylos collects nothing and this hook is a no-op
   in practice; it is the landing spot if a setting is ever added.
 - `CHANGELOG.md`, `LICENSE` (MIT) — required by spec §2.1.
+- `src/index.js` — the entry point the spec asks for (issue #1, item 6).
+  It is a shim: it re-exports `relay/server.js` and, when run as the process
+  main, calls the `main()` it now exports. See "Why the implementation is not
+  in `src/index.js`" in the README for why the implementation stays put —
+  short version: `~/zylos/pm2/ecosystem.config.cjs` uses the existence of
+  `relay/server.js` as its registration switch, and losing that file
+  de-registers the service silently at the next container restart.
 
 ### Changed
 - Unit tests moved from `tools/*.test.js` to `test/*.test.js` to match the
@@ -42,13 +51,18 @@ path is byte-identical to 0.3.0.
 - `SKILL.md` declares `lifecycle.hooks`, and its `version` (stale at 0.3.0)
   now matches this release.
 
+### Changed (continued)
+- `package.json` `main`/`start` and `SKILL.md` `entry` now point at
+  `src/index.js`. `ecosystem.config.cjs` intentionally still launches
+  `relay/server.js` directly — that is the path that has been running in
+  production, and the shim adds nothing to it.
+
 ### Known gaps
-- The repository layout still uses `relay/server.js` as the entry point
-  rather than the spec's `src/index.js` + `src/lib/` (issue #1, item 6).
-  This is a layout deviation, not a defect: the entry is declared correctly
-  in `lifecycle.service.entry` and works. Restructuring it is the one change
-  that would touch the running service, so it is deliberately left out of
-  this release and remains open for a separate decision.
+- The implementation modules live in `relay/` rather than the spec's
+  `src/lib/`. The declared entry point is now spec-shaped, but the tree
+  below it is not. Moving those files is safe in principle — nothing outside
+  the repository references them — but it is a wide rename with no user-
+  visible benefit, so it is left for a later release.
 
 ### Upgrade Notes
 Existing hand-installed deployments need no action. The service entry, ports

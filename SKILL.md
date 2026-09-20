@@ -12,7 +12,7 @@ lifecycle:
   service:
     type: pm2
     name: zylos-browser-remote
-    entry: relay/server.js
+    entry: src/index.js
   data_dir: ~/zylos/components/browser-remote
   hooks:
     configure: hooks/configure.js
