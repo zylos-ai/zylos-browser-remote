@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-09-20
+
+Fixes a crash path found while reviewing 0.6.0: an exception thrown by
+`ws.close()` could take the whole relay process down, dropping every connected
+browser rather than the one socket involved.
+
+29 tests, 28 pass / 1 skip.
+
+### Fixed
+- `ws.close()` is now called through a guarded `safeClose()` helper everywhere
+  in `src/lib/ext-lane.js`, matching the style `_beat()` and `close()` already
+  used. `close()` throws on a socket that is already torn down, and every one
+  of these call sites runs inside a `message` handler or a timer callback —
+  so the error escaped into the `ws` emitter as an uncaught exception and
+  killed the process.
+- The worst of them was the supersede path: it closes a **different** socket
+  (the older, possibly half-dead instance) than the one whose message is being
+  handled, so a stale peer could kill the relay for everyone by reconnecting.
+  Regression test added — it reproduces as an `uncaughtException` without
+  the fix.
+
 ## [0.6.0] - 2026-09-20
 
 Several browser instances can now share one Key. Until this release `keyId`
