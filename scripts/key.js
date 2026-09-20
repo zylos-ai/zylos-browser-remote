@@ -10,7 +10,7 @@
  *   node scripts/key.js revoke <keyId>
  */
 
-const { newKey, listKeys, revokeKey, keysFile } = require('../relay/keys');
+const { newKey, listKeys, revokeKey, keysFile } = require('../src/lib/keys');
 
 const [cmd, ...rest] = process.argv.slice(2);
 

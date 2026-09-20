@@ -5,14 +5,14 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
-const { Monitor, MAX_STEPS } = require("../relay/monitor");
+const { Monitor, MAX_STEPS } = require("../src/lib/monitor");
 const {
   AgentTrace,
   RolloutSession,
   inputSummary,
   outputSummary,
-} = require("../relay/agent-trace");
-const { inputDetails, MAX_INPUT_BYTES } = require("../relay/monitor-input");
+} = require("../src/lib/agent-trace");
+const { inputDetails, MAX_INPUT_BYTES } = require("../src/lib/monitor-input");
 const endpoint = "a".repeat(12);
 const event = (at, type, payload) => ({
   timestamp: new Date(at).toISOString(),

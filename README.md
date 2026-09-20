@@ -24,8 +24,8 @@ Agent ── c4-send ── send.js ── Remote ── 插件保存最终回�
 zylos add https://github.com/zylos-ai/zylos-browser-remote --branch main --yes --json
 ```
 
-声明的组件入口是 `src/index.js`（`package.json` 的 `main`、`SKILL.md` 的 `entry`），它是一层
-薄壳，实现仍在 `relay/server.js`——见下文「为什么实现不在 `src/index.js`」。组件管理器使用
+组件入口是 `src/index.js`（`package.json` 的 `main`、`SKILL.md` 的 `entry`、
+`ecosystem.config.cjs` 的 `script`，三处一致），实现模块在 `src/lib/`。组件管理器使用
 `ecosystem.config.cjs` 注册 PM2 服务
 `zylos-browser-remote`，持久化注册由 Core 的 `~/zylos/pm2/ecosystem.config.cjs` 管理。
 生产配置关闭 Monitor。安装后检查：
@@ -35,18 +35,15 @@ pm2 status zylos-browser-remote
 curl --fail --silent --show-error http://127.0.0.1:3803/status
 ```
 
-### 为什么实现不在 `src/index.js`
+### 部署路径注意事项
 
-组件规范要求入口是 `src/index.js`，但本仓库把实现留在了 `relay/server.js`，这是刻意的偏离。
+Core 的机器本地文件 `~/zylos/pm2/ecosystem.config.cjs` 把启动脚本路径写死，并拿**该文件存不
+存在**当注册开关：路径不存在时那段配置返回空数组，服务不是启动失败，而是**压根不再被注册**。
+且当下 `pm2 status` 看不出异常（运行中的进程早已把旧文件载入内存），要到下一次容器重启才
+发作，没有报错也没有崩溃日志。
 
-Core 的机器本地文件 `~/zylos/pm2/ecosystem.config.cjs` 不只把 `relay/server.js` 写死成启动
-路径，还拿**这个文件存不存在**当注册开关：文件不在，那段配置返回空数组，服务不是启动失败，
-而是**压根不再被注册**。更麻烦的是时机——改完当下 `pm2 status` 一切正常（运行中的进程早已把
-旧文件载入内存），要到下一次容器重启才发作，没有报错也没有崩溃日志，而重启时机不由本仓库决定。
-
-把文件留在原地，这个失效路径就不可达。`src/index.js` 因此是一层薄壳：re-export 全部公开接口，
-并在自己作为主模块运行时调用 `relay/server.js` 导出的 `main()`——PM2 直接拉 `relay/server.js`
-时走的是同一个 `main()`，两条路径行为一致。
+因此**升级一份手工安装的部署时，同步文件和更新那份机器本地 PM2 配置必须同批完成，并以一次
+真实重启验证**——`pm2 status` 显示 online 不能作为验证依据。
 
 ### 从源码本地运行
 
@@ -174,13 +171,12 @@ Agent 应按请求中的契约持续提交决策，直到 `finished:true` 或明
 
 | 文件                                             | 职责                                 |
 | ------------------------------------------------ | ------------------------------------ |
-| `src/index.js`                                   | 声明入口；薄壳，转交 `relay/server.js` |
-| `relay/server.js`                                | 启动两个监听入口，首轮请求交给 C4    |
-| `relay/ext-lane.js`                              | Key 认证、WebSocket、心跳与连接关联  |
-| `relay/agent-lane.js`                            | 私有 HTTP 决策入口和状态查询         |
-| `relay/agent-exchange.js`                        | 关联决策、下一轮请求、重试与结束状态 |
-| `relay/keys.js`、`scripts/key.js`                | Key 生成、校验与管理                 |
+| `src/index.js`                                   | 入口；启动两个监听入口，首轮请求交给 C4 |
+| `src/lib/ext-lane.js`                            | Key 认证、WebSocket、心跳与连接关联  |
+| `src/lib/agent-lane.js`                          | 私有 HTTP 决策入口和状态查询         |
+| `src/lib/agent-exchange.js`                      | 关联决策、下一轮请求、重试与结束状态 |
+| `src/lib/keys.js`、`scripts/key.js`              | Key 生成、校验与管理                 |
 | `scripts/decision.js`、`scripts/relay-client.js` | Agent 命令行传输适配                 |
 | `scripts/send.js`、`scripts/reply-route.js`      | C4 最终回复适配与当前请求的命令地址  |
 | `scripts/attachments.js`                         | Agent 主机图片附件处理               |
-| `relay/monitor.js`、`relay/agent-trace.js`       | 可选执行诊断                         |
+| `src/lib/monitor.js`、`src/lib/agent-trace.js`   | 可选执行诊断                         |

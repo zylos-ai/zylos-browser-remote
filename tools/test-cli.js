@@ -7,7 +7,7 @@ const { spawnSync } = require("node:child_process");
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "remote-cli-"));
 process.env.BROWSER_REMOTE_OBS_DIR = path.join(dir, "images");
 const { materializeImages } = require("../scripts/attachments");
-const { verifyKey, loadKeys } = require("../relay/keys");
+const { verifyKey, loadKeys } = require("../src/lib/keys");
 try {
   const file = path.join(dir, "keys.json");
   const run = (args) =>

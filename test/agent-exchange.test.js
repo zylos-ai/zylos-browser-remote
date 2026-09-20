@@ -2,7 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { AgentExchange } = require('../relay/agent-exchange');
+const { AgentExchange } = require('../src/lib/agent-exchange');
 const message = (id, round = 1, taskId = 'task') => ({keyId:'key',chatId:taskId,text:'owner request',request:{id,round,payload:{state:id}}});
 function setup(t) {
   const ext = new EventEmitter();

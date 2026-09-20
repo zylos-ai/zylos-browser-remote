@@ -7,7 +7,7 @@ const os = require('os');
 module.exports = {
   apps: [{
     name: 'zylos-browser-remote',
-    script: 'relay/server.js',
+    script: 'src/index.js',
     cwd: path.join(os.homedir(), 'zylos/.claude/skills/browser-remote'),
     env: {
       NODE_ENV: 'production',

@@ -428,7 +428,7 @@ class Monitor {
       return true;
     }
     res.setHeader("content-type", asset[1]);
-    res.end(fs.readFileSync(path.join(__dirname, "../monitor", asset[0])));
+    res.end(fs.readFileSync(path.join(__dirname, "../../monitor", asset[0])));
     return true;
   }
 }

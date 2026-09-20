@@ -16,7 +16,7 @@ fs.writeFileSync(
   process.env.ZYLOS_C4_RECEIVE,
   `const fs=require('fs');const a=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(output)},JSON.stringify(a)+'\\n');console.log(JSON.stringify({ok:true,action:'queued',id:1}));`,
 );
-const { start } = require("../relay/server");
+const { start } = require("../src/index");
 const waitFor = async (predicate) => {
   for (let i = 0; i < 200; i++) {
     const value = predicate();

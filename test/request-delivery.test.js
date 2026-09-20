@@ -7,7 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { once } = require("node:events");
 const WebSocket = require("ws");
-const { start, deliverRequestToC4 } = require("../relay/server");
+const { start, deliverRequestToC4 } = require("../src/index");
 
 test("C4 queue receipts distinguish accepted, unavailable, failed and uncertain delivery", async (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "br-delivery-"));

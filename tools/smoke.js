@@ -2,8 +2,8 @@
 const assert = require("node:assert/strict");
 const { once } = require("node:events");
 const WebSocket = require("ws");
-const { start } = require("../relay/server");
-const { keyIdOf, digest, verifyKey } = require("../relay/keys");
+const { start } = require("../src/index");
+const { keyIdOf, digest, verifyKey } = require("../src/lib/keys");
 const key = "ab".repeat(32),
   endpoint = keyIdOf(key);
 process.env.BROWSER_REMOTE_KEY = key;

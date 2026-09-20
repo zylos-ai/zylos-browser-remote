@@ -7,7 +7,7 @@ const path = require("node:path");
 const { once } = require("node:events");
 const { spawn, spawnSync } = require("node:child_process");
 const WebSocket = require("ws");
-const { start } = require("../relay/server");
+const { start } = require("../src/index");
 const { replyCommands, parseReplyEndpoint } = require("../scripts/reply-route");
 
 const remote = path.resolve(__dirname, "..");

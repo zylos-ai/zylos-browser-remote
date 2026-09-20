@@ -7,8 +7,8 @@ const path = require("node:path");
 const { once } = require("node:events");
 const http = require("node:http");
 const WebSocket = require("ws");
-const { Monitor, MAX_RUNS, MAX_STEPS } = require("../relay/monitor");
-const { start } = require("../relay/server");
+const { Monitor, MAX_RUNS, MAX_STEPS } = require("../src/lib/monitor");
+const { start } = require("../src/index");
 
 test("monitor follows intake, running tools, failures and completion without equating them", () => {
   let now = 1000;

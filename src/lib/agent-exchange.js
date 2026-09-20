@@ -1,6 +1,6 @@
 "use strict";
-const { materializeImages } = require("../scripts/attachments");
-const { replyCommands } = require("../scripts/reply-route");
+const { materializeImages } = require("../../scripts/attachments");
+const { replyCommands } = require("../../scripts/reply-route");
 
 // Generic request/response exchange. No action names, page rules or decisions
 // are interpreted here. One response can carry the client's next request.

@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-09-20
+
+Closes the last open item from the component-spec pass (issue #1, item 6):
+the implementation modules now live under `src/`, so the declared entry point
+and the tree below it are both spec-shaped. 0.4.0 shipped `src/index.js` as a
+shim over `relay/server.js`; that indirection is gone.
+
+No relay, extension-protocol, or CLI behavior changes. Same 24 tests, same
+23 pass / 1 skip, before and after.
+
+### Changed
+- `relay/server.js` → `src/index.js`; the other seven modules
+  (`agent-exchange`, `agent-lane`, `agent-trace`, `ext-lane`, `keys`,
+  `monitor-input`, `monitor`) → `src/lib/`. The 0.4.0 shim is deleted — after
+  the move there is only one file, so the indirection has nothing to bridge.
+  `main()` stays exported and the `require.main === module` self-start is
+  unchanged.
+- `ecosystem.config.cjs` `script` → `src/index.js`, matching `package.json`
+  `main`/`start` and `SKILL.md` `entry` (which already pointed there in
+  0.4.0). All four declarations now agree.
+- Requires updated across `test/`, `tools/`, `scripts/`. Two paths needed a
+  depth change rather than a rename, because the modules moved one level
+  deeper: `agent-exchange.js`'s `../scripts/*` requires, and the
+  `__dirname`-relative lookup of the `monitor/` UI assets in `monitor.js`.
+  The latter is not a `require` and so resolves only at request time — it was
+  caught by the monitor test, not by module loading.
+
+### Upgrade Notes
+Ports (3802 extension lane / 3803 agent lane), data directory layout, wire
+protocol and `keys.json` are unchanged; no re-pairing.
+
+Hand-installed deployments that are launched by a machine-local
+`~/zylos/pm2/ecosystem.config.cjs` need that file's `script` path — and the
+`fs.existsSync` guard above it, if present — repointed at `src/index.js` in
+the same batch as the file sync, then verified with a real restart. A stale
+guard path silently de-registers the service at the next container restart
+rather than failing visibly. See "部署路径注意事项" in the README.
+
 ## [0.4.0] - 2026-09-20
 
 First released version. Everything before this was developed in place on
