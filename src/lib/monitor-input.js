@@ -48,7 +48,11 @@ function inputDetails(input) {
     const result = Object.create(null), entries = Object.entries(item);
     if (entries.length > 64) truncated = true;
     for (const [key, child] of entries.slice(0, 64)) {
-      if (sensitiveKey(key)) { result[key] = HIDDEN; redacted = true; }
+      if (key === 'data' && (item.type === 'image' || item.type === 'file' ||
+        (typeof item.mimeType === 'string' && item.mimeType.startsWith('image/')))) {
+        result[key] = '[附件编码已省略]'; redacted = true;
+      }
+      else if (sensitiveKey(key)) { result[key] = HIDDEN; redacted = true; }
       else result[key] = visit(child, depth + 1);
     }
     return result;

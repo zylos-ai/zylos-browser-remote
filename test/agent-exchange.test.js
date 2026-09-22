@@ -7,7 +7,22 @@ const message = (id, round = 1, taskId = "task") => ({
   endpointId: "aaaaaaaaaaaa",
   chatId: taskId,
   text: "owner request",
-  request: { id, round, payload: { state: id } },
+  request: {
+    version: 2,
+    id,
+    taskId,
+    round,
+    message:
+      round === 1
+        ? {
+            id: taskId,
+            role: "user",
+            content: [{ type: "text", text: "owner request" }],
+          }
+        : { id: taskId },
+    context: { pages: [] },
+    execution: { state: id },
+  },
 });
 function setup(t) {
   const ext = new EventEmitter();

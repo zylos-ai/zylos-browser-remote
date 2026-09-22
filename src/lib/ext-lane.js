@@ -23,6 +23,12 @@ const http = require("http");
 const { EventEmitter } = require("events");
 const { WebSocketServer } = require("ws");
 const { verifyKey, loadKeys } = require("./keys");
+const { ATTACHMENT_CAPABILITY } = require("../../scripts/attachments");
+const {
+  AGENT_MESSAGE_CAPABILITY,
+  normalizeAgentRequest,
+  messageText,
+} = require("./agent-message");
 
 const SUBPROTOCOL = "zylos-browser-remote.v3";
 const LEGACY_SUBPROTOCOL = "zylos-browser-remote.v2";
@@ -44,7 +50,6 @@ const MAX_COMMAND_TIMEOUT_MS = 120_000;
 // unbounded argv at c4-receive. Over the cap the frame is REFUSED and said so,
 // never silently shortened: half an instruction is worse than no instruction.
 const MAX_CHAT_TEXT = 8000;
-const MAX_CHAT_CONTEXT = 16000;
 // Sent by the extension in `error` frames when it did not supply a code itself.
 const DEFAULT_ERROR_CODE = "EXT_ERROR";
 
@@ -294,8 +299,13 @@ class ExtLane extends EventEmitter {
       type: "ready",
       endpointId,
       capabilities: instanceProtocol
-        ? ["agent-loop-v1", INSTANCE_CAPABILITY]
-        : ["agent-loop-v1"],
+        ? [
+            "agent-loop-v1",
+            INSTANCE_CAPABILITY,
+            ATTACHMENT_CAPABILITY,
+            AGENT_MESSAGE_CAPABILITY,
+          ]
+        : ["agent-loop-v1", ATTACHMENT_CAPABILITY, AGENT_MESSAGE_CAPABILITY],
     });
   }
 
@@ -399,8 +409,6 @@ class ExtLane extends EventEmitter {
   }
 
   _onAgentRequest(conn, msg) {
-    const validId = (value) =>
-      typeof value === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(value);
     const reportStatus = (status) => {
       if (this.conns.get(conn.endpointId) === conn)
         this._send(conn, {
@@ -409,32 +417,28 @@ class ExtLane extends EventEmitter {
           ...status,
         });
     };
-    if (
-      !conn.ready ||
-      !validId(msg.id) ||
-      !validId(msg.taskId) ||
-      !Number.isInteger(msg.round) ||
-      msg.round < 1 ||
-      msg.round > 30 ||
-      typeof msg.text !== "string" ||
-      !msg.text.trim() ||
-      msg.text.length > MAX_CHAT_TEXT ||
-      typeof msg.context !== "string" ||
-      msg.context.length > MAX_CHAT_CONTEXT ||
-      !msg.payload ||
-      typeof msg.payload !== "object" ||
-      Array.isArray(msg.payload)
-    ) {
+    let request;
+    try {
+      if (!conn.ready) throw new Error("Not ready");
+      request = normalizeAgentRequest(msg);
+    } catch {
       return reportStatus({ state: "failed", code: "BAD_AGENT_REQUEST" });
     }
     if (conn.agentTurn && conn.agentTurn !== msg.taskId)
       return reportStatus({ state: "failed", code: "TURN_BUSY" });
     conn.agentRequests ||= new Set();
     if (conn.agentRequests.has(msg.id)) return; // Never enqueue a decision twice.
+    if (
+      request.round !==
+      (conn.agentTurn === request.taskId ? conn.agentRound + 1 : 1)
+    )
+      return reportStatus({ state: "failed", code: "BAD_AGENT_REQUEST" });
     conn.agentRequests.add(msg.id);
     while (conn.agentRequests.size > 100)
       conn.agentRequests.delete(conn.agentRequests.values().next().value);
     conn.agentTurn = msg.taskId;
+    conn.agentRound = request.round;
+    if (request.round === 1) conn.ownerText = messageText(request.message);
     this.emit(
       "agent-request",
       {
@@ -442,10 +446,9 @@ class ExtLane extends EventEmitter {
         keyId: conn.keyId,
         browserId: conn.browserId,
         label: conn.label,
-        text: msg.text,
+        text: conn.ownerText,
         chatId: msg.taskId,
-        context: msg.context,
-        request: { id: msg.id, round: msg.round, payload: msg.payload },
+        request,
       },
       reportStatus,
     );

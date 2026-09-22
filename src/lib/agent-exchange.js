@@ -1,5 +1,5 @@
 "use strict";
-const { materializeImages } = require("../../scripts/attachments");
+const { materializeAttachments } = require("../../scripts/attachments");
 const { replyCommands } = require("../../scripts/reply-route");
 
 // Generic request/response exchange. No action names, page rules or decisions
@@ -12,7 +12,7 @@ class AgentExchange {
     ext.on("agent-turn-end", (event) => this.ended(event));
   }
   ingest(message) {
-    const { endpointId, chatId, text, request } = message;
+    const { endpointId, chatId, request } = message;
     let state = this.states.get(endpointId);
     if (!state || state.taskId !== chatId) {
       if (state?.waiter)
@@ -25,12 +25,8 @@ class AgentExchange {
       this.states.set(endpointId, state);
     }
     state.next = {
+      ...request,
       endpointId,
-      id: request.id,
-      taskId: chatId,
-      round: request.round,
-      text,
-      payload: request.payload,
       replyCommands: replyCommands(endpointId, request.id),
     };
     if (!state.mode) return false; // First delivery uses the existing C4 adapter.
@@ -44,7 +40,11 @@ class AgentExchange {
     try {
       response = state.terminal
         ? { ok: true, accepted: true, finished: true, status: state.terminal }
-        : { ok: true, accepted: true, next: materializeImages(state.next) };
+        : {
+            ok: true,
+            accepted: true,
+            next: materializeAttachments(state.next),
+          };
       if (!state.terminal) state.next = response.next;
     } catch {
       response = {

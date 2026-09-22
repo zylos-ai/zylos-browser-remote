@@ -8,7 +8,7 @@ const { AgentLane } = require("./lib/agent-lane");
 const { loadKeys, keysFile } = require("./lib/keys");
 const { Monitor } = require("./lib/monitor");
 const { AgentTrace } = require("./lib/agent-trace");
-const { materializeImages } = require("../scripts/attachments");
+const { materializeAttachments } = require("../scripts/attachments");
 const { AgentExchange } = require("./lib/agent-exchange");
 const { replyCommands } = require("../scripts/reply-route");
 
@@ -53,14 +53,19 @@ function log(...args) {
  * @returns {Promise<{ok: boolean, code?: string}>}
  */
 function deliverRequestToC4(
-  { endpointId, text, chatId, request },
+  { endpointId, chatId, request },
   logFn = log,
   { timeoutMs = C4_DELIVERY_TIMEOUT_MS } = {},
 ) {
   const script = c4ReceivePath();
   // Generic Agent adapter: operation schemas and browser rules are opaque
-  // extension data. Images are materialized on THIS Agent host, never Chrome.
-  const payload = JSON.stringify(materializeImages(request.payload));
+  // extension data. Attachments are materialized on THIS Agent host, never Chrome.
+  let envelope;
+  try {
+    envelope = JSON.stringify(materializeAttachments(request));
+  } catch {
+    return Promise.resolve({ ok: false, code: "ATTACHMENT_FAILED" });
+  }
   const commands = replyCommands(endpointId, request.id);
   const content =
     C4_CONTENT_PREFIX +
@@ -68,7 +73,8 @@ function deliverRequestToC4(
     "Use the attached extension contract to decide. For actions, pipe the JSON decision into replyCommands.actions. For done/blocked (including ordinary chat), pipe only the final answer text into the matching replyCommands.done/blocked C4 command, not JSON. Do not submit the same final reply through both routes.\n" +
     `replyCommands: ${JSON.stringify(commands)}\n` +
     "Use quoted heredoc delimiters to preserve literal message content. Each command waits for client execution or completion. Actions return the next request and fresh replyCommands in stdout; use the NEW request's commands. End only when finished:true or an explicit stop/disconnect is returned. Do not poll or call browser actions yourself. Allow 125 seconds and enough output tokens for the schema/state JSON.\n" +
-    `Owner request: ${JSON.stringify(text)}\nExtension contract and observations:\n${payload}`;
+    "The request has three sections: message.content is the owner's input; context.pages contains captured page data; execution contains the extension's rules, tools and current observations. Later rounds reference the same message.id without repeating the body.\n" +
+    `Extension request:\n${envelope}`;
   if (Buffer.byteLength(content) > 100000)
     return Promise.resolve({ ok: false, code: "AGENT_REQUEST_TOO_LARGE" });
   const args = [

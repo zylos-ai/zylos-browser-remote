@@ -186,5 +186,5 @@ Agent 应按请求中的契约持续提交决策，直到 `finished:true` 或明
 | `src/lib/keys.js`、`scripts/key.js`              | Key 生成、校验与管理                    |
 | `scripts/decision.js`、`scripts/relay-client.js` | Agent 命令行传输适配                    |
 | `scripts/send.js`、`scripts/reply-route.js`      | C4 最终回复适配与当前请求的命令地址     |
-| `scripts/attachments.js`                         | Agent 主机图片附件处理                  |
+| `scripts/attachments.js`                         | Agent 主机图片、文件附件校验与保存      |
 | `src/lib/monitor.js`、`src/lib/agent-trace.js`   | 可选执行诊断                            |

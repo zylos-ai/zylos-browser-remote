@@ -37,38 +37,56 @@ Reconnection never resumes an unfinished turn automatically.
 
 Upgrade Remote before the plugin. The server also accepts v2 clients in the
 separate bare-keyId route during rollout; they cannot replace v3 instances.
-New plugins offer only v3, so old servers reject them before replacing any
-existing connection. There is no automatic downgrade. This feature isolates
+New plugins offer only v3 and require `agent-message-v2` in ready. A server
+without this capability cannot enable chat. There is no automatic downgrade. This feature isolates
 browser routing, not the Agent's conversation context or memory.
 
 ## WebSocket messages
 
-| Direction          | Frame                                                                                   | Meaning                                  |
-| ------------------ | --------------------------------------------------------------------------------------- | ---------------------------------------- |
-| Extension → Remote | `{type:"hello",version,browserId,capabilities:["agent-loop-v1","browser-instance-v1"]}` | Declare supported protocol               |
-| Remote → Extension | `{type:"ready",endpointId,capabilities:["agent-loop-v1","browser-instance-v1"]}`        | Handshake complete                       |
-| Remote → Extension | `{type:"ping",ts}`                                                                      | Heartbeat, every 17 seconds              |
-| Extension → Remote | `{type:"pong",ts}`                                                                      | Liveness response                        |
-| Extension → Remote | `{type:"agent-request",id,taskId,round,text,context,payload}`                           | Request one decision                     |
-| Remote → Extension | `{type:"agent-status",requestId,state,code?}`                                           | Intake result: queued, failed or unknown |
-| Remote → Extension | `{type:"req",id,method:"agent-decision",params:{id,decision},deadline}`                 | Correlated opaque decision               |
-| Extension → Remote | `{type:"resp",id,result}` or `{type:"error",id,code,message,details?}`                  | Decision acceptance or rejection         |
-| Extension → Remote | `{type:"agent-event",taskId,id,phase,method,params?,result?,error?}`                    | Optional diagnostic metadata             |
-| Extension → Remote | `{type:"agent-turn-end",taskId,status,text?}`                                           | Durable completion or interruption       |
+| Direction          | Frame                                                                                                      | Meaning                                  |
+| ------------------ | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| Extension → Remote | `{type:"hello",version,browserId,capabilities:["agent-loop-v1","browser-instance-v1","agent-message-v2"]}` | Declare supported protocol               |
+| Remote → Extension | `{type:"ready",endpointId,capabilities:["agent-loop-v1","browser-instance-v1","agent-message-v2"]}`        | Handshake complete                       |
+| Remote → Extension | `{type:"ping",ts}`                                                                                         | Heartbeat, every 17 seconds              |
+| Extension → Remote | `{type:"pong",ts}`                                                                                         | Liveness response                        |
+| Extension → Remote | `{type:"agent-request",version:2,id,taskId,round,message,context,execution}`                               | Request one decision                     |
+| Remote → Extension | `{type:"agent-status",requestId,state,code?}`                                                              | Intake result: queued, failed or unknown |
+| Remote → Extension | `{type:"req",id,method:"agent-decision",params:{id,decision},deadline}`                                    | Correlated opaque decision               |
+| Extension → Remote | `{type:"resp",id,result}` or `{type:"error",id,code,message,details?}`                                     | Decision acceptance or rejection         |
+| Extension → Remote | `{type:"agent-event",taskId,id,phase,method,params?,result?,error?}`                                       | Optional diagnostic metadata             |
+| Extension → Remote | `{type:"agent-turn-end",taskId,status,text?}`                                                              | Durable completion or interruption       |
 
 The numeric `req.id` correlates socket responses. `params.id` is the pending
 Agent request ID. `taskId` groups all rounds from one user message. These are
 separate from the connection's `endpointId`.
 
-Remote bounds IDs to 128 characters, user text to 8,000 characters, context to
-16,000 characters, and rounds to 1–30. Payload and decision objects are opaque.
-The extension validates their browser contract before any action executes.
+Requests use three sections. `message` contains the owner input, `context`
+contains captured environment data, and `execution` carries the extension's
+instructions, tools, mode, memory, current observations and action results.
+The first request supplies `message: {id,role:"user",content:[...]}` and
+`context: {pages:[...]}`. Content blocks are text, quote, image or file.
+Following rounds send `message: {id}` and `context: {pages:[]}` to refer to the
+original input, while `execution.observation/results` carries fresh evidence.
+Empty pages means no additional initial context; it does not clear the task.
+The consumer retains the original owner input throughout the task.
+
+Remote bounds IDs to 128 characters, combined user text to 8,000 characters,
+context JSON to 18,000 characters, and rounds to 1–30. Owner messages support
+up to eight attachments. Continuation references must match the active task and
+rounds must progress in order. Execution and decision semantics remain opaque;
+the extension validates the browser contract before any action executes.
+
+New plugins require `agent-message-v2` in ready. Update Remote first. Existing
+plugins remain supported through a small ingress adapter which immediately
+normalizes their requests to the same version 2 structure. Downstream exchange,
+C4 delivery and Agent instructions use only the canonical structure.
 
 ## First request and continuation
 
 The first request invokes `c4-receive.js` with channel `browser-remote`, endpoint
 `endpointId`, priority 2, `--json` and `--no-reply`. Its content contains the user
-request, extension contract and `replyCommands` for actions, done and blocked.
+request as one JSON object, plus `replyCommands` for actions, done and blocked.
+The user text and page body are not separately concatenated into the prompt.
 The actions command is:
 
 ```sh
@@ -108,8 +126,10 @@ completion, returning:
     "id": "request-2",
     "taskId": "task-1",
     "round": 2,
-    "text": "User request",
-    "payload": {},
+    "version": 2,
+    "message": { "id": "task-1" },
+    "context": { "pages": [] },
+    "execution": { "observation": {}, "results": [] },
     "replyCommands": {
       "actions": "node ~/zylos/.claude/skills/browser-remote/scripts/decision.js abc123def456.12345678-1234-4567-89ab-123456789abc request-2",
       "done": "node ~/zylos/.claude/skills/comm-bridge/scripts/c4-send.js browser-remote 'abc123def456.12345678-1234-4567-89ab-123456789abc|req:request-2|status:done'",
@@ -168,12 +188,27 @@ No browser actions are persisted for automatic replay.
 
 ## Attachments and diagnostics
 
-Images use `{mimeType,data}` on the wire. Before exposing a request to the Agent,
-Remote validates PNG/JPEG bytes and writes private files on the Agent host.
-The object retains metadata and replaces `data` with `path`, `bytes`, and
-`imageReadRequired:true`. This applies to nested results in both the first C4
-request and subsequent decision responses. At most 12 images are materialized
-per payload, with the latest 12 retained. No screenshot Base64 enters CLI stdout.
+`ready.capabilities` includes `attachments-v1`. Owner attachments arrive in
+`message.content` on the first request; browser-generated screenshots remain
+in their operation results. Quotes (`type: "quote"`) pass through as page data.
+Images/files use `{id,type,name,mimeType,bytes,data}` with base64 data. Remote also
+accepts older nested `{mimeType,data}` screenshots. Image MIME must match PNG,
+JPEG, WebP or GIF bytes. Other files use `type: "file"`; filenames are labels,
+not caller-supplied filesystem paths. Remote never fetches arbitrary file URLs.
+
+Before exposing a request to the Agent, Remote validates the entire payload and
+writes private files on the Agent host. It replaces `data` with `path`, `bytes`
+and `imageReadRequired:true` or `fileReadRequired:true`. This applies to both the
+first C4 request and subsequent decision responses. At most 12 binaries and
+5,250,000 decoded bytes are allowed per payload. Failed writes roll back newly
+created files. No attachment Base64 enters the Agent prompt or CLI stdout;
+Monitor redacts binary data even when the encoding is short.
+
+`BROWSER_REMOTE_OBS_DIR` selects the existing observations directory. Files older
+than 24 hours are removed on the next write, and a 128 MiB store limit refuses new
+files instead of deleting active-task attachments. Generated paths are internal
+to the Agent host, never Chrome paths or public download URLs. File transport
+does not imply the Agent has a reader for every document format.
 
 Monitor is opt-in, private, and read-only. `agent-event` records actual extension
 steps; optional Agent trace collection records model tool invocations separately.

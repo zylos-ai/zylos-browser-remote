@@ -12,6 +12,15 @@ process.env.BROWSER_REMOTE_OBS_DIR = path.join(tmp, "images");
 process.env.BROWSER_REMOTE_KEY = "ef".repeat(32);
 process.env.ZYLOS_C4_RECEIVE = path.join(tmp, "c4.js");
 const output = path.join(tmp, "requests.jsonl");
+const fileBytes = Buffer.from("Attachment content for the Agent");
+const file = {
+  type: "file",
+  id: "file-1",
+  name: "notes.txt",
+  mimeType: "text/plain",
+  bytes: fileBytes.length,
+  data: fileBytes.toString("base64"),
+};
 fs.writeFileSync(
   process.env.ZYLOS_C4_RECEIVE,
   `const fs=require('fs');const a=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(output)},JSON.stringify(a)+'\\n');console.log(JSON.stringify({ok:true,action:'queued',id:1}));`,
@@ -49,12 +58,16 @@ test("opaque decision contract travels through C4, attachments stay on Agent hos
       ws.send(
         JSON.stringify({
           type: "agent-request",
+          version: 2,
           id: "request-2",
           taskId: "turn-1",
           round: 2,
-          text: "Read my page $(literal)",
-          context: "{}",
-          payload: { state: "actual next observation" },
+          message: { id: "turn-1" },
+          context: { pages: [] },
+          execution: {
+            state: "actual next observation",
+            observation: { file },
+          },
         }),
       );
     }
@@ -81,12 +94,30 @@ test("opaque decision contract travels through C4, attachments stay on Agent hos
   const image = Buffer.from("89504e470d0a1a0a" + "00".repeat(64), "hex");
   const request = {
     type: "agent-request",
+    version: 2,
     id: "request-1",
     taskId: "turn-1",
     round: 1,
-    text: "Read my page $(literal)",
-    context: "{}",
-    payload: {
+    message: {
+      id: "turn-1",
+      role: "user",
+      content: [
+        { type: "text", text: "Read my page $(literal)" },
+        file,
+        {
+          type: "quote",
+          id: "quote-1",
+          text: "Selected passage",
+          source: { contextId: "turn-1" },
+        },
+      ],
+    },
+    context: {
+      pages: [
+        { type: "current-page", status: "excerpt", text: "PAGE_BODY_ONCE" },
+      ],
+    },
+    execution: {
       instructions: "Fixture contract only",
       unknownFutureTool: {
         nested: { mimeType: "image/png", data: image.toString("base64") },
@@ -118,10 +149,20 @@ test("opaque decision contract travels through C4, attachments stay on Agent hos
   );
   assert.ok(content.includes("$(literal)"));
   assert.ok(!content.includes(image.toString("base64")));
-  const payload = JSON.parse(
-    content.split("Extension contract and observations:\n")[1],
+  assert.ok(!content.includes(file.data));
+  const envelope = JSON.parse(content.split("Extension request:\n")[1]);
+  assert.equal(envelope.version, 2);
+  assert.equal(envelope.payload, undefined);
+  assert.equal(envelope.text, undefined);
+  assert.equal(content.split("PAGE_BODY_ONCE").length, 2);
+  assert.equal(content.split("Read my page $(literal)").length, 2);
+  const attachment = envelope.execution.unknownFutureTool.nested;
+  assert.deepEqual(
+    fs.readFileSync(envelope.message.content[1].path),
+    fileBytes,
   );
-  const attachment = payload.unknownFutureTool.nested;
+  assert.equal(envelope.message.content[1].fileReadRequired, true);
+  assert.equal(envelope.message.content[2].text, "Selected passage");
   assert.equal(attachment.imageReadRequired, true);
   assert.equal(attachment.data, undefined);
   assert.deepEqual(fs.readFileSync(attachment.path), image);
@@ -157,6 +198,11 @@ test("opaque decision contract travels through C4, attachments stay on Agent hos
   assert.equal(code, 0, stdout);
   assert.equal(JSON.parse(stdout).accepted, true);
   assert.equal(JSON.parse(stdout).next.id, "request-2");
+  assert.ok(!stdout.includes(file.data));
+  assert.deepEqual(
+    fs.readFileSync(JSON.parse(stdout).next.execution.observation.file.path),
+    fileBytes,
+  );
   assert.ok(
     JSON.parse(stdout).next.replyCommands.done.includes(
       "|req:request-2|status:done",
@@ -168,7 +214,7 @@ test("opaque decision contract travels through C4, attachments stay on Agent hos
     ),
   );
   assert.equal(
-    JSON.parse(stdout).next.payload.state,
+    JSON.parse(stdout).next.execution.state,
     "actual next observation",
   );
   assert.equal(calls[0].method, "agent-decision");
