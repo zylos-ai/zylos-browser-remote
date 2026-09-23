@@ -164,7 +164,19 @@ class RolloutSession {
           `(?:^|\\n|Meanwhile, )\\[Browser\\] \\[Extension decision request (${ENDPOINT_SOURCE})/`,
         ),
       )?.[1];
-      const next = endpoint ? this.monitor.agentRun(endpoint, at) : null;
+      const tokens = [
+        ...text.matchAll(
+          /(?:^|\n|Meanwhile, )\[Browser\] \[Activity ([a-f0-9-]{36})\]/g,
+        ),
+      ].map((m) => m[1]);
+      const uniqueTokens = [...new Set(tokens)];
+      const next = uniqueTokens.length
+        ? uniqueTokens.length === 1
+          ? (this.monitor.agentActivityRun?.(uniqueTokens[0], at) ?? null)
+          : null
+        : endpoint
+          ? this.monitor.agentRun(endpoint, at)
+          : null;
       if (this.promptSeen && this.run !== next) {
         this.mixed = true;
         if (this.run) {
@@ -178,6 +190,7 @@ class RolloutSession {
       }
       this.promptSeen = true;
       this.run = this.mixed ? null : next;
+      if (this.run) this.monitor.agentInputObserved?.(this.run, at);
       if (next) {
         next.agentObserved = true;
         if (
@@ -192,7 +205,10 @@ class RolloutSession {
             startedAt: at,
             sessionId: this.id,
             turnId: this.turn,
-            invocation: inputDetails(text),
+            invocation:
+              this.monitor.captureInputs === false
+                ? undefined
+                : inputDetails(text),
           });
         }
       }
@@ -222,10 +238,18 @@ class RolloutSession {
         callId: id,
         sessionId: this.id,
         turnId: this.turn,
-        params: inputSummary(name, p.arguments ?? p.input ?? p.action),
-        invocation: isExec(name)
-          ? inputDetails(p.arguments ?? p.input)
-          : undefined,
+        params:
+          this.monitor.captureInputs === false
+            ? undefined
+            : inputSummary(name, p.arguments ?? p.input ?? p.action),
+        activity: this.monitor.describeTool?.(
+          name,
+          p.arguments ?? p.input ?? p.action,
+        ),
+        invocation:
+          this.monitor.captureInputs !== false && isExec(name)
+            ? inputDetails(p.arguments ?? p.input)
+            : undefined,
         at,
       });
       if (this.pending.size >= 120) {
@@ -262,7 +286,7 @@ class RolloutSession {
       this.inode = stat.ino;
       this.initialized = true;
     } else if (stat.size < this.offset || stat.ino !== this.inode) {
-      this.end(Date.now());
+      this.end(this.monitor.now?.() ?? Date.now());
       this.offset = 0;
       this.buffer = Buffer.alloc(0);
       this.skipLine = false;
@@ -289,14 +313,15 @@ class RolloutSession {
         try {
           record = JSON.parse(data.subarray(start, newline).toString("utf8"));
         } catch {
-          /* malformed log line */
+          this.monitor.logGap?.(this); // Uncertain records cannot preserve task attribution.
         }
         if (record) this.event(record);
-      }
+      } else this.monitor.logGap?.(this);
       start = newline + 1;
     }
     this.buffer = Buffer.from(data.subarray(start));
     if (this.buffer.length > MAX_LINE_BYTES) {
+      this.monitor.logGap?.(this);
       this.buffer = Buffer.alloc(0);
       this.skipLine = true;
     }

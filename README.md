@@ -141,6 +141,28 @@ PNG/JPEG 按 MIME 与文件头校验；标准输出不携带截图 Base64。
 断线、停止或插件重载会中断当前任务；Remote 不自动重放动作。
 请求重试必须沿用原请求 ID 和相同决策，不能因为超时就重新点击或提交。
 
+## 插件当前活动
+
+新插件通过 `agent-activity-v1` 订阅当前 Agent 工具活动。在原有 WebSocket 上推送
+任务关联的 `agent-activity`，让同一行显示执行命令、读取文件、搜索等，工具返回后
+显示处理结果。插件本地浏览器动作优先；这些事件不追加聊天历史。
+
+此功能不依赖 Monitor，无需修改 zylos-core。Remote 只读 Agent 现有的 Codex CLI
+或 Claude Code 根会话 JSONL 日志，只发送固定分类和已知程序名，不发送命令参数、
+原始输出、路径或思考内容。活动标记位于 C4 消息开头，短预览也能关联；未知标记、
+其他 Channel、混合任务及已结束连接不推测归属。
+
+- `BROWSER_REMOTE_AGENT_DIR`：Agent 工作目录，需含 `.zylos/config.json`，默认
+  `ZYLOS_DIR` 或 `~/zylos`。配置了 `BROWSER_REMOTE_MONITOR_AGENT_DIR` 时沿用该目录。
+- `BROWSER_REMOTE_ACTIVITY=0`：关闭实时活动采集，聊天和浏览器功能不受影响。
+- Codex 通过 `CODEX_HOME`（默认 `~/.codex`）的会话索引定位该目录下的 CLI 日志，
+  需要 `sqlite3`；Claude Code 从 `~/.claude/projects` 对应项目的根会话日志读取。
+
+有订阅任务时每 750 毫秒读取新增日志，每 5 秒刷新会话发现，最多跟踪 4 个会话，
+每个会话每次最多读取 1 MiB。没有活动任务时不读取日志。日志不可用、无法确定归属
+或状态过期时，插件回退到原有进度提示，不阻断任务。运行时日志格式变化可能需要
+更新 Remote 适配器。Monitor 的完整诊断记录仍由下面的开关单独控制。
+
 ## 本地 Monitor
 
 ```sh

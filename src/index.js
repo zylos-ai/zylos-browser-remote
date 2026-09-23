@@ -8,6 +8,7 @@ const { AgentLane } = require("./lib/agent-lane");
 const { loadKeys, keysFile } = require("./lib/keys");
 const { Monitor } = require("./lib/monitor");
 const { AgentTrace } = require("./lib/agent-trace");
+const { AgentActivity } = require("./lib/agent-activity");
 const { materializeAttachments } = require("../scripts/attachments");
 const { AgentExchange } = require("./lib/agent-exchange");
 const { replyCommands } = require("../scripts/reply-route");
@@ -54,7 +55,7 @@ function log(...args) {
  * @returns {Promise<{ok: boolean, code?: string}>}
  */
 function deliverRequestToC4(
-  { endpointId, chatId, request },
+  { endpointId, chatId, request, activityId },
   logFn = log,
   { timeoutMs = C4_DELIVERY_TIMEOUT_MS } = {},
 ) {
@@ -69,6 +70,7 @@ function deliverRequestToC4(
   }
   const commands = replyCommands(endpointId, request.id);
   const content =
+    (activityId ? `[Browser] [Activity ${activityId}]\n` : "") +
     C4_CONTENT_PREFIX +
     `[Extension decision request ${endpointId}/${request.id}]\n` +
     "Use the attached extension contract to decide. For actions, pipe the JSON decision into replyCommands.actions. For done/blocked (including ordinary chat), pipe only the final answer text into the matching replyCommands.done/blocked C4 command, not JSON. Do not submit the same final reply through both routes.\n" +
@@ -185,6 +187,8 @@ function start({
   monitorFile = process.env.BROWSER_REMOTE_MONITOR_FILE,
   agentMonitorDir = process.env.BROWSER_REMOTE_MONITOR_AGENT_DIR,
   agentTraceOptions,
+  activityOptions,
+  activityEnabled = process.env.BROWSER_REMOTE_ACTIVITY !== "0",
 } = {}) {
   const trace = monitor ? new Monitor({ file: monitorFile }) : null;
   const agentTrace =
@@ -195,6 +199,17 @@ function start({
         }).start()
       : null;
   const ext = new ExtLane({ log });
+  const activity = activityEnabled
+    ? new AgentActivity(ext, {
+        ...(agentMonitorDir ? { directory: agentMonitorDir } : {}),
+        ...activityOptions,
+      }).start()
+    : null;
+  if (trace)
+    trace.agentActivityRun = (token, at) => {
+      const binding = activity?.agentActivityRun(token, at);
+      return binding ? trace.agentRun(binding.endpointId, at) : null;
+    };
   const exchange = new AgentExchange(ext);
   const agent = new AgentLane({
     extLane: ext,
@@ -211,13 +226,14 @@ function start({
   // Ingress: panel -> relay -> C4 queue. ext-lane has already bounded the text
   // and checked the envelope; nothing here looks at what the owner wrote.
   const intake = (msg, reportStatus) => {
+    const activityId = activity?.bind(msg);
     const ticket =
       msg.request && msg.request.round > 1
         ? trace?.decisionRequested(msg)
         : trace?.received(msg);
     // Ack only C4 intake. No claim about model progress or task completion.
     Promise.resolve()
-      .then(() => onRequest(msg))
+      .then(() => onRequest({ ...msg, ...(activityId ? { activityId } : {}) }))
       .then((result) => {
         trace?.intake(ticket, result);
         if (result?.ok === true) return reportStatus({ state: "queued" });
@@ -283,6 +299,7 @@ function start({
       }
   };
   ext.on("agent-turn-end", (event, reportStop) => {
+    activity?.unbind(event.endpointId);
     discardSteps(event.endpointId);
     trace?.extensionEnded(event);
     if (event.status === "stopped" && event.interrupt) {
@@ -301,6 +318,7 @@ function start({
     }
   });
   ext.on("disconnected", (endpointId) => {
+    activity?.unbind(endpointId);
     discardSteps(endpointId);
     trace?.extensionEnded({ endpointId, status: "interrupted" });
   });
@@ -315,7 +333,9 @@ function start({
         ext,
         agent,
         monitor: trace,
+        activity,
         close() {
+          activity?.close();
           agentTrace?.close();
           exchange.close();
           agent.close();

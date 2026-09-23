@@ -19,10 +19,11 @@ test("C4 queue receipts distinguish accepted, unavailable, failed and uncertain 
     else process.env.ZYLOS_C4_RECEIVE = previous;
     fs.rmSync(tmp, { recursive: true, force: true });
   });
-  const deliver = (timeoutMs = 2000) =>
+  const deliver = (timeoutMs = 2000, activityId) =>
     deliverRequestToC4(
       {
         endpointId: "a".repeat(12),
+        activityId,
         text: "hello",
         chatId: "chat-1",
         request: {
@@ -54,6 +55,18 @@ test("C4 queue receipts distinguish accepted, unavailable, failed and uncertain 
         : { ok: false, code: "AGENT_UNAVAILABLE" },
     );
   }
+  const activityId = "12345678-1234-4567-89ab-123456789abc";
+  fs.writeFileSync(
+    script,
+    `
+    const content = process.argv[process.argv.indexOf('--content') + 1];
+    const expected = '[Browser] [Activity ${activityId}]';
+    if (!content.slice(0, 100).includes(expected)) process.exit(3);
+    if (!content.includes('[Extension decision request aaaaaaaaaaaa/r1]')) process.exit(4);
+    console.log(JSON.stringify({ok:true,action:'queued',id:7}));
+  `,
+  );
+  assert.deepEqual(await deliver(2000, activityId), { ok: true });
   fs.writeFileSync(script, "process.exit(1);");
   assert.deepEqual(await deliver(), { ok: false, code: "C4_DELIVERY_FAILED" });
   fs.writeFileSync(script, 'console.log("unexpected output");');

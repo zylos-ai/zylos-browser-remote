@@ -42,7 +42,12 @@ async function setup(t) {
   t.after(() => relay.close());
   async function dial(
     browserId,
-    { key = KEY, protocol = SUBPROTOCOL, hello = true } = {},
+    {
+      key = KEY,
+      protocol = SUBPROTOCOL,
+      hello = true,
+      capabilities = caps,
+    } = {},
   ) {
     const ws = new WebSocket(
       `ws://127.0.0.1:${relay.ext.server.address().port}/ext`,
@@ -76,7 +81,7 @@ async function setup(t) {
         type: "hello",
         version: "fixture",
         browserId,
-        capabilities: caps,
+        capabilities,
       });
       const ready = await waitFor(() => frames.find((f) => f.type === "ready"));
       assert.equal(ready.endpointId, client.endpoint);
@@ -276,4 +281,58 @@ test("a superseded socket that throws on close does not take the relay down", as
   // never touched.
   await request(newer, "a-new", "new-task");
   assert.equal(b.ws.readyState, WebSocket.OPEN);
+});
+
+test("activity frames reach only the originating installation and stop after completion", async (t) => {
+  const { ActivitySession, CAPABILITY } = require("../src/lib/agent-activity");
+  const { relay, requests, dial, request, end } = await setup(t);
+  const a = await dial(A, { capabilities: [...caps, CAPABILITY] });
+  const b = await dial(B, { capabilities: [...caps, CAPABILITY] });
+  await request(a, "a");
+  await request(b, "b");
+  const tokenA = requests.find((r) => r.endpointId === a.endpoint).activityId;
+  const tokenB = requests.find((r) => r.endpointId === b.endpoint).activityId;
+  assert.ok(tokenA);
+  assert.ok(tokenB);
+  assert.notEqual(tokenA, tokenB);
+  const session = new ActivitySession(relay.activity, "fixture", 0, "codex");
+  const emit = (payload) =>
+    session.event({
+      timestamp: new Date().toISOString(),
+      type: "response_item",
+      payload,
+    });
+  emit({
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text: `[Browser] [Activity ${tokenA}]` }],
+  });
+  emit({
+    type: "function_call",
+    call_id: "tool",
+    name: "exec_command",
+    arguments: '{"cmd":"python3 private.py"}',
+  });
+  relay.activity.flush();
+  const frame = await waitFor(() =>
+    a.frames.find((f) => f.type === "agent-activity"),
+  );
+  assert.equal(frame.detail, "python3");
+  assert.equal(frame.taskId, "task");
+  assert.equal(
+    b.frames.some((f) => f.type === "agent-activity"),
+    false,
+  );
+  end(a);
+  await waitFor(() => !relay.activity.bindings.has(a.endpoint));
+  const count = a.frames.length;
+  emit({
+    type: "function_call",
+    call_id: "late",
+    name: "Read",
+    arguments: "{}",
+  });
+  relay.activity.flush();
+  await pause();
+  assert.equal(a.frames.length, count);
 });
