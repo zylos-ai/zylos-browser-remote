@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-09-23
+
+### Fixed
+
+- `SKILL.md` still declared `version: 0.7.0` after the 0.7.1 bump. That field
+  is what the component registry stamps on install, so a 0.7.1 deployment
+  reported itself as 0.7.0 and `zylos upgrade --check` offered an upgrade that
+  was already applied — the same package-metadata drift 0.7.1 set out to end,
+  reintroduced one file over. All four version declarations (`SKILL.md`,
+  `package.json`, `package-lock.json`, this file) now move together.
+
+No runtime code changed between 0.7.1 and 0.7.2.
+
 ## [0.7.1] - 2026-09-23
 
 Ships the agent-message, attachment-transport and browser-stop work that landed
