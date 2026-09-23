@@ -5,11 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.0] - 2026-09-23
+## [0.7.1] - 2026-09-23
 
 Ships the agent-message, attachment-transport and browser-stop work that landed
 after 0.6.1, plus the fixes from an independent read-only audit of that code.
 No protocol frame was removed or renamed; clients on 0.6.x keep working.
+
+The version number skips 0.7.0: a `v0.7.0` release was published against the
+pre-audit tree, where the package still declared `0.6.1`. Reusing the number
+would have left two different trees answering to it — the exact confusion the
+lockfile fix below exists to prevent. 0.7.1 is the first release that carries
+this code.
 
 ### Security
 
