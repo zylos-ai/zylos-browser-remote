@@ -3,10 +3,21 @@
 // Display-only copies. These strings are never used to execute a command.
 const MAX_INPUT_BYTES = 16 * 1024;
 const HIDDEN = '[已隐藏]';
+// Strip separators so api_key / X-API-Key / accessToken all normalize to one
+// spelling. Matching the raw key misses every variant the caller happened to
+// punctuate differently.
+function normalizeKey(key) {
+  return String(key).replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
+// Suffix matching catches the common compounds (access_token, userApiKey…)
+// that an exact list never enumerates completely.
+const SECRET_SUFFIX = /(?:password|passwd|secret|token|apikey|accesskey|privatekey)$/;
+
 function sensitiveKey(key) {
-  const normalized = key.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  const normalized = normalizeKey(key);
   return /^(?:key|password|passwd|pwd|secret|token|authorization|proxyauthorization|cookie|setcookie|credentials|connectionkey|privatekey|signature|sig)$/.test(normalized) ||
-    /(?:password|passwd|secret|token|apikey|accesskey|privatekey)$/.test(normalized);
+    SECRET_SUFFIX.test(normalized);
 }
 
 function redactText(text) {
@@ -68,4 +79,4 @@ function inputDetails(input) {
   return { json, originalBytes: Buffer.byteLength(original), redacted, truncated };
 }
 
-module.exports = { inputDetails, MAX_INPUT_BYTES };
+module.exports = { inputDetails, MAX_INPUT_BYTES, normalizeKey, SECRET_SUFFIX };

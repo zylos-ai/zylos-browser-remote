@@ -60,6 +60,13 @@ The numeric `req.id` correlates socket responses. `params.id` is the pending
 Agent request ID. `taskId` groups all rounds from one user message. These are
 separate from the connection's `endpointId`.
 
+An `agent-request` id must be unique **within its task**, not across the whole
+connection: the relay dedupes on `taskId` + `id` and releases a task's ids once
+that task ends, so a client that restarts its counter cannot have a legitimate
+request swallowed by an earlier task. A replayed id is never enqueued twice and
+always answers `{type:"agent-status",requestId,state:"failed",code:"DUPLICATE_REQUEST"}`
+— intake never fails silently.
+
 Requests use three sections. `message` contains the owner input, `context`
 contains captured environment data, and `execution` carries the extension's
 instructions, tools, mode, memory, current observations and action results.
