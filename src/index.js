@@ -11,6 +11,7 @@ const { AgentTrace } = require("./lib/agent-trace");
 const { materializeAttachments } = require("../scripts/attachments");
 const { AgentExchange } = require("./lib/agent-exchange");
 const { replyCommands } = require("../scripts/reply-route");
+const { interruptAgent } = require("./lib/agent-interrupt");
 
 const EXT_PORT = Number(process.env.BROWSER_REMOTE_EXT_PORT || 3802);
 const AGENT_PORT = Number(process.env.BROWSER_REMOTE_AGENT_PORT || 3803);
@@ -179,6 +180,7 @@ function start({
   extPort = EXT_PORT,
   agentPort = AGENT_PORT,
   onRequest = deliverRequestToC4,
+  onStop = (event) => interruptAgent(event, log),
   monitor = process.env.BROWSER_REMOTE_MONITOR === "1",
   monitorFile = process.env.BROWSER_REMOTE_MONITOR_FILE,
   agentMonitorDir = process.env.BROWSER_REMOTE_MONITOR_AGENT_DIR,
@@ -280,9 +282,23 @@ function start({
         localSteps.delete(id);
       }
   };
-  ext.on("agent-turn-end", (event) => {
+  ext.on("agent-turn-end", (event, reportStop) => {
     discardSteps(event.endpointId);
     trace?.extensionEnded(event);
+    if (event.status === "stopped" && event.interrupt) {
+      Promise.resolve()
+        .then(() => onStop(event))
+        .then((result) =>
+          reportStop(
+            result?.ok === true
+              ? { ok: true }
+              : { ok: false, code: "AGENT_INTERRUPT_UNCONFIRMED" },
+          ),
+        )
+        .catch(() =>
+          reportStop({ ok: false, code: "AGENT_INTERRUPT_UNCONFIRMED" }),
+        );
+    }
   });
   ext.on("disconnected", (endpointId) => {
     discardSteps(endpointId);

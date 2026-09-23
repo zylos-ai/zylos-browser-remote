@@ -186,6 +186,22 @@ are discarded when the connection ends.
 Stopping, disconnecting or replacing the browser releases waiting commands.
 No browser actions are persisted for automatic replay.
 
+`ready.capabilities` advertises `agent-interrupt-v1` on instance-aware connections.
+An explicit owner Stop sends `{type:"agent-turn-end",taskId,status:"stopped",interrupt:true}`.
+The relay accepts it once, only for that connection's current task. It releases
+waiting decision commands immediately, then enqueues `[KEYSTROKE]Escape` through
+Core's existing `c4-control.js` with priority 0, bypass-state, no ack suffix and a
+5-second expiry. This interrupts the runtime's current foreground turn; it is not
+task-scoped cancellation across Channels. No Core source change is required.
+
+The relay replies `{type:"agent-stop-result",taskId,ok,code?}` after polling the
+control receipt. `ok:true` means the key was delivered, not that all subprocesses
+have exited. Failure uses `AGENT_INTERRUPT_UNCONFIRMED`; uncertain interrupts are
+never retried. The connection refuses new requests with `AGENT_STOPPING` while
+delivery is pending, and the extension keeps its composer locked while waiting
+(at most 11 seconds). Ordinary completion, disconnect, worker reload and legacy
+end frames without `interrupt:true` never enqueue runtime keys.
+
 ## Attachments and diagnostics
 
 `ready.capabilities` includes `attachments-v1`. Owner attachments arrive in

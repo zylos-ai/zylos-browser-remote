@@ -24,6 +24,7 @@ const { EventEmitter } = require("events");
 const { WebSocketServer } = require("ws");
 const { verifyKey, loadKeys } = require("./keys");
 const { ATTACHMENT_CAPABILITY } = require("../../scripts/attachments");
+const { INTERRUPT_CAPABILITY } = require("./agent-interrupt");
 const {
   AGENT_MESSAGE_CAPABILITY,
   normalizeAgentRequest,
@@ -304,6 +305,7 @@ class ExtLane extends EventEmitter {
             INSTANCE_CAPABILITY,
             ATTACHMENT_CAPABILITY,
             AGENT_MESSAGE_CAPABILITY,
+            INTERRUPT_CAPABILITY,
           ]
         : ["agent-loop-v1", ATTACHMENT_CAPABILITY, AGENT_MESSAGE_CAPABILITY],
     });
@@ -340,25 +342,45 @@ class ExtLane extends EventEmitter {
         return this._hello(conn, msg);
       case "agent-request":
         return this._onAgentRequest(conn, msg);
-      case "agent-turn-end":
-        if (msg.taskId !== conn.agentTurn) return;
+      case "agent-turn-end": {
+        if (!conn.agentTurn || msg.taskId !== conn.agentTurn) return;
         conn.agentTurn = null;
-        this.emit("agent-turn-end", {
-          endpointId: conn.endpointId,
-          keyId: conn.keyId,
-          browserId: conn.browserId,
-          taskId: msg.taskId,
-          status: ["done", "blocked", "interrupted", "stopped"].includes(
-            msg.status,
-          )
-            ? msg.status
-            : "interrupted",
-          text:
-            typeof msg.text === "string"
-              ? msg.text.slice(0, MAX_CHAT_TEXT)
-              : "",
-        });
+        const interrupt = msg.status === "stopped" && msg.interrupt === true;
+        conn.agentStopping = interrupt;
+        let reported = false;
+        this.emit(
+          "agent-turn-end",
+          {
+            endpointId: conn.endpointId,
+            keyId: conn.keyId,
+            browserId: conn.browserId,
+            taskId: msg.taskId,
+            interrupt,
+            status: ["done", "blocked", "interrupted", "stopped"].includes(
+              msg.status,
+            )
+              ? msg.status
+              : "interrupted",
+            text:
+              typeof msg.text === "string"
+                ? msg.text.slice(0, MAX_CHAT_TEXT)
+                : "",
+          },
+          (result) => {
+            if (reported) return;
+            reported = true;
+            conn.agentStopping = false;
+            if (this.conns.get(conn.endpointId) !== conn || conn.superseded)
+              return;
+            this._send(conn, {
+              type: "agent-stop-result",
+              taskId: msg.taskId,
+              ...result,
+            });
+          },
+        );
         return;
+      }
       case "agent-event":
         if (
           msg.taskId !== conn.agentTurn ||
@@ -417,6 +439,8 @@ class ExtLane extends EventEmitter {
           ...status,
         });
     };
+    if (conn.agentStopping)
+      return reportStatus({ state: "failed", code: "AGENT_STOPPING" });
     let request;
     try {
       if (!conn.ready) throw new Error("Not ready");
