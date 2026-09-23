@@ -5,6 +5,74 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-09-20
+
+Fixes a crash path found while reviewing 0.6.0: an exception thrown by
+`ws.close()` could take the whole relay process down, dropping every connected
+browser rather than the one socket involved.
+
+29 tests, 28 pass / 1 skip.
+
+### Fixed
+- `ws.close()` is now called through a guarded `safeClose()` helper everywhere
+  in `src/lib/ext-lane.js`, matching the style `_beat()` and `close()` already
+  used. `close()` throws on a socket that is already torn down, and every one
+  of these call sites runs inside a `message` handler or a timer callback —
+  so the error escaped into the `ws` emitter as an uncaught exception and
+  killed the process.
+- The worst of them was the supersede path: it closes a **different** socket
+  (the older, possibly half-dead instance) than the one whose message is being
+  handled, so a stale peer could kill the relay for everyone by reconnecting.
+  Regression test added — it reproduces as an `uncaughtException` without
+  the fix.
+
+## [0.6.0] - 2026-09-20
+
+Several browser instances can now share one Key. Until this release `keyId`
+was both the credential and the route, so a second browser connecting with the
+same Key evicted the first. The route is now `endpointId = keyId.browserId`,
+where `browserId` is a UUID v4 the plugin generates once per installation and
+persists in `chrome.storage.local`. Instances coexist; only a reconnect of the
+*same* instance replaces its own socket.
+
+This isolates **browser routing only**. The Agent's conversation context and
+memory stay shared across every instance under the Key — two different people
+sharing one Key still share a context, and should be issued two Keys instead.
+
+28 tests, 27 pass / 1 skip.
+
+### Added
+- `src/lib/endpoint.js` — the `browserId` / `endpointId` grammar, shared by the
+  WebSocket lane, the HTTP lane, the CLIs, C4 reply routes and trace parsing.
+- `browser-instance-v1` capability and WebSocket subprotocol
+  `zylos-browser-remote.v3`. `hello` carries `browserId`; `ready` returns the
+  authenticated `endpointId`, which the plugin verifies before enabling chat.
+- Per-Key connection limit of 32 instances, close code `4003` when exceeded,
+  and a 10-second handshake deadline.
+- `test/browser-instances.test.js` — registry isolation, replacement semantics,
+  limits and handshake validation.
+
+### Changed
+- Identity is fixed by the authenticated socket at handshake and is immutable
+  for that socket's lifetime; routing metadata sent in later frames is ignored.
+- Close code `4001` now means "this same instance was replaced", not "another
+  connection took this Key".
+- `scripts/decision.js`, `scripts/reply-route.js` and the generated
+  `replyCommands` take `<endpointId>` where they previously took `<keyId>`.
+  `agent-trace` and the monitor report per instance.
+
+### Upgrade Notes
+**Upgrade Remote before the plugin.** New plugins offer only v3, and an old
+Remote rejects them outright — there is no downgrade path. During rollout this
+Remote still accepts v2 plugins on the separate bare-`keyId` route, so an
+existing 1.3.0 plugin keeps working unchanged; a v2 connection cannot replace
+a v3 instance.
+
+Ports (3802 / 3803), data directory layout and `keys.json` are unchanged; no
+re-pairing. Hand-installed deployments upgrading from 0.3.x must also repoint
+`~/zylos/pm2/ecosystem.config.cjs` `script` from `relay/server.js` to
+`src/index.js` — see the 0.5.0 notes.
+
 ## [0.5.0] - 2026-09-20
 
 Closes the last open item from the component-spec pass (issue #1, item 6):

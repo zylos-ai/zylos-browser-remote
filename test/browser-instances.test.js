@@ -258,3 +258,22 @@ test("older clients occupy their own route and cannot replace instance-aware cli
   assert.equal(legacy2.endpoint, keyIdOf(KEY));
   assert.equal(relay.ext.connectedIds().length, 3);
 });
+
+test("a superseded socket that throws on close does not take the relay down", async (t) => {
+  const { relay, dial, request } = await setup(t);
+  const a = await dial(A),
+    b = await dial(B);
+  // A half-dead socket can throw from close(). This one runs inside the NEW
+  // socket's message handler, so an escaping error would kill the process.
+  relay.ext.conns.get(a.endpoint).ws.close = () => {
+    throw new Error("socket already torn down");
+  };
+  const newer = await dial(A);
+  assert.equal(newer.endpoint, a.endpoint);
+  assert.equal(relay.ext.connectedIds().length, 2);
+  assert.ok(relay.ext.isConnected(a.endpoint));
+  // The relay still accepts traffic from the replacement instance, and B was
+  // never touched.
+  await request(newer, "a-new", "new-task");
+  assert.equal(b.ws.readyState, WebSocket.OPEN);
+});

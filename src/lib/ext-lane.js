@@ -31,6 +31,19 @@ const {
   messageText,
 } = require("./agent-message");
 
+// `ws.close()` can throw when the socket is already torn down. Every call site
+// below runs inside a `message`/`connection` handler, where a throw escapes into
+// the ws emitter and takes the relay process with it -- including the supersede
+// path, which closes a DIFFERENT (older, possibly half-dead) socket than the one
+// being handled. Match the guarded style already used by `_beat()`/`close()`.
+function safeClose(ws, code, reason) {
+  try {
+    ws.close(code, reason);
+  } catch {
+    /* noop */
+  }
+}
+
 const SUBPROTOCOL = "zylos-browser-remote.v3";
 const LEGACY_SUBPROTOCOL = "zylos-browser-remote.v2";
 const {
@@ -215,7 +228,7 @@ class ExtLane extends EventEmitter {
       superseded: false,
     };
     conn.handshakeTimer = setTimeout(
-      () => ws.close(4002, "hello required"),
+      () => safeClose(ws, 4002, "hello required"),
       HANDSHAKE_MS,
     );
     conn.handshakeTimer.unref?.();
@@ -236,7 +249,7 @@ class ExtLane extends EventEmitter {
 
   _hello(conn, msg) {
     if (conn.ready) {
-      conn.ws.close(4002, "identity already established");
+      safeClose(conn.ws, 4002, "identity already established");
       return;
     }
     const instanceProtocol = conn.ws.protocol === SUBPROTOCOL;
@@ -250,7 +263,11 @@ class ExtLane extends EventEmitter {
           typeof msg.browserId !== "string" ||
           !BROWSER_ID_RE.test(msg.browserId)))
     ) {
-      conn.ws.close(4002, "browser identity and required capabilities missing");
+      safeClose(
+        conn.ws,
+        4002,
+        "browser identity and required capabilities missing",
+      );
       return;
     }
     conn.browserId = instanceProtocol ? msg.browserId : null;
@@ -263,7 +280,7 @@ class ExtLane extends EventEmitter {
       [...this.conns.values()].filter((c) => c.keyId === conn.keyId).length >=
         MAX_CONNECTIONS_PER_KEY
     ) {
-      conn.ws.close(4003, "too many browser instances");
+      safeClose(conn.ws, 4003, "too many browser instances");
       return;
     }
     if (prev) {
@@ -276,7 +293,7 @@ class ExtLane extends EventEmitter {
         prev,
         "browser instance reconnected; in-flight request abandoned",
       );
-      prev.ws.close(4001, "superseded by same browser instance");
+      safeClose(prev.ws, 4001, "superseded by same browser instance");
     }
     clearTimeout(conn.handshakeTimer);
     conn.endpointId = endpointId;
@@ -331,7 +348,7 @@ class ExtLane extends EventEmitter {
     }
     if (!msg || typeof msg !== "object") return;
     if (!conn.ready && msg.type !== "hello") {
-      conn.ws.close(4002, "hello required before messages");
+      safeClose(conn.ws, 4002, "hello required before messages");
       return;
     }
 
@@ -559,11 +576,7 @@ class ExtLane extends EventEmitter {
     clearInterval(this.heartbeat);
     for (const conn of this.conns.values()) {
       this._failAllPending(conn, "relay shutting down");
-      try {
-        conn.ws.close(1001, "relay shutting down");
-      } catch {
-        /* noop */
-      }
+      safeClose(conn.ws, 1001, "relay shutting down");
     }
     for (const ws of this.wss.clients) ws.terminate();
     this.server.close();
