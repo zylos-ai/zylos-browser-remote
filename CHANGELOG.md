@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-09-23
+
+Ships the agent-message, attachment-transport and browser-stop work that landed
+after 0.6.1, plus the fixes from an independent read-only audit of that code.
+No protocol frame was removed or renamed; clients on 0.6.x keep working.
+
+### Security
+
+- Revoking a key now terminates the connections already authenticated with it.
+  The key was previously checked only during the WebSocket upgrade, so a
+  revoked credential kept full access for as long as its socket stayed open —
+  the one lever available after a key leak did not actually stop the session.
+  The heartbeat re-reads the registry and closes affected sockets with code
+  `4004`. An unreadable registry disconnects nobody, so a transient read error
+  cannot take working browsers offline.
+- Monitor traces no longer record credentials whose field names are punctuated.
+  Redaction matched exact spellings only, so `access_token`, `api_key` and
+  `headers["X-API-Key"]` were written to the history file in the clear while
+  `authorization` was masked. Field names are now normalized before matching,
+  reusing the strategy already used for captured input. A bare `key` stays
+  visible on purpose: browser keyboard actions carry `{key:"Enter"}`.
+
+### Fixed
+
+- An `agent-request` id reused by a later task is no longer dropped. Dedup was
+  keyed on the id alone and never released when a task ended, so a client whose
+  counter restarted could have a legitimate request silently discarded. Dedup is
+  now scoped to `taskId` + `id`, and a duplicate always answers
+  `agent-status` / `DUPLICATE_REQUEST` instead of returning nothing — the
+  extension no longer waits forever on a request that was never enqueued.
+- `package-lock.json` declared version `0.3.0` while the package was `0.6.1`,
+  which misled SBOM and release tooling. Both now track the real version.
+
+### Known / accepted
+
+- An owner Stop still interrupts the runtime's current foreground turn and is
+  not task-scoped across channels, as `docs/PROTOCOL.md` describes. This is a
+  product decision, deliberately left unchanged in this release.
+
 ## [0.6.1] - 2026-09-20
 
 Fixes a crash path found while reviewing 0.6.0: an exception thrown by

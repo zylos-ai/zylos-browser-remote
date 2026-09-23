@@ -15,8 +15,20 @@ const ASSETS = {
   "/monitor/app.js": ["app.js", "text/javascript; charset=utf-8"],
   "/monitor/styles.css": ["styles.css", "text/css; charset=utf-8"],
 };
-const secret =
-  /^(?:data|password|passwd|token|authorization|cookie|secret|apiKey|accessKey|connectionKey|promptText)$/i;
+const { normalizeKey, SECRET_SUFFIX } = require("./monitor-input");
+
+// Same normalize-then-match strategy as monitor-input, so api_key, access_token
+// and headers["X-API-Key"] are covered rather than only the exact spellings.
+// `data` and `prompttext` are monitor-only; a bare `key` is deliberately NOT
+// treated as secret here because browser keyboard actions carry {key:"Enter"}
+// and masking those would blind the trace for no security gain.
+const SECRET_EXACT =
+  /^(?:data|password|passwd|pwd|token|authorization|proxyauthorization|cookie|setcookie|credentials|secret|apikey|accesskey|connectionkey|privatekey|signature|prompttext)$/;
+
+function secretKey(key) {
+  const normalized = normalizeKey(key);
+  return SECRET_EXACT.test(normalized) || SECRET_SUFFIX.test(normalized);
+}
 
 function summarize(value, depth = 0, input = false) {
   if (depth > 4) return "[省略深层内容]";
@@ -29,7 +41,7 @@ function summarize(value, depth = 0, input = false) {
   for (const [key, item] of Object.entries(value).slice(0, 24)) {
     if (input && key === "text" && typeof item === "string")
       result[key] = `[输入 ${item.length} 个字符，内容未记录]`;
-    else if (secret.test(key)) result[key] = "[内容未记录]";
+    else if (secretKey(key)) result[key] = "[内容未记录]";
     else if (key === "url" && typeof item === "string") {
       try {
         const url = new URL(item);

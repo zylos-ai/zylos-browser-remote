@@ -362,6 +362,13 @@ class ExtLane extends EventEmitter {
       case "agent-turn-end": {
         if (!conn.agentTurn || msg.taskId !== conn.agentTurn) return;
         conn.agentTurn = null;
+        // Release this task's dedup entries so the bounded set cannot evict a
+        // live task's IDs just because an old finished task is still holding
+        // slots.
+        if (conn.agentRequests)
+          for (const entry of conn.agentRequests)
+            if (entry.startsWith(`${msg.taskId} `))
+              conn.agentRequests.delete(entry);
         const interrupt = msg.status === "stopped" && msg.interrupt === true;
         conn.agentStopping = interrupt;
         let reported = false;
@@ -467,14 +474,21 @@ class ExtLane extends EventEmitter {
     }
     if (conn.agentTurn && conn.agentTurn !== msg.taskId)
       return reportStatus({ state: "failed", code: "TURN_BUSY" });
+    // Scope dedup to the task: the protocol only promises IDs correlate within
+    // a task, so a client that restarts its counter must not have a legitimate
+    // request silently swallowed by a previous task's ID. A duplicate is still
+    // never enqueued twice, but it now always gets a status frame back —
+    // returning silently left the extension waiting forever.
     conn.agentRequests ||= new Set();
-    if (conn.agentRequests.has(msg.id)) return; // Never enqueue a decision twice.
+    const dedupKey = `${msg.taskId} ${msg.id}`;
+    if (conn.agentRequests.has(dedupKey))
+      return reportStatus({ state: "failed", code: "DUPLICATE_REQUEST" });
     if (
       request.round !==
       (conn.agentTurn === request.taskId ? conn.agentRound + 1 : 1)
     )
       return reportStatus({ state: "failed", code: "BAD_AGENT_REQUEST" });
-    conn.agentRequests.add(msg.id);
+    conn.agentRequests.add(dedupKey);
     while (conn.agentRequests.size > 100)
       conn.agentRequests.delete(conn.agentRequests.values().next().value);
     conn.agentTurn = msg.taskId;
@@ -556,8 +570,25 @@ class ExtLane extends EventEmitter {
   // timer on WebSocket activity, so this traffic is what keeps the extension
   // from being torn down at ~30s.
   _beat() {
+    // The key is only verified at upgrade, so without this a revoked credential
+    // would keep working for as long as the socket stays open. Re-read once per
+    // beat and drop connections whose keyId is gone. If the registry is
+    // unreadable we keep everyone connected: a transient read error must not
+    // disconnect working browsers.
+    let known = null;
+    try {
+      known = this.loadKeys();
+    } catch (err) {
+      this.log(`ext: keys unreadable during beat: ${err.message}`);
+    }
     for (const conn of this.conns.values()) {
       if (conn.ws.readyState !== conn.ws.OPEN) continue;
+      if (known && !known[conn.keyId]) {
+        this.log(`ext[${conn.endpointId || conn.keyId}]: key revoked, closing`);
+        this._failAllPending(conn, "key revoked");
+        safeClose(conn.ws, 4004, "key revoked");
+        continue;
+      }
       if (!conn.alive) {
         this.log(`ext[${conn.endpointId}]: heartbeat missed, terminating`);
         try {

@@ -1,6 +1,6 @@
 ---
 name: browser-remote
-version: 0.6.1
+version: 0.7.0
 description: >-
   Decision transport between the Agent and a connected Coco browser extension.
   Submit actions through scripts/decision.js; send final answers through C4
