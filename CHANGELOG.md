@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-09-23
+
+Adds live Agent activity to the browser panel. While a task is running the
+extension can now show what the Agent is actually doing — running a command,
+reading a file, searching — on the same line that previously only said the
+request was queued. Purely additive: no protocol frame was removed or renamed,
+and a client that does not advertise the new capability sees the 0.7.x
+behaviour unchanged.
+
+### Added
+
+- `agent-activity-v1` capability. Clients that negotiate it receive
+  `agent-activity` frames on the existing extension WebSocket, scoped to the
+  task they belong to (`endpointId` + `taskId` + a monotonic `sequence`).
+  Local browser actions still take precedence in the panel, and these events
+  never append to chat history.
+- Activity is derived from the Agent's own root session log — the Codex CLI
+  rollout (located through `CODEX_HOME`, default `~/.codex`, needs `sqlite3`)
+  or the Claude Code root transcript under `~/.claude/projects`. No change to
+  zylos-core is required and the Monitor is not involved.
+- `BROWSER_REMOTE_AGENT_DIR` selects the Agent working directory to read
+  (must contain `.zylos/config.json`; defaults to `ZYLOS_DIR` or `~/zylos`,
+  and follows `BROWSER_REMOTE_MONITOR_AGENT_DIR` when that is set).
+- `BROWSER_REMOTE_ACTIVITY=0` turns the collector off entirely. Chat and
+  browser control are unaffected by the switch.
+- Requests delivered to C4 now carry an `[Browser] [Activity <id>]` marker as
+  their first line, so a turn can be attributed to its browser even from a
+  short preview.
+
+### Security
+
+- Only fixed categories and an allowlist of executable names cross the wire.
+  Command arguments, file names and paths, tool output, and model reasoning
+  are never sent. Side agents and thinking blocks are ignored by design.
+- Attribution is deliberately conservative: an unknown marker, another
+  channel, a turn that mixed channels, or a stale binding all resolve to
+  `idle` rather than a guess, and a closed connection is unbound immediately.
+
+### Performance
+
+- Log reads only happen while a task is subscribed: new lines every 750 ms,
+  session discovery refreshed every 5 s, at most 4 sessions tracked, and at
+  most 1 MiB read per session per pass. An idle relay reads nothing.
+- If the log is unavailable, attribution is uncertain, or the state goes
+  stale, the panel falls back to the previous progress hints — the task is
+  never blocked. A runtime log-format change may require updating the adapter.
+
 ## [0.7.2] - 2026-09-23
 
 ### Fixed
