@@ -21,8 +21,18 @@ Agent ── c4-send ── send.js ── Remote ── 插件保存最终回�
 在运行 Zylos Agent 的机器上安装。已经安装时复用组件和密钥：
 
 ```sh
-zylos add https://github.com/zylos-ai/zylos-browser-remote --branch main --yes --json
+zylos add https://github.com/zylos-ai/zylos-browser-remote --yes --json
 ```
+
+不带 `--branch` 装到的就是**最新的正式发布版本**（latest release tag），这是推荐且唯一
+建议的安装方式。升级同理：
+
+```sh
+zylos upgrade browser-remote
+```
+
+> `--branch main` 只用于验证尚未发版的改动。日常安装和升级都不要加它 —— `main` 上可能
+> 存在还没发版、也没有和对应版本插件一起验证过的提交。
 
 组件入口是 `src/index.js`（`package.json` 的 `main`、`SKILL.md` 的 `entry`、
 `ecosystem.config.cjs` 的 `script`，三处一致），实现模块在 `src/lib/`。组件管理器使用
