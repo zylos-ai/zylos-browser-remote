@@ -11,7 +11,8 @@
 // runs must stay able to override a file they cannot see. A component with no
 // config.json therefore behaves exactly as it did before this file existed.
 //
-// Ports are deliberately NOT settable here -- see PORTS_ARE_ENV_ONLY below.
+// Two families are deliberately NOT settable here -- see PORTS_ARE_ENV_ONLY
+// and MONITOR_IS_ENV_ONLY below.
 //
 // CommonJS on purpose: package.json declares "type": "commonjs".
 
@@ -34,18 +35,22 @@ const CONFIG_PATH = path.join(DATA_DIR, "config.json");
 // where a single export reaches the service and its clients together.
 const PORTS_ARE_ENV_ONLY = true;
 
+// The debug trace family (BROWSER_REMOTE_MONITOR, _MONITOR_FILE,
+// _MONITOR_AGENT_DIR) is environment-only for a harder reason: the shipped
+// ecosystem.config.cjs pins BROWSER_REMOTE_MONITOR=0 so a deployment never
+// inherits a developer shell's trace setting. Environment wins over this file,
+// so a config.json asking for the trace would resolve to false under pm2 and
+// silently disagree with itself. A switch that cannot work in the only
+// deployment that matters does not belong in the file, so the trace stays
+// where a single export reaches it: the environment.
+const MONITOR_IS_ENV_ONLY = true;
+
 // Built-in defaults. Keys absent here are rejected when read from config.json,
 // so a typo cannot silently do nothing.
 const DEFAULT_CONFIG = {
   // Stream agent activity to connected panels. Off means panels still work,
   // they just stop receiving the live run feed.
   activityEnabled: true,
-  // Structured run trace, for debugging only.
-  monitor: false,
-  // Where the trace is written. null = the Monitor default.
-  monitorFile: null,
-  // Directory the trace watches for agent-side sessions. null = disabled.
-  agentMonitorDir: null,
 };
 
 const SETTINGS = {
@@ -55,25 +60,6 @@ const SETTINGS = {
     parseEnv: (raw) => raw !== "0",
     valid: (value) => typeof value === "boolean",
     expected: "a boolean",
-  },
-  monitor: {
-    env: "BROWSER_REMOTE_MONITOR",
-    // Historical semantics: only "1" enables.
-    parseEnv: (raw) => raw === "1",
-    valid: (value) => typeof value === "boolean",
-    expected: "a boolean",
-  },
-  monitorFile: {
-    env: "BROWSER_REMOTE_MONITOR_FILE",
-    parseEnv: (raw) => raw,
-    valid: (value) => value === null || (typeof value === "string" && value !== ""),
-    expected: "a non-empty string or null",
-  },
-  agentMonitorDir: {
-    env: "BROWSER_REMOTE_MONITOR_AGENT_DIR",
-    parseEnv: (raw) => raw,
-    valid: (value) => value === null || (typeof value === "string" && value !== ""),
-    expected: "a non-empty string or null",
   },
 };
 
@@ -120,9 +106,15 @@ function loadConfig() {
 
   for (const [key, value] of Object.entries(parsed)) {
     const spec = SETTINGS[key];
-    // `enabled` is written by hooks/configure.js as a marker; other unknown
-    // keys are almost always typos. Neither is silently honoured.
-    if (!spec) continue;
+    if (!spec) {
+      // `enabled` is the marker hooks/configure.js writes; it is expected and
+      // says nothing about this component, so it passes without comment.
+      // Anything else is almost always a typo ("activtyEnabled"), and a typo
+      // that fails silently is worse than one that fails loudly: the owner
+      // edits the file, sees no complaint, and believes the switch was taken.
+      if (key !== "enabled") warn(`ignoring unknown key ${key}`);
+      continue;
+    }
     if (!spec.valid(value)) {
       warn(`ignoring ${key}: expected ${spec.expected}`);
       continue;
@@ -167,6 +159,7 @@ module.exports = {
   DEFAULT_CONFIG,
   SETTINGS,
   PORTS_ARE_ENV_ONLY,
+  MONITOR_IS_ENV_ONLY,
   loadConfig,
   getConfig,
   resetConfigCache,

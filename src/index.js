@@ -188,14 +188,17 @@ function start({
   agentPort = AGENT_PORT,
   onRequest = deliverRequestToC4,
   onStop = (event) => interruptAgent(event, log),
-  // Each of these resolves environment first, then config.json, then the
-  // built-in default -- so an unset variable with no config file keeps the
-  // exact behaviour these lines had when they read process.env directly.
-  monitor = setting("monitor"),
-  monitorFile = setting("monitorFile") ?? undefined,
-  agentMonitorDir = setting("agentMonitorDir") ?? undefined,
+  // The debug trace stays environment-only: ecosystem.config.cjs pins
+  // BROWSER_REMOTE_MONITOR=0 on every deployment, so a config.json switch for
+  // it could never take effect there. See MONITOR_IS_ENV_ONLY in lib/config.js.
+  monitor = process.env.BROWSER_REMOTE_MONITOR === "1",
+  monitorFile = process.env.BROWSER_REMOTE_MONITOR_FILE,
+  agentMonitorDir = process.env.BROWSER_REMOTE_MONITOR_AGENT_DIR,
   agentTraceOptions,
   activityOptions,
+  // Environment first, then config.json, then the built-in default -- so an
+  // unset variable with no config file keeps the exact behaviour this line had
+  // when it read process.env directly.
   activityEnabled = setting("activityEnabled"),
 } = {}) {
   const trace = monitor ? new Monitor({ file: monitorFile }) : null;

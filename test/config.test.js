@@ -1,6 +1,7 @@
 "use strict";
-// Resolution order, validation and the deliberate port exclusion for
-// src/lib/config.js, plus proof that src/index.js actually consumes it.
+// Resolution order, validation and the two deliberate exclusions (ports and
+// the debug trace) for src/lib/config.js, plus proof that src/index.js
+// actually consumes it.
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -57,32 +58,25 @@ test("no config.json is the normal case and yields the built-in defaults", () =>
   withConfig(null, (config, warnings) => {
     assert.deepEqual(config.getConfig(), config.DEFAULT_CONFIG);
     assert.equal(config.setting("activityEnabled"), true);
-    assert.equal(config.setting("monitor"), false);
-    assert.equal(config.setting("monitorFile"), null);
     // A missing file must not be reported as a problem.
     assert.deepEqual(warnings, []);
   });
 });
 
 test("config.json values are honoured when the environment is silent", () => {
-  withConfig(
-    { activityEnabled: false, monitor: true, monitorFile: "/tmp/trace.jsonl" },
-    (config) => {
-      assert.equal(config.setting("activityEnabled"), false);
-      assert.equal(config.setting("monitor"), true);
-      assert.equal(config.setting("monitorFile"), "/tmp/trace.jsonl");
-      // Untouched keys keep their defaults.
-      assert.equal(config.setting("agentMonitorDir"), null);
-    },
-  );
+  withConfig({ activityEnabled: false }, (config) => {
+    assert.equal(config.setting("activityEnabled"), false);
+  });
 });
 
 test("environment wins over config.json in both directions", () => {
-  withConfig({ activityEnabled: false, monitor: true }, (config) => {
+  withConfig({ activityEnabled: false }, (config) => {
     process.env.BROWSER_REMOTE_ACTIVITY = "1";
-    process.env.BROWSER_REMOTE_MONITOR = "0";
     assert.equal(config.setting("activityEnabled"), true);
-    assert.equal(config.setting("monitor"), false);
+  });
+  withConfig({ activityEnabled: true }, (config) => {
+    process.env.BROWSER_REMOTE_ACTIVITY = "0";
+    assert.equal(config.setting("activityEnabled"), false);
   });
 });
 
@@ -95,25 +89,15 @@ test("historical environment parsing is preserved exactly", () => {
     assert.equal(config.setting("activityEnabled"), true);
     process.env.BROWSER_REMOTE_ACTIVITY = "false";
     assert.equal(config.setting("activityEnabled"), true);
-    // MONITOR: only "1" enables.
-    process.env.BROWSER_REMOTE_MONITOR = "true";
-    assert.equal(config.setting("monitor"), false);
-    process.env.BROWSER_REMOTE_MONITOR = "1";
-    assert.equal(config.setting("monitor"), true);
   });
 });
 
 test("wrongly typed values are rejected with a warning, not honoured", () => {
-  withConfig(
-    { activityEnabled: "no", monitor: 1, monitorFile: "" },
-    (config, warnings) => {
-      assert.equal(config.setting("activityEnabled"), true);
-      assert.equal(config.setting("monitor"), false);
-      assert.equal(config.setting("monitorFile"), null);
-      assert.equal(warnings.length, 3);
-      assert.ok(warnings.every((line) => /ignoring/.test(line)));
-    },
-  );
+  withConfig({ activityEnabled: "no" }, (config, warnings) => {
+    assert.equal(config.setting("activityEnabled"), true);
+    assert.equal(warnings.length, 1);
+    assert.ok(/ignoring activityEnabled: expected a boolean/.test(warnings[0]));
+  });
 });
 
 test("a malformed config.json warns and still starts on defaults", () => {
@@ -128,10 +112,16 @@ test("a malformed config.json warns and still starts on defaults", () => {
   });
 });
 
-test("unknown keys are ignored, including the configure-hook marker", () => {
-  withConfig({ enabled: true, activtyEnabled: false }, (config) => {
+test("a misspelled key is ignored LOUDLY, the hook marker silently", () => {
+  withConfig({ enabled: true, activtyEnabled: false }, (config, warnings) => {
+    // The typo must not be honoured...
     assert.equal(config.setting("activityEnabled"), true);
-    assert.equal(Object.keys(config.getConfig()).length, 4);
+    assert.equal(Object.keys(config.getConfig()).length, 1);
+    // ...and must not be swallowed either: exactly one warning, naming the
+    // typo, with nothing said about the configure-hook marker.
+    assert.equal(warnings.length, 1);
+    assert.ok(/ignoring unknown key activtyEnabled/.test(warnings[0]));
+    assert.ok(!/enabled\b(?!Enabled)/.test(warnings[0].replace(/activtyEnabled/g, "")));
   });
 });
 
@@ -157,6 +147,33 @@ test("ports are deliberately not configurable from config.json", () => {
     assert.ok(!("extPort" in config.DEFAULT_CONFIG));
     assert.ok(!("agentPort" in config.DEFAULT_CONFIG));
   });
+});
+
+// NEGATIVE CONTROL for the second exclusion: ecosystem.config.cjs pins
+// BROWSER_REMOTE_MONITOR=0 on every deployment and the environment outranks
+// this file, so a config.json trace switch would resolve to false under pm2
+// and lie to whoever set it. If someone adds the trace back here, this fails
+// and they must deal with the ecosystem pin in the same change.
+test("the debug trace is deliberately not configurable from config.json", () => {
+  withConfig(null, (config) => {
+    assert.equal(config.MONITOR_IS_ENV_ONLY, true);
+    for (const name of Object.keys(config.SETTINGS)) {
+      assert.ok(
+        !/monitor/i.test(name),
+        `${name} looks like the debug trace; see src/lib/config.js`,
+      );
+    }
+    for (const name of ["monitor", "monitorFile", "agentMonitorDir"]) {
+      assert.ok(!(name in config.DEFAULT_CONFIG));
+    }
+  });
+});
+
+// The pin this exclusion exists for. If a future edit drops it from
+// ecosystem.config.cjs, the reasoning above stops holding and this fails.
+test("ecosystem.config.cjs still pins the trace off for deployments", () => {
+  const { apps } = require("../ecosystem.config.cjs");
+  assert.equal(apps[0].env.BROWSER_REMOTE_MONITOR, "0");
 });
 
 test("start() honours config.json: activity is off when the file says so", async () => {
