@@ -198,19 +198,13 @@ PNG/JPEG/WebP/GIF 按 MIME 与文件头校验；标准输出不携带截图 Base
 
 ```json
 {
-  "activityEnabled": false,
-  "monitor": false,
-  "monitorFile": null,
-  "agentMonitorDir": null
+  "activityEnabled": false
 }
 ```
 
 | 键 | 类型 | 默认 | 等价环境变量 |
 |----|------|------|--------------|
 | `activityEnabled` | boolean | `true` | `BROWSER_REMOTE_ACTIVITY` |
-| `monitor` | boolean | `false` | `BROWSER_REMOTE_MONITOR` |
-| `monitorFile` | string \| null | `null` | `BROWSER_REMOTE_MONITOR_FILE` |
-| `agentMonitorDir` | string \| null | `null` | `BROWSER_REMOTE_MONITOR_AGENT_DIR` |
 
 **取值优先级**（从高到低）：调用方显式传参 → 环境变量 → `config.json` → 内置默认。
 环境变量刻意压过文件：pm2/ecosystem 和临时 shell 运行必须能覆盖它们看不见的文件。
@@ -222,6 +216,14 @@ PNG/JPEG/WebP/GIF 按 MIME 与文件头校验；标准输出不携带截图 Base
 只认环境变量。插件端口写死在 `SKILL.md` 的 `http_routes` 里（Caddy 反代
 `127.0.0.1:3802`），Agent 端口写死在 `scripts/` 的各个 CLI 客户端里；若从
 `config.json` 改端口，监听会搬家而这两处仍指向旧端口，组件会「看起来健康、实际不通」。
+
+⚠️ **Monitor 调试开关也不在此处配置**：`BROWSER_REMOTE_MONITOR` /
+`BROWSER_REMOTE_MONITOR_FILE` / `BROWSER_REMOTE_MONITOR_AGENT_DIR` 同样只认环境
+变量。随组件发布的 `ecosystem.config.cjs` 明确钉死 `BROWSER_REMOTE_MONITOR=0`，
+免得开发机 shell 里的调试开关被带进生产；而环境变量优先于本文件，所以写在
+`config.json` 里的 `"monitor": true` 在 pm2 下**永远解析为 false**——一个在唯一
+要紧的部署方式下必然失效的开关，不该出现在配置文件里。要临时开调试，见下方
+「本地 Monitor」。
 
 ## 本地 Monitor
 

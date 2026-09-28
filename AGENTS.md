@@ -18,10 +18,13 @@ Release Process section below.
 - **Node.js 20+** — Minimum runtime version
 - **Conventional commits** — `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`
 - **Runtime state lives in `~/zylos/components/browser-remote/`** — never
-  committed; code is disposable, data is permanent. Note that this component
-  has no `config.json`: it declares no `config.required` items, and
-  connection keys are credentials minted by `scripts/key.js`, not
-  configuration. See DESIGN.md §3.
+  committed; code is disposable, data is permanent. `config.json` there is
+  **optional**: the component declares no `config.required` items, so a fresh
+  install runs with no file at all. It carries exactly one key today,
+  `activityEnabled`; connection keys are credentials minted by
+  `scripts/key.js`, never configuration. Ports and the monitor trace are
+  deliberately environment-only — before adding a key, read DESIGN.md §3.1,
+  including both "Why … NOT in `config.json`" subsections.
 - **English for code** — Comments, commit messages, PR descriptions, documentation
 
 ### Open: ESM migration

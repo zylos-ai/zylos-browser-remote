@@ -104,9 +104,9 @@ functional with no `config.json` at all. Connection keys are **credentials,
 not configuration** — minted on demand by `scripts/key.js` and stored as
 sha256 digests in `keys.json`, never in `config.json`.
 
-What `config.json` *does* carry is the small set of per-deployment runtime
-options that an owner may want to make durable instead of re-exporting an
-environment variable on every restart. `src/lib/config.js` reads
+What `config.json` *does* carry is the per-deployment runtime options an owner
+may want to make durable instead of re-exporting an environment variable on
+every restart — today that is exactly one, `activityEnabled`. `src/lib/config.js` reads
 `~/zylos/components/browser-remote/config.json` and resolves each setting in a
 fixed order, highest first:
 
@@ -123,14 +123,35 @@ the compatibility guarantee the tests in `test/config.test.js` pin down.
 | Key | Type | Default | Environment equivalent |
 |-----|------|---------|------------------------|
 | `activityEnabled` | boolean | `true` | `BROWSER_REMOTE_ACTIVITY` |
-| `monitor` | boolean | `false` | `BROWSER_REMOTE_MONITOR` |
-| `monitorFile` | string \| null | `null` | `BROWSER_REMOTE_MONITOR_FILE` |
-| `agentMonitorDir` | string \| null | `null` | `BROWSER_REMOTE_MONITOR_AGENT_DIR` |
 
 A malformed file, a wrongly typed value or an unknown key is **warned about and
 skipped**, never fatal: the owner must not lose the transport entirely because
-of a stray comma. `enabled`, which `hooks/configure.js` writes as a marker, is
-among the keys the loader ignores.
+of a stray comma. An unknown key is almost always a typo (`activtyEnabled`), and
+a typo that fails silently is the worse failure — the owner edits the file, sees
+no complaint, and believes the switch was taken. The one exception is `enabled`,
+the marker `hooks/configure.js` writes: it is expected, says nothing about this
+component, and is skipped without comment.
+
+#### Why the monitor trace is deliberately NOT in `config.json`
+
+`BROWSER_REMOTE_MONITOR`, `BROWSER_REMOTE_MONITOR_FILE` and
+`BROWSER_REMOTE_MONITOR_AGENT_DIR` stay environment-only for a harder reason
+than the ports: they *cannot work* from the file in the only deployment that
+matters. The shipped `ecosystem.config.cjs` pins `BROWSER_REMOTE_MONITOR='0'`
+so a deployment never inherits a developer shell's trace setting, and the
+environment outranks `config.json` by design — so `{"monitor": true}` would
+resolve to `false` under pm2 while reading, in the file, as if it were on. A
+switch that silently disagrees with itself is worse than no switch, so the
+trace stays where a single export reaches it: the environment. `MONITOR_IS_ENV_ONLY`
+in `src/lib/config.js` records the decision, and `test/config.test.js` holds a
+negative control that fails if a monitor-shaped key is ever added to the
+settings table, plus one that fails if the `ecosystem.config.cjs` pin is
+removed.
+
+Note the boundary: `ecosystem.config.cjs` injects **only** `BROWSER_REMOTE_MONITOR`,
+not `BROWSER_REMOTE_ACTIVITY`. `activityEnabled` therefore resolves from
+`config.json` normally under pm2 — it is the one runtime option the file can
+actually decide.
 
 #### Why the ports are deliberately NOT in `config.json`
 

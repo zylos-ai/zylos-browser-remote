@@ -14,9 +14,9 @@
  * file is absent, so an empty one would only be noise.
  *
  * Optional settings ARE read at runtime -- see src/lib/config.js for the
- * accepted keys (activityEnabled, monitor, monitorFile, agentMonitorDir) and
- * for why ports are environment-only. Those are owner-edited, not collected
- * here, because zylos only prompts for `config.required` items.
+ * accepted keys (activityEnabled today) and for why the ports and the monitor
+ * trace are environment-only. Those are owner-edited, not collected here,
+ * because zylos only prompts for `config.required` items.
  *
  * Connection keys are NOT configuration: they are minted on demand by
  * scripts/key.js and stored as sha256 digests in keys.json.
