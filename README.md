@@ -78,18 +78,29 @@ npm start
 使用 Agent 已有的公网 HTTPS 域名。Core 的域名通常在 `~/zylos/.zylos/config.json`，
 实际以平台入口为准。外层网关可能负责 TLS，不能用内部监听协议推断公网协议。
 
-使用 Caddy 时，将以下路由加入 `~/zylos/http/Caddyfile` 的现有站点块：
+**无需手工编辑 Caddyfile。** 路由声明在 `SKILL.md` 的 `http_routes` 里，
+安装与升级时由 zylos-core 自动写入 Zylos 托管的 Caddyfile，并包在
+`# BEGIN/END zylos-component:browser-remote` 标记内：
 
 ```caddyfile
+redir /browser-remote /browser-remote/ permanent
 handle /browser-remote/* {
     uri strip_prefix /browser-remote
-    reverse_proxy 127.0.0.1:3802
+    reverse_proxy 127.0.0.1:3802 {
+        header_up X-Forwarded-Prefix /browser-remote
+    }
 }
 ```
 
-按照部署环境校验并重新加载 Caddy。保留已有站点配置；不要给 3803 添加公网路由。
+不要给 3803 添加公网路由。
 交给用户的连接地址为 `wss://实际域名/browser-remote/ext`。
 只有浏览器与 Remote 在同一台机器上时，才使用 `ws://127.0.0.1:3802/ext`。
+
+> **升级既有部署**：0.9.0 及更早版本没有声明 `http_routes`，其部署通常在
+> Caddyfile 里留有一份**手工添加**的等价路由（在托管标记之外）。升级后
+> core 会在站点块末尾追加托管版本，两者并存 —— 配置仍然有效（`caddy
+> validate` 通过，先出现的手工块生效，托管块成为死配置），但应当**删除手工
+> 块**，把这条路由交还给 core 托管。
 
 ## 连接 Key
 

@@ -22,6 +22,17 @@ lifecycle:
   preserve:
     - keys.json
     - observations/
+
+# The extension lane is the ONLY public surface. Caddy strips the prefix, so
+# the lane receives its single internal path, /ext, and refuses everything
+# else itself. The agent lane (:3803) is loopback-only and must never be
+# routed publicly. See docs/DESIGN.md §5.
+http_routes:
+  - path: /browser-remote/*
+    type: reverse_proxy
+    target: 127.0.0.1:3802
+    strip_prefix: /browser-remote
+
 upgrade:
   repo: zylos-ai/zylos-browser-remote
   branch: main

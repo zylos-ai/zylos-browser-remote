@@ -11,6 +11,24 @@
     "smoke": "node tools/smoke.js",
     "key": "node scripts/key.js"
   },
+  "homepage": "https://github.com/zylos-ai/zylos-browser-remote#readme",
+  "bugs": {
+    "url": "https://github.com/zylos-ai/zylos-browser-remote/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zylos-ai/zylos-browser-remote.git"
+  },
+  "keywords": [
+    "zylos",
+    "browser-remote",
+    "agent"
+  ],
+  "author": "Zylos AI",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "dependencies": {
     "ws": "^8.18.0"
   }

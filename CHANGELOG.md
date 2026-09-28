@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `http_routes` declaration in `SKILL.md`: the public extension-lane route
+  (`/browser-remote/*` → `127.0.0.1:3802`, prefix stripped) is now applied by
+  zylos-core on install and upgrade instead of being hand-added to the
+  Caddyfile. Existing deployments carry an equivalent hand-written block
+  outside the managed markers and should remove it after upgrading — see
+  README, "配置公网入口".
+- `AGENTS.md` / `CLAUDE.md`: engineering conventions and the release process
+  as a hard gate, per the Zylos component template.
+- `docs/DESIGN.md`: architecture, the two-lane exposure model, the reasons
+  this component has no `config.json`, and why COMPONENT-SPEC §4.4 does not
+  apply to a WebSocket-only public route.
+- `test/release-consistency.test.js`: machine gate keeping the four release
+  version faces (package.json, package-lock.json, SKILL.md frontmatter,
+  CHANGELOG.md) in agreement, with the template's negative controls intact.
+  Ported from the template's ESM original to CommonJS to match this
+  repository.
+- `package.json` metadata required by the component template: `homepage`,
+  `bugs`, `repository`, `keywords`, `author`, `license`, `engines`.
+
 ## [0.9.0] - 2026-09-28
 
 Ships alongside Zylos Browser Extension 0.15.5 with arbitrary file uploads and
