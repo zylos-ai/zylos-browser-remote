@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `src/lib/config.js`: optional `config.json` support for the per-deployment
+  runtime options (`activityEnabled`, `monitor`, `monitorFile`,
+  `agentMonitorDir`). Resolution order is explicit argument → environment
+  variable → `config.json` → built-in default, so **a deployment with no
+  `config.json` behaves exactly as before**. Malformed files and bad values
+  warn and fall back instead of failing startup. Ports remain
+  environment-only on purpose — they are baked into `SKILL.md` `http_routes`
+  and the `scripts/` CLI clients, and a port moved in `config.json` would
+  leave both pointing at the old one. See README "组件配置 `config.json`"
+  and `docs/DESIGN.md` §3.1.
 - `http_routes` declaration in `SKILL.md`: the public extension-lane route
   (`/browser-remote/*` → `127.0.0.1:3802`, prefix stripped) is now applied by
   zylos-core on install and upgrade instead of being hand-added to the

@@ -187,6 +187,42 @@ PNG/JPEG/WebP/GIF 按 MIME 与文件头校验；标准输出不携带截图 Base
 或状态过期时，插件回退到原有进度提示，不阻断任务。运行时日志格式变化可能需要
 更新 Remote 适配器。Monitor 的完整诊断记录仍由下面的开关单独控制。
 
+## 组件配置 `config.json`
+
+**可选。** 不存在时组件按内置默认值运行，行为与从前完全一致 —— 全新安装无需任何
+配置即可使用。连接 Key **不是配置**：由 `scripts/key.js` 现签，以 sha256 摘要存在
+`keys.json`，永远不写进 `config.json`。
+
+`config.json` 承载的是少量**每部署一次的运行选项**，适合固化下来、免得每次重启都
+重新导出环境变量。位置 `~/zylos/components/browser-remote/config.json`：
+
+```json
+{
+  "activityEnabled": false,
+  "monitor": false,
+  "monitorFile": null,
+  "agentMonitorDir": null
+}
+```
+
+| 键 | 类型 | 默认 | 等价环境变量 |
+|----|------|------|--------------|
+| `activityEnabled` | boolean | `true` | `BROWSER_REMOTE_ACTIVITY` |
+| `monitor` | boolean | `false` | `BROWSER_REMOTE_MONITOR` |
+| `monitorFile` | string \| null | `null` | `BROWSER_REMOTE_MONITOR_FILE` |
+| `agentMonitorDir` | string \| null | `null` | `BROWSER_REMOTE_MONITOR_AGENT_DIR` |
+
+**取值优先级**（从高到低）：调用方显式传参 → 环境变量 → `config.json` → 内置默认。
+环境变量刻意压过文件：pm2/ecosystem 和临时 shell 运行必须能覆盖它们看不见的文件。
+
+改完 `config.json` 需要 `pm2 restart zylos-browser-remote` 生效（端口已监听，不做热重载）。
+文件格式错误、类型不对或键名拼错只会**告警并跳过该项**，不会导致服务起不来。
+
+⚠️ **端口不在此处配置**：`BROWSER_REMOTE_EXT_PORT` / `BROWSER_REMOTE_AGENT_PORT`
+只认环境变量。插件端口写死在 `SKILL.md` 的 `http_routes` 里（Caddy 反代
+`127.0.0.1:3802`），Agent 端口写死在 `scripts/` 的各个 CLI 客户端里；若从
+`config.json` 改端口，监听会搬家而这两处仍指向旧端口，组件会「看起来健康、实际不通」。
+
 ## 本地 Monitor
 
 ```sh

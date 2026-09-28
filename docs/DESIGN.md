@@ -96,22 +96,58 @@ endpoint `keyId.browserId` — never by the bare key id.
 
 ## 3. Configuration
 
-### 3.1 This component has no `config.json`
+### 3.1 `config.json` is optional, and what it may contain
 
-Unlike the component template, browser-remote declares **no `config.required`
-items** and reads no `~/zylos/components/browser-remote/config.json`. This is
-intentional:
+browser-remote declares **no `config.required` items**: there is nothing zylos
+must collect before the component can run, so a fresh install is fully
+functional with no `config.json` at all. Connection keys are **credentials,
+not configuration** — minted on demand by `scripts/key.js` and stored as
+sha256 digests in `keys.json`, never in `config.json`.
 
-- Connection keys are **credentials, not configuration**. They are minted on
-  demand by `scripts/key.js` and stored as sha256 digests in `keys.json`.
-- Everything else is an operational override with a working default, so it is
-  an environment variable rather than a config file.
+What `config.json` *does* carry is the small set of per-deployment runtime
+options that an owner may want to make durable instead of re-exporting an
+environment variable on every restart. `src/lib/config.js` reads
+`~/zylos/components/browser-remote/config.json` and resolves each setting in a
+fixed order, highest first:
 
-`hooks/configure.js` therefore exists for spec conformance and is a no-op in
-practice; it deliberately refuses to leave behind an empty `config.json` that
-no code would read. Adding a template-style `src/lib/config.js` would be dead
-code. If a genuine setting is ever introduced, `hooks/configure.js` is the
-correct landing spot and this section must be revised.
+1. an explicit argument passed by the caller (tests, embedders)
+2. the environment variable, parsed exactly as it always has been
+3. `config.json`
+4. the built-in default
+
+Environment keeps precedence deliberately: pm2/ecosystem and one-off shell runs
+must stay able to override a file they cannot see. **A deployment with no
+`config.json` behaves exactly as it did before the loader existed** — this is
+the compatibility guarantee the tests in `test/config.test.js` pin down.
+
+| Key | Type | Default | Environment equivalent |
+|-----|------|---------|------------------------|
+| `activityEnabled` | boolean | `true` | `BROWSER_REMOTE_ACTIVITY` |
+| `monitor` | boolean | `false` | `BROWSER_REMOTE_MONITOR` |
+| `monitorFile` | string \| null | `null` | `BROWSER_REMOTE_MONITOR_FILE` |
+| `agentMonitorDir` | string \| null | `null` | `BROWSER_REMOTE_MONITOR_AGENT_DIR` |
+
+A malformed file, a wrongly typed value or an unknown key is **warned about and
+skipped**, never fatal: the owner must not lose the transport entirely because
+of a stray comma. `enabled`, which `hooks/configure.js` writes as a marker, is
+among the keys the loader ignores.
+
+#### Why the ports are deliberately NOT in `config.json`
+
+`BROWSER_REMOTE_EXT_PORT` and `BROWSER_REMOTE_AGENT_PORT` stay
+environment-only. Both are contract-bound in ways `config.json` cannot reach:
+
+- the extension port is baked into `SKILL.md` `http_routes`, where Caddy is
+  told to proxy to `127.0.0.1:3802`;
+- the agent port is baked into every CLI client under `scripts/`, which dial
+  the loopback lane directly.
+
+A port moved in `config.json` would relocate the listener while leaving both of
+those pointing at the old one — the component would come up "healthy" and be
+silently unreachable. An environment variable, by contrast, is exported once
+and reaches the service and its clients together. `test/config.test.js` holds a
+negative control that fails if a port-shaped key is ever added here without
+updating `SKILL.md` and the CLI clients in the same change.
 
 ### 3.2 Environment variables
 
