@@ -9,9 +9,10 @@ process.env.BROWSER_REMOTE_OBS_DIR = dir;
 const {
   materializeAttachments,
   materializeImages,
+  AttachmentScope,
 } = require("../scripts/attachments");
 const { inputDetails } = require("../src/lib/monitor-input");
-const { deliverRequestToC4 } = require("../src/index");
+const { deliverRequestToC4, start } = require("../src/index");
 const file = {
   type: "file",
   id: "file-1",
@@ -136,7 +137,7 @@ test("Monitor removes small file and image payloads as well as large Base64 stri
   }
 });
 
-test("new observations retain active attachments, expire old files, and respect a bounded store", () => {
+test("new observations preserve existing files regardless of age and respect a bounded store", () => {
   const first = materializeAttachments(file).path;
   for (let i = 0; i < 13; i++) materializeAttachments(image);
   assert.equal(
@@ -144,12 +145,12 @@ test("new observations retain active attachments, expire old files, and respect 
     "附件原文",
     "another browser must not evict a live task's file",
   );
-  const expired = path.join(dir, "attachment-expired.txt");
-  fs.writeFileSync(expired, "old");
+  const old = path.join(dir, "attachment-old.txt");
+  fs.writeFileSync(old, "old");
   const past = new Date(Date.now() - 25 * 60 * 60_000);
-  fs.utimesSync(expired, past, past);
+  fs.utimesSync(old, past, past);
   materializeAttachments(file);
-  assert.equal(fs.existsSync(expired), false);
+  assert.equal(fs.existsSync(old), true);
   const full = path.join(dir, "attachment-capacity.bin");
   fs.writeFileSync(full, "");
   fs.truncateSync(full, 128 * 1024 * 1024);
@@ -157,3 +158,104 @@ test("new observations retain active attachments, expire old files, and respect 
   assert.equal(fs.existsSync(first), true);
   fs.unlinkSync(full);
 });
+
+test("task cleanup removes only owned files and blocks late writes", () => {
+  const first = new AttachmentScope();
+  const other = new AttachmentScope();
+  const one = first.materialize(image);
+  const two = first.materialize(file);
+  const unrelated = other.materialize(image);
+  assert.ok([one, two, unrelated].every((item) => fs.existsSync(item.path)));
+  first.close();
+  first.close();
+  assert.equal(fs.existsSync(one.path), false);
+  assert.equal(fs.existsSync(two.path), false);
+  assert.equal(fs.existsSync(unrelated.path), true);
+  assert.throws(() => first.materialize(image), /task has ended/);
+  other.close();
+  assert.equal(fs.existsSync(unrelated.path), false);
+});
+
+test("service startup leaves preexisting files untouched", async (t) => {
+  const old = path.join(dir, "attachment-before-restart.png");
+  fs.writeFileSync(old, "old");
+  const past = new Date(Date.now() - 25 * 60 * 60_000);
+  fs.utimesSync(old, past, past);
+  const before = fs.readdirSync(dir);
+  const relay = await start({
+    extPort: 0,
+    agentPort: 0,
+    activityEnabled: false,
+  });
+  t.after(() => relay.close());
+  assert.deepEqual(fs.readdirSync(dir), before);
+  assert.equal(fs.readFileSync(old, "utf8"), "old");
+});
+
+for (const code of [
+  "C4_DELIVERY_FAILED",
+  "C4_DELIVERY_TIMEOUT",
+  "C4_DELIVERY_UNCONFIRMED",
+])
+  test(`${code} retains files only while delivery might still be active`, async (t) => {
+    let saved;
+    const relay = await start({
+      extPort: 0,
+      agentPort: 0,
+      activityEnabled: false,
+      onRequest: async ({ request, attachmentScope }) => {
+        saved = attachmentScope.materialize(request).image.path;
+        return { ok: false, code };
+      },
+    });
+    t.after(() => relay.close());
+    await new Promise((resolve) =>
+      relay.ext.emit(
+        "agent-request",
+        {
+          endpointId: "aaaaaaaaaaaa",
+          chatId: "task",
+          request: { id: "r1", round: 1, image },
+        },
+        resolve,
+      ),
+    );
+    assert.equal(fs.existsSync(saved), code !== "C4_DELIVERY_FAILED");
+    relay.ext.emit("agent-turn-end", {
+      endpointId: "aaaaaaaaaaaa",
+      taskId: "task",
+      status: "interrupted",
+    });
+    assert.equal(fs.existsSync(saved), false);
+  });
+
+for (const [name, mimeType, suffix] of [
+  [
+    "report.docx",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".docx",
+  ],
+  [
+    "budget.xlsx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".xlsx",
+  ],
+  ["archive.zip", "application/zip", ".zip"],
+  ["script.py", "text/plain", ".py"],
+  ["graphic.svg", "image/svg+xml", ".svg"],
+  ["photo.heic", "image/heic", ".heic"],
+  ["unknown.custom", "application/octet-stream", ".custom"],
+  ["no-extension", "application/octet-stream", ".bin"],
+])
+  test(`${name} travels as a file with its original bytes and a usable suffix`, () => {
+    const scope = new AttachmentScope();
+    const output = scope.materialize({ ...file, name, mimeType });
+    assert.equal(output.type, "file");
+    assert.equal(output.mimeType, mimeType);
+    assert.equal(output.fileReadRequired, true);
+    assert.equal(output.imageReadRequired, undefined);
+    assert.equal(path.extname(output.path), suffix);
+    assert.equal(fs.readFileSync(output.path).toString("base64"), file.data);
+    scope.close();
+    assert.equal(fs.existsSync(output.path), false);
+  });

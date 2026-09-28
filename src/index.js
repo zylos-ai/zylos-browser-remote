@@ -55,7 +55,7 @@ function log(...args) {
  * @returns {Promise<{ok: boolean, code?: string}>}
  */
 function deliverRequestToC4(
-  { endpointId, chatId, request, activityId },
+  { endpointId, chatId, request, activityId, attachmentScope },
   logFn = log,
   { timeoutMs = C4_DELIVERY_TIMEOUT_MS } = {},
 ) {
@@ -64,7 +64,7 @@ function deliverRequestToC4(
   // extension data. Attachments are materialized on THIS Agent host, never Chrome.
   let envelope;
   try {
-    envelope = JSON.stringify(materializeAttachments(request));
+    envelope = JSON.stringify(materializeAttachments(request, attachmentScope));
   } catch {
     return Promise.resolve({ ok: false, code: "ATTACHMENT_FAILED" });
   }
@@ -226,6 +226,7 @@ function start({
   // Ingress: panel -> relay -> C4 queue. ext-lane has already bounded the text
   // and checked the envelope; nothing here looks at what the owner wrote.
   const intake = (msg, reportStatus) => {
+    const attachmentScope = exchange.attachmentsFor(msg);
     const activityId = activity?.bind(msg);
     const ticket =
       msg.request && msg.request.round > 1
@@ -233,7 +234,13 @@ function start({
         : trace?.received(msg);
     // Ack only C4 intake. No claim about model progress or task completion.
     Promise.resolve()
-      .then(() => onRequest({ ...msg, ...(activityId ? { activityId } : {}) }))
+      .then(() =>
+        onRequest({
+          ...msg,
+          attachmentScope,
+          ...(activityId ? { activityId } : {}),
+        }),
+      )
       .then((result) => {
         trace?.intake(ticket, result);
         if (result?.ok === true) return reportStatus({ state: "queued" });
@@ -245,6 +252,7 @@ function start({
           "C4_DELIVERY_TIMEOUT",
           "C4_DELIVERY_UNCONFIRMED",
         ].includes(code);
+        if (!uncertain) attachmentScope?.close();
         reportStatus({
           state: uncertain ? "unknown" : "failed",
           code,

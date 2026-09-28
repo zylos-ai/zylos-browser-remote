@@ -144,9 +144,12 @@ EOF_REPLY
 C4 记录每次发送尝试，包含失败与重试；数据库记录不等于送达确认。
 
 图片通过连接传输，在 Agent 主机保存为私有文件，然后返回路径供图像工具读取。
-PNG/JPEG 按 MIME 与文件头校验；标准输出不携带截图 Base64。
-默认目录是 `~/zylos/components/browser-remote/observations`，保留最新 12 张。
-可用 `BROWSER_REMOTE_OBS_DIR` 调整目录。
+PNG/JPEG/WebP/GIF 按 MIME 与文件头校验；标准输出不携带截图 Base64。
+默认临时目录是 `~/zylos/components/browser-remote/observations`，
+可用 `BROWSER_REMOTE_OBS_DIR` 调整目录。附件与截图只在当前任务期间保留，
+任务完成、停止、断线或服务正常关闭时删除；新任务需要原图时应重新附上。
+只按任务生命周期删除文件，不进行启动、定时或按文件年龄清理。
+存储上限为 128 MiB，达到上限时拒绝新写入，不删除其他活动任务的图片。
 
 断线、停止或插件重载会中断当前任务；Remote 不自动重放动作。
 请求重试必须沿用原请求 ID 和相同决策，不能因为超时就重新点击或提交。

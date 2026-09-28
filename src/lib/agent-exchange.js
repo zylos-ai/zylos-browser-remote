@@ -1,5 +1,5 @@
 "use strict";
-const { materializeAttachments } = require("../../scripts/attachments");
+const { AttachmentScope } = require("../../scripts/attachments");
 const { replyCommands } = require("../../scripts/reply-route");
 
 // Generic request/response exchange. No action names, page rules or decisions
@@ -15,13 +15,21 @@ class AgentExchange {
     const { endpointId, chatId, request } = message;
     let state = this.states.get(endpointId);
     if (!state || state.taskId !== chatId) {
-      if (state?.waiter)
+      state?.attachments.close();
+      if (state?.waiter) {
+        clearTimeout(state.waiter.timer);
         state.waiter.resolve({
           ok: false,
           code: "STALE_DECISION",
           message: "Turn was replaced",
         });
-      state = { taskId: chatId, mode: false, receipts: new Map() };
+      }
+      state = {
+        taskId: chatId,
+        mode: false,
+        receipts: new Map(),
+        attachments: new AttachmentScope(),
+      };
       this.states.set(endpointId, state);
     }
     state.next = {
@@ -33,6 +41,10 @@ class AgentExchange {
     if (state.waiter) this.deliver(state);
     return true;
   }
+  attachmentsFor({ endpointId, chatId }) {
+    const state = this.states.get(endpointId);
+    return state?.taskId === chatId ? state.attachments : undefined;
+  }
   deliver(state) {
     const waiter = state.waiter;
     if (!waiter) return;
@@ -43,7 +55,7 @@ class AgentExchange {
         : {
             ok: true,
             accepted: true,
-            next: materializeAttachments(state.next),
+            next: state.attachments.materialize(state.next),
           };
       if (!state.terminal) state.next = response.next;
     } catch {
@@ -108,7 +120,7 @@ class AgentExchange {
         params: { id, decision },
         timeoutMs: 10000,
       });
-      if (previous && state.waiter?.id === id) {
+      if (previous && !state.terminal && state.waiter?.id === id) {
         const waiter = state.waiter;
         state.waiter = null;
         clearTimeout(waiter.timer);
@@ -134,11 +146,13 @@ class AgentExchange {
     const state = this.states.get(endpointId);
     if (!state || state.taskId !== taskId) return;
     state.terminal = status;
+    state.attachments.close();
     if (state.waiter) this.deliver(state);
   }
   disconnected(endpointId) {
     const state = this.states.get(endpointId);
     this.states.delete(endpointId);
+    state?.attachments.close();
     if (state?.waiter) {
       clearTimeout(state.waiter.timer);
       state.waiter.resolve({

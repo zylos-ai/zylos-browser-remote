@@ -233,6 +233,16 @@ test("opaque decision contract travels through C4, attachments stay on Agent hos
     }),
   );
   await waitFor(() => relay.monitor.runs[0].status === "delivered");
+  for (const file of [
+    envelope.message.content[1].path,
+    attachment.path,
+    JSON.parse(stdout).next.execution.observation.file.path,
+  ])
+    assert.equal(
+      fs.existsSync(file),
+      false,
+      "completed task releases all attachment files",
+    );
   assert.equal(
     relay.monitor.runs[0].steps.filter((step) => step.kind === "command")
       .length,

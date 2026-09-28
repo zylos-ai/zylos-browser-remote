@@ -114,10 +114,15 @@ reload interrupt unfinished turns; actions are not automatically replayed.
 Image and file blocks contain `mimeType` and Base64 `data` on the wire. Remote
 materializes them on the Agent host and replaces `data` with `path`, `bytes` and
 `imageReadRequired:true` or `fileReadRequired:true`. Read the resource using the
-Agent's image or file tools; JSON metadata alone is not its content. Separate
+Agent's image or file tools; JSON metadata alone is not its content. PNG, JPEG,
+WebP and GIF use image blocks; other formats (including SVG/HEIC) use file blocks.
+Uploaded files retain safe filename suffixes for format-specific readers. Separate
 Agent containers need shared filesystem access. `BROWSER_REMOTE_OBS_DIR` selects
-the directory. Files older than 24 hours are cleaned up on new writes; the
-128 MiB store limit rejects new writes instead of deleting active-task files.
+the temporary directory. Files remain available across the current task's rounds
+and are deleted when the task ends, stops, disconnects, or the service shuts down.
+Read needed resources before ending the task; a later task needs a new upload.
+There is no startup, scheduled or age-based cleanup. The 128 MiB store limit rejects new writes
+instead of deleting active-task files.
 
 ## Operations
 

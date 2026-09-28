@@ -1,8 +1,22 @@
 "use strict";
-const { test } = require("node:test");
+const { test, after } = require("node:test");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "br-exchange-attachments-"));
+process.env.BROWSER_REMOTE_OBS_DIR = dir;
+after(() => fs.rmSync(dir, { recursive: true, force: true }));
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const { AgentExchange } = require("../src/lib/agent-exchange");
+const file = {
+  type: "file",
+  id: "f1",
+  name: "input.txt",
+  mimeType: "text/plain",
+  bytes: 2,
+  data: "aGk=",
+};
 const message = (id, round = 1, taskId = "task") => ({
   endpointId: "aaaaaaaaaaaa",
   chatId: taskId,
@@ -105,3 +119,56 @@ test("a stopped task returns its terminal status and cannot leak the next task s
   assert.equal((await pending).status, "stopped");
   assert.equal(exchange.ingest(message("new", 1, "new-task")), false);
 });
+
+for (const status of ["done", "blocked", "stopped", "interrupted"])
+  test(`${status} releases every round's files but preserves another browser's task`, async (t) => {
+    const { ext, exchange } = setup(t);
+    const initial = exchange.attachmentsFor(message("r1")).materialize(file);
+    const otherMessage = { ...message("other"), endpointId: "bbbbbbbbbbbb" };
+    exchange.ingest(otherMessage);
+    const other = exchange.attachmentsFor(otherMessage).materialize(file);
+    ext.request = async () => {
+      const next = message("r2", 2);
+      next.request.execution = { screenshot: file };
+      exchange.ingest(next);
+    };
+    const response = await exchange.respond("aaaaaaaaaaaa", "r1", {});
+    const second = response.next.execution.screenshot;
+    assert.ok(fs.existsSync(initial.path) && fs.existsSync(second.path));
+    // A stale end event must not delete another task's files.
+    ext.emit("agent-turn-end", {
+      endpointId: "aaaaaaaaaaaa",
+      taskId: "old-task",
+      status,
+    });
+    assert.equal(fs.existsSync(initial.path), true);
+    ext.emit("agent-turn-end", {
+      endpointId: "aaaaaaaaaaaa",
+      taskId: "task",
+      status,
+    });
+    assert.equal(fs.existsSync(initial.path), false);
+    assert.equal(fs.existsSync(second.path), false);
+    assert.equal(fs.existsSync(other.path), true);
+    ext.request = async () => ({ accepted: true });
+    const retry = await exchange.respond("aaaaaaaaaaaa", "r1", {});
+    assert.equal(
+      retry.finished,
+      true,
+      "terminal retries cannot return deleted image paths",
+    );
+    assert.equal(retry.next, undefined);
+  });
+
+for (const action of ["disconnect", "replace", "shutdown"])
+  test(`${action} cleans up files and prevents a pending intake from recreating them`, (t) => {
+    const { ext, exchange } = setup(t);
+    const scope = exchange.attachmentsFor(message("r1"));
+    const saved = scope.materialize(file);
+    if (action === "disconnect") ext.emit("disconnected", "aaaaaaaaaaaa");
+    else if (action === "replace")
+      exchange.ingest(message("new", 1, "new-task"));
+    else exchange.close();
+    assert.equal(fs.existsSync(saved.path), false);
+    assert.throws(() => scope.materialize(file), /task has ended/);
+  });
