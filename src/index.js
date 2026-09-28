@@ -1,19 +1,20 @@
-"use strict";
 // One process: authenticated extension ingress and private Agent decision HTTP.
-const os = require("os");
-const path = require("path");
-const { spawn } = require("child_process");
-const { ExtLane } = require("./lib/ext-lane");
-const { AgentLane } = require("./lib/agent-lane");
-const { loadKeys, keysFile } = require("./lib/keys");
-const { Monitor } = require("./lib/monitor");
-const { AgentTrace } = require("./lib/agent-trace");
-const { AgentActivity } = require("./lib/agent-activity");
-const { materializeAttachments } = require("../scripts/attachments");
-const { AgentExchange } = require("./lib/agent-exchange");
-const { replyCommands } = require("../scripts/reply-route");
-const { interruptAgent } = require("./lib/agent-interrupt");
-const { setting } = require("./lib/config");
+import os from "os";
+import path from "path";
+import { realpathSync } from "fs";
+import { fileURLToPath } from "url";
+import { spawn } from "child_process";
+import { ExtLane } from "./lib/ext-lane.js";
+import { AgentLane } from "./lib/agent-lane.js";
+import { loadKeys, keysFile } from "./lib/keys.js";
+import { Monitor } from "./lib/monitor.js";
+import { AgentTrace } from "./lib/agent-trace.js";
+import { AgentActivity } from "./lib/agent-activity.js";
+import { materializeAttachments } from "../scripts/attachments.js";
+import { AgentExchange } from "./lib/agent-exchange.js";
+import { replyCommands } from "../scripts/reply-route.js";
+import { interruptAgent } from "./lib/agent-interrupt.js";
+import { setting } from "./lib/config.js";
 
 // Environment-only by design: SKILL.md `http_routes` proxies Caddy to
 // 127.0.0.1:3802 and every CLI client in scripts/ dials the agent lane, so a
@@ -397,13 +398,38 @@ function main() {
   });
 }
 
-if (require.main === module) {
+// "Was this file the process entry point?" -- deliberately NOT the textbook
+// `import.meta.url === pathToFileURL(process.argv[1]).href`.
+//
+// pm2 7.x decides ESM-vs-CommonJS by walking up to the nearest package.json and
+// reading "type". Now that ours says "module", pm2 loads this file with a
+// dynamic import() from inside its own wrapper -- and under import() the
+// wrapper, not this file, is what argv[1] names. The textbook check is
+// therefore permanently false in the only deployment that matters: the service
+// would come up, report healthy, log nothing, and never start a listener.
+// pm_exec_path is the entry pm2 was actually asked to run, so it comes first.
+//
+// Both sides go through realpath because the path pm2 was given and the path
+// this module resolves to can differ by a symlink (they do on the deployed
+// volume), and a string compare would quietly say "not main" again.
+function isMainModule() {
+  const entry = process.env.pm_exec_path || process.argv[1];
+  if (!entry) return false;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
   main();
 }
 
-module.exports = {
+export {
   main,
   start,
+  isMainModule,
   deliverRequestToC4,
   c4ReceivePath,
   DEFAULT_C4_RECEIVE,

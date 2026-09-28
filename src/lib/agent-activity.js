@@ -1,9 +1,8 @@
-"use strict";
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { randomUUID } = require("node:crypto");
-const { AgentTrace, RolloutSession } = require("./agent-trace");
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { AgentTrace, RolloutSession } from "./agent-trace.js";
 const CAPABILITY = "agent-activity-v1";
 
 // Only fixed categories and allowlisted executable names cross the wire. Never
@@ -362,4 +361,4 @@ class AgentActivity {
     this.sessions.clear();
   }
 }
-module.exports = { AgentActivity, ActivitySession, CAPABILITY, describeTool };
+export { AgentActivity, ActivitySession, CAPABILITY, describeTool };

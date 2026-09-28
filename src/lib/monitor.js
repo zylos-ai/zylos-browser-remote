@@ -1,10 +1,13 @@
-"use strict";
 
 // Optional local diagnostics. Capturing a trace must never decide whether a
 // browser command runs, or persist raw screenshots / connection credentials.
-const fs = require("node:fs");
-const path = require("node:path");
-const crypto = require("node:crypto");
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
+
+// Asset paths are relative to this file; __dirname is not defined under ESM.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const MAX_RUNS = 60;
 const MAX_STEPS = 120;
@@ -15,7 +18,7 @@ const ASSETS = {
   "/monitor/app.js": ["app.js", "text/javascript; charset=utf-8"],
   "/monitor/styles.css": ["styles.css", "text/css; charset=utf-8"],
 };
-const { normalizeKey, SECRET_SUFFIX } = require("./monitor-input");
+import { normalizeKey, SECRET_SUFFIX } from "./monitor-input.js";
 
 // Same normalize-then-match strategy as monitor-input, so api_key, access_token
 // and headers["X-API-Key"] are covered rather than only the exact spellings.
@@ -448,4 +451,4 @@ class Monitor {
   }
 }
 
-module.exports = { Monitor, summarize, MAX_RUNS, MAX_STEPS };
+export { Monitor, summarize, MAX_RUNS, MAX_STEPS };

@@ -1,13 +1,12 @@
-"use strict";
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { spawnSync } = require("node:child_process");
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "remote-cli-"));
 process.env.BROWSER_REMOTE_OBS_DIR = path.join(dir, "images");
-const { materializeImages } = require("../scripts/attachments");
-const { verifyKey, loadKeys } = require("../src/lib/keys");
+import { materializeImages } from "../scripts/attachments.js";
+import { verifyKey, loadKeys } from "../src/lib/keys.js";
 try {
   const file = path.join(dir, "keys.json");
   const run = (args) =>

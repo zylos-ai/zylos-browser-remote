@@ -1,18 +1,17 @@
-"use strict";
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { execFileSync } = require("node:child_process");
-const { Monitor, MAX_STEPS } = require("../src/lib/monitor");
-const {
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { Monitor, MAX_STEPS } from "../src/lib/monitor.js";
+import {
   AgentTrace,
   RolloutSession,
   inputSummary,
   outputSummary,
-} = require("../src/lib/agent-trace");
-const { inputDetails, MAX_INPUT_BYTES } = require("../src/lib/monitor-input");
+} from "../src/lib/agent-trace.js";
+import { inputDetails, MAX_INPUT_BYTES } from "../src/lib/monitor-input.js";
 const endpoint = "a".repeat(12) + ".12345678-1234-4567-89ab-123456789abc";
 const event = (at, type, payload) => ({
   timestamp: new Date(at).toISOString(),

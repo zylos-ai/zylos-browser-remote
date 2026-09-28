@@ -16,9 +16,9 @@
  * CommonJS on purpose: package.json declares "type": "commonjs".
  */
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+import fs from "fs";
+import path from "path";
+import os from "os";
 
 const DATA_DIR = path.join(os.homedir(), 'zylos/components/browser-remote');
 const DIRS = [DATA_DIR, path.join(DATA_DIR, 'logs'), path.join(DATA_DIR, 'observations')];

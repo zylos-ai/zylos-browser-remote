@@ -1,13 +1,12 @@
-"use strict";
 
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { once } = require("node:events");
-const WebSocket = require("ws");
-const { start, deliverRequestToC4 } = require("../src/index");
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { once } from "node:events";
+import WebSocket from "ws";
+import { start, deliverRequestToC4 } from "../src/index.js";
 
 test("C4 queue receipts distinguish accepted, unavailable, failed and uncertain delivery", async (t) => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "br-delivery-"));

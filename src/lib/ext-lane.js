@@ -1,4 +1,3 @@
-"use strict";
 /*
  * Extension lane -- :3802, the ONLY publicly reachable surface.
  *
@@ -19,17 +18,17 @@
  * heartbeat, and bounding the chat envelope.
  */
 
-const http = require("http");
-const { EventEmitter } = require("events");
-const { WebSocketServer } = require("ws");
-const { verifyKey, loadKeys } = require("./keys");
-const { ATTACHMENT_CAPABILITY } = require("../../scripts/attachments");
-const { INTERRUPT_CAPABILITY } = require("./agent-interrupt");
-const {
+import http from "http";
+import { EventEmitter } from "events";
+import { WebSocketServer } from "ws";
+import { verifyKey, loadKeys } from "./keys.js";
+import { ATTACHMENT_CAPABILITY } from "../../scripts/attachments.js";
+import { INTERRUPT_CAPABILITY } from "./agent-interrupt.js";
+import {
   AGENT_MESSAGE_CAPABILITY,
   normalizeAgentRequest,
   messageText,
-} = require("./agent-message");
+} from "./agent-message.js";
 
 // `ws.close()` can throw when the socket is already torn down. Every call site
 // below runs inside a `message`/`connection` handler, where a throw escapes into
@@ -46,11 +45,11 @@ function safeClose(ws, code, reason) {
 
 const SUBPROTOCOL = "zylos-browser-remote.v3";
 const LEGACY_SUBPROTOCOL = "zylos-browser-remote.v2";
-const {
+import {
   BROWSER_ID_RE,
   ENDPOINT_RE,
   INSTANCE_CAPABILITY,
-} = require("./endpoint");
+} from "./endpoint.js";
 const HANDSHAKE_MS = 10000;
 const MAX_CONNECTIONS_PER_KEY = 32;
 const KEY_PROTO_PREFIX = "key.";
@@ -620,7 +619,7 @@ function clampTimeout(ms) {
   return Math.min(Math.max(Math.floor(n), 1000), MAX_COMMAND_TIMEOUT_MS);
 }
 
-module.exports = {
+export {
   ExtLane,
   SUBPROTOCOL,
   LEGACY_SUBPROTOCOL,

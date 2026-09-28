@@ -1,4 +1,3 @@
-"use strict";
 
 const AGENT_MESSAGE_CAPABILITY = "agent-message-v2";
 const record = (v) => !!v && typeof v === "object" && !Array.isArray(v);
@@ -147,8 +146,4 @@ function normalizeAgentRequest(input) {
     execution: msg.execution,
   };
 }
-module.exports = {
-  AGENT_MESSAGE_CAPABILITY,
-  normalizeAgentRequest,
-  messageText,
-};
+export { AGENT_MESSAGE_CAPABILITY, normalizeAgentRequest, messageText };

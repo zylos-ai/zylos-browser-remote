@@ -1,14 +1,13 @@
-"use strict";
-const { test, after } = require("node:test");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
+import { test, after } from "node:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "br-exchange-attachments-"));
 process.env.BROWSER_REMOTE_OBS_DIR = dir;
 after(() => fs.rmSync(dir, { recursive: true, force: true }));
-const assert = require("node:assert/strict");
-const { EventEmitter } = require("node:events");
-const { AgentExchange } = require("../src/lib/agent-exchange");
+import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import { AgentExchange } from "../src/lib/agent-exchange.js";
 const file = {
   type: "file",
   id: "f1",

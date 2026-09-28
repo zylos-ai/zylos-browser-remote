@@ -1,4 +1,3 @@
-"use strict";
 // Component configuration: ~/zylos/components/browser-remote/config.json
 //
 // Resolution order for every setting, highest first:
@@ -14,19 +13,25 @@
 // Two families are deliberately NOT settable here -- see PORTS_ARE_ENV_ONLY
 // and MONITOR_IS_ENV_ONLY below.
 //
-// CommonJS on purpose: package.json declares "type": "commonjs".
+// ESM: package.json declares "type": "module". The data-directory paths are
+// therefore resolved lazily rather than at module load -- see dataDir() below.
 
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
+import fs from "fs";
+import os from "os";
+import path from "path";
 
-const DATA_DIR = path.join(
-  os.homedir(),
-  "zylos",
-  "components",
-  "browser-remote",
-);
-const CONFIG_PATH = path.join(DATA_DIR, "config.json");
+// Resolved on every call, never memoised at module load. Under CommonJS the
+// tests forced a re-resolution by deleting require.cache and re-requiring this
+// module; ESM has no such escape hatch, and a module is evaluated exactly once
+// per process. Computing the paths lazily keeps HOME swappable, so a test only
+// has to call resetConfigCache() to get a clean read against a fresh HOME.
+function dataDir() {
+  return path.join(os.homedir(), "zylos", "components", "browser-remote");
+}
+
+function configPath() {
+  return path.join(dataDir(), "config.json");
+}
 
 // The extension port is baked into SKILL.md `http_routes` (Caddy proxies to
 // 127.0.0.1:3802) and the agent port is baked into every CLI client in
@@ -78,12 +83,13 @@ function warn(message) {
  */
 function loadConfig() {
   const config = { ...DEFAULT_CONFIG };
+  const file = configPath();
   let raw;
   try {
-    raw = fs.readFileSync(CONFIG_PATH, "utf8");
+    raw = fs.readFileSync(file, "utf8");
   } catch (err) {
     if (err.code !== "ENOENT") {
-      warn(`cannot read ${CONFIG_PATH} (${err.message}); using defaults`);
+      warn(`cannot read ${file} (${err.message}); using defaults`);
     }
     cached = config;
     return cached;
@@ -93,13 +99,13 @@ function loadConfig() {
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    warn(`${CONFIG_PATH} is not valid JSON (${err.message}); using defaults`);
+    warn(`${file} is not valid JSON (${err.message}); using defaults`);
     cached = config;
     return cached;
   }
 
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    warn(`${CONFIG_PATH} must contain a JSON object; using defaults`);
+    warn(`${file} must contain a JSON object; using defaults`);
     cached = config;
     return cached;
   }
@@ -153,9 +159,9 @@ function setting(name) {
   return getConfig()[name];
 }
 
-module.exports = {
-  DATA_DIR,
-  CONFIG_PATH,
+export {
+  dataDir,
+  configPath,
   DEFAULT_CONFIG,
   SETTINGS,
   PORTS_ARE_ENV_ONLY,

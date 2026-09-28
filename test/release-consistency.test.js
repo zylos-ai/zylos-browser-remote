@@ -1,12 +1,13 @@
-"use strict";
-// CommonJS on purpose: package.json declares "type": "commonjs". The upstream
-// component template ships this gate as ESM; the logic below is unchanged, only
-// the module system and the __dirname derivation differ.
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const test = require("node:test");
+// Matches the upstream component template: ESM, with __dirname derived from
+// import.meta.url. fileURLToPath rather than import.meta.dirname, which needs
+// Node 20.11 while package.json engines says >=20.0.0.
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 
 // Release rule (AGENTS.md, "Release Process"): a release bumps four files in

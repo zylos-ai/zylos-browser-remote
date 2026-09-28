@@ -1,15 +1,14 @@
-"use strict";
-const { ENDPOINT_SOURCE } = require("./endpoint");
+import { ENDPOINT_SOURCE } from "./endpoint.js";
 
 // Read-only adapter for the Zylos Codex CLI rollout. Never execute log content,
 // copy reasoning, or expose unredacted credentials / raw tool output.
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { execFile } = require("node:child_process");
-const { promisify } = require("node:util");
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
-const { inputDetails } = require("./monitor-input");
+import { inputDetails } from "./monitor-input.js";
 const isExec = (name) => /(?:^|\.)exec_command$/.test(name);
 const READ_BYTES = 1024 * 1024;
 const MAX_LINE_BYTES = 4 * READ_BYTES;
@@ -436,4 +435,4 @@ class AgentTrace {
   }
 }
 
-module.exports = { AgentTrace, RolloutSession, inputSummary, outputSummary };
+export { AgentTrace, RolloutSession, inputSummary, outputSummary };

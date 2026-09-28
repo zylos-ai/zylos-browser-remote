@@ -1,23 +1,31 @@
-"use strict";
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
-const crypto = require("crypto");
+import fs from "fs";
+import os from "os";
+import path from "path";
+import crypto from "crypto";
 
 const ATTACHMENT_CAPABILITY = "attachments-v1";
 const MAX_BYTES = 5_250_000; // Matches the client: 7 MB base64 below the 8 MiB frame cap.
 const MAX_ITEMS = 12; // Includes generated screenshots as well as owner attachments.
 const STORE_BYTES = 128 * 1024 * 1024;
-const OBS_DIR = path.resolve(
-  process.env.BROWSER_REMOTE_OBS_DIR ||
-    path.join(
-      os.homedir(),
-      "zylos",
-      "components",
-      "browser-remote",
-      "observations",
-    ),
-);
+// Resolved per call, never memoised at module load. Under CommonJS a test could
+// set BROWSER_REMOTE_OBS_DIR in a top-level statement placed above its
+// require()s and be sure the assignment ran first. ESM evaluates every import
+// before any statement in the importing module, so a load-time constant would
+// capture the real ~/zylos/components/browser-remote/observations no matter
+// where the test put the assignment -- and the suite would then read and prune
+// the live component's store instead of its own temp directory.
+function obsDir() {
+  return path.resolve(
+    process.env.BROWSER_REMOTE_OBS_DIR ||
+      path.join(
+        os.homedir(),
+        "zylos",
+        "components",
+        "browser-remote",
+        "observations",
+      ),
+  );
+}
 const materialized = new WeakSet();
 
 // A task owns its files across all decision rounds. Never accept cleanup paths
@@ -48,9 +56,10 @@ class AttachmentScope {
 
 // Capacity accounting only: files are deleted by their owning task.
 function storedAttachmentBytes() {
+  const dir = obsDir();
   let names;
   try {
-    names = fs.readdirSync(OBS_DIR);
+    names = fs.readdirSync(dir);
   } catch (error) {
     if (error.code === "ENOENT") return 0;
     throw error;
@@ -58,7 +67,7 @@ function storedAttachmentBytes() {
   let stored = 0;
   for (const name of names) {
     if (!/^(?:shot|attachment)-/.test(name)) continue;
-    const file = path.join(OBS_DIR, name);
+    const file = path.join(dir, name);
     let stat;
     try {
       stat = fs.lstatSync(file);
@@ -206,7 +215,8 @@ function materializeAttachments(result, scope) {
   if (total > MAX_BYTES)
     throw new Error("Attachments exceed the request size limit");
 
-  fs.mkdirSync(OBS_DIR, { recursive: true, mode: 0o700 });
+  const dir = obsDir();
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const stored = storedAttachmentBytes();
   if (stored + total > STORE_BYTES)
     throw new Error("Attachment storage is full");
@@ -214,7 +224,7 @@ function materializeAttachments(result, scope) {
   try {
     for (const item of binaries) {
       const file = path.join(
-        OBS_DIR,
+        dir,
         "attachment-" +
           Date.now() +
           "-" +
@@ -246,9 +256,9 @@ function materializeAttachments(result, scope) {
 }
 
 // Older callers and nested {mimeType,data} screenshots remain compatible.
-module.exports = {
+export {
   materializeAttachments,
-  materializeImages: materializeAttachments,
+  materializeAttachments as materializeImages,
   ATTACHMENT_CAPABILITY,
   AttachmentScope,
 };

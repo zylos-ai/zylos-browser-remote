@@ -1,12 +1,14 @@
-"use strict";
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { spawn, spawnSync, execFileSync } = require("node:child_process");
-const { once } = require("node:events");
-const { interruptAgent } = require("../src/lib/agent-interrupt");
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawn, spawnSync, execFileSync } from "node:child_process";
+import { once } from "node:events";
+import { interruptAgent } from "../src/lib/agent-interrupt.js";
+
+import { fileURLToPath } from "node:url";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 test("real C4 dispatcher delivers Escape to a disposable tmux runtime and expires undelivered controls", async (t) => {
   const core = path.resolve(

@@ -1,10 +1,14 @@
-"use strict";
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const vm = require("node:vm");
-const { EventEmitter } = require("node:events");
+// Timeout behaviour of the private agent-lane HTTP client.
+//
+// The client is built by a factory that takes its http/timer seams as
+// arguments, so these cases drive the module that actually ships. The previous
+// CommonJS version re-evaluated the file's source text inside a `vm` sandbox
+// with a fake `require`; that trick does not work on ESM source, and testing a
+// re-evaluated copy was never as strong as testing the real export.
+import test from "node:test";
+import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import { createClient } from "../scripts/relay-client.js";
 
 function clientFixture() {
   const requests = [];
@@ -20,27 +24,17 @@ function clientFixture() {
       return req;
     },
   };
-  const sandbox = {
-    require: (name) => {
-      assert.equal(name, "http");
-      return http;
-    },
-    module: { exports: {} },
-    process: { env: {} },
-    URL,
-    Buffer,
+  const client = createClient({
+    http,
+    base: "http://127.0.0.1:3803",
     setTimeout: (callback, ms) => {
       const timer = { callback, ms };
       timers.set(timer, timer);
       return timer;
     },
     clearTimeout: (timer) => timers.delete(timer),
-  };
-  vm.runInNewContext(
-    fs.readFileSync(path.join(__dirname, "../scripts/relay-client.js"), "utf8"),
-    sandbox,
-  );
-  return { client: sandbox.module.exports, requests, timers };
+  });
+  return { client, requests, timers };
 }
 
 test("HTTP waits are bounded and an ambiguous timeout never resends the reply", async () => {

@@ -1,9 +1,8 @@
-"use strict";
-const assert = require("node:assert/strict");
-const { once } = require("node:events");
-const WebSocket = require("ws");
-const { start } = require("../src/index");
-const { keyIdOf, digest, verifyKey } = require("../src/lib/keys");
+import assert from "node:assert/strict";
+import { once } from "node:events";
+import WebSocket from "ws";
+import { start } from "../src/index.js";
+import { keyIdOf, digest, verifyKey } from "../src/lib/keys.js";
 const key = "ab".repeat(32),
   endpoint = keyIdOf(key);
 process.env.BROWSER_REMOTE_KEY = key;

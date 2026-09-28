@@ -10,7 +10,7 @@
  *   node scripts/key.js revoke <keyId>
  */
 
-const { newKey, listKeys, revokeKey, keysFile } = require('../src/lib/keys');
+import { newKey, listKeys, revokeKey, keysFile } from "../src/lib/keys.js";
 
 const [cmd, ...rest] = process.argv.slice(2);
 

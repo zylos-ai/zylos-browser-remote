@@ -1,13 +1,12 @@
-"use strict";
 
 // Regressions for the 2026-09-23 read-only audit. Each test reproduces the
 // reported failure first, so a revert of the fix fails here rather than in
 // production.
 
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
-const { ExtLane } = require("../src/lib/ext-lane");
-const { summarize } = require("../src/lib/monitor");
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { ExtLane } from "../src/lib/ext-lane.js";
+import { summarize } from "../src/lib/monitor.js";
 
 // A socket stand-in: records close/terminate instead of moving real bytes.
 function fakeSocket() {

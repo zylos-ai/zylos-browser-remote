@@ -1,5 +1,4 @@
-"use strict";
-const { ENDPOINT_SOURCE, ENDPOINT_RE } = require("../src/lib/endpoint");
+import { ENDPOINT_SOURCE, ENDPOINT_RE } from "../src/lib/endpoint.js";
 
 // Transport addresses only: browser actions and completion remain extension-owned.
 function replyCommands(endpoint, id) {
@@ -26,4 +25,4 @@ function parseReplyEndpoint(value) {
   return { endpoint: match[1], id: match[2], status: match[3] };
 }
 
-module.exports = { replyCommands, parseReplyEndpoint };
+export { replyCommands, parseReplyEndpoint };

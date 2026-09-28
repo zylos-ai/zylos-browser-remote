@@ -1,4 +1,3 @@
-'use strict';
 
 // Display-only copies. These strings are never used to execute a command.
 const MAX_INPUT_BYTES = 16 * 1024;
@@ -79,4 +78,4 @@ function inputDetails(input) {
   return { json, originalBytes: Buffer.byteLength(original), redacted, truncated };
 }
 
-module.exports = { inputDetails, MAX_INPUT_BYTES, normalizeKey, SECRET_SUFFIX };
+export { inputDetails, MAX_INPUT_BYTES, normalizeKey, SECRET_SUFFIX };

@@ -2,8 +2,8 @@
 "use strict";
 
 // C4 calls channel send scripts with [endpoint, message]. No browser logic here.
-const client = require("./relay-client");
-const { parseReplyEndpoint } = require("./reply-route");
+import client from "./relay-client.js";
+import { parseReplyEndpoint } from "./reply-route.js";
 
 async function main() {
   const [target, message, ...extra] = process.argv.slice(2);
