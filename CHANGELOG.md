@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-09-28
+
+Ships alongside Zylos Browser Extension 0.15.5 with arbitrary file uploads and
+attachments that live only for the current browser task.
+
+### Added
+
+- Non-previewable images such as SVG and HEIC can travel as file attachments.
+  Documents, spreadsheets, archives and source files preserve safe filename
+  suffixes for Agent readers; original bytes remain unchanged.
+
+### Changed
+
+- Files belong to one browser endpoint and task across all decision rounds.
+  Completion, stop, interruption, disconnect and orderly shutdown remove that
+  task's temporary files without affecting other browsers.
+- Confirmed intake failures also release attachments. Uncertain delivery keeps
+  them until the task ends; closed tasks cannot create late files.
+- Removed age-based cleanup. There is no startup sweep or periodic cleanup;
+  the existing 128 MiB capacity limit still rejects new writes when full.
+- Retrying a finished decision returns its terminal result instead of stale
+  paths to files that have already been deleted.
+
+### Upgrade notes
+
+Update Remote before reloading Extension 0.15.5. Existing keys, ports and message
+frames stay compatible. A later task that needs an original attachment must
+upload it again. File transport does not guarantee an Agent reader for every
+format.
+
 ## [0.8.0] - 2026-09-23
 
 Adds live Agent activity to the browser panel. While a task is running the
@@ -119,6 +149,7 @@ browser rather than the one socket involved.
 29 tests, 28 pass / 1 skip.
 
 ### Fixed
+
 - `ws.close()` is now called through a guarded `safeClose()` helper everywhere
   in `src/lib/ext-lane.js`, matching the style `_beat()` and `close()` already
   used. `close()` throws on a socket that is already torn down, and every one
@@ -138,7 +169,7 @@ was both the credential and the route, so a second browser connecting with the
 same Key evicted the first. The route is now `endpointId = keyId.browserId`,
 where `browserId` is a UUID v4 the plugin generates once per installation and
 persists in `chrome.storage.local`. Instances coexist; only a reconnect of the
-*same* instance replaces its own socket.
+_same_ instance replaces its own socket.
 
 This isolates **browser routing only**. The Agent's conversation context and
 memory stay shared across every instance under the Key — two different people
@@ -147,6 +178,7 @@ sharing one Key still share a context, and should be issued two Keys instead.
 28 tests, 27 pass / 1 skip.
 
 ### Added
+
 - `src/lib/endpoint.js` — the `browserId` / `endpointId` grammar, shared by the
   WebSocket lane, the HTTP lane, the CLIs, C4 reply routes and trace parsing.
 - `browser-instance-v1` capability and WebSocket subprotocol
@@ -158,6 +190,7 @@ sharing one Key still share a context, and should be issued two Keys instead.
   limits and handshake validation.
 
 ### Changed
+
 - Identity is fixed by the authenticated socket at handshake and is immutable
   for that socket's lifetime; routing metadata sent in later frames is ignored.
 - Close code `4001` now means "this same instance was replaced", not "another
@@ -167,6 +200,7 @@ sharing one Key still share a context, and should be issued two Keys instead.
   `agent-trace` and the monitor report per instance.
 
 ### Upgrade Notes
+
 **Upgrade Remote before the plugin.** New plugins offer only v3, and an old
 Remote rejects them outright — there is no downgrade path. During rollout this
 Remote still accepts v2 plugins on the separate bare-`keyId` route, so an
@@ -189,6 +223,7 @@ No relay, extension-protocol, or CLI behavior changes. Same 24 tests, same
 23 pass / 1 skip, before and after.
 
 ### Changed
+
 - `relay/server.js` → `src/index.js`; the other seven modules
   (`agent-exchange`, `agent-lane`, `agent-trace`, `ext-lane`, `keys`,
   `monitor-input`, `monitor`) → `src/lib/`. The 0.4.0 shim is deleted — after
@@ -206,6 +241,7 @@ No relay, extension-protocol, or CLI behavior changes. Same 24 tests, same
   caught by the monitor test, not by module loading.
 
 ### Upgrade Notes
+
 Ports (3802 extension lane / 3803 agent lane), data directory layout, wire
 protocol and `keys.json` are unchanged; no re-pairing.
 
@@ -231,6 +267,7 @@ function so a second entry point can reach it; the block's contents and its
 `require.main === module` trigger are unchanged.
 
 ### Added
+
 - `hooks/post-install.js` — creates the data directory, `logs/` (which
   `ecosystem.config.cjs` already pointed `error_file`/`out_file` into) and
   `observations/`, all 0700. Does not mint a connection key; keys are issued
@@ -254,6 +291,7 @@ function so a second entry point can reach it; the block's contents and its
   de-registers the service silently at the next container restart.
 
 ### Changed
+
 - Unit tests moved from `tools/*.test.js` to `test/*.test.js` to match the
   spec layout and the `zylos-lark` reference component; `npm test` updated to
   match. `tools/smoke.js` and `tools/test-cli.js` stay in `tools/` — they are
@@ -263,12 +301,14 @@ function so a second entry point can reach it; the block's contents and its
   now matches this release.
 
 ### Changed (continued)
+
 - `package.json` `main`/`start` and `SKILL.md` `entry` now point at
   `src/index.js`. `ecosystem.config.cjs` intentionally still launches
   `relay/server.js` directly — that is the path that has been running in
   production, and the shim adds nothing to it.
 
 ### Known gaps
+
 - The implementation modules live in `relay/` rather than the spec's
   `src/lib/`. The declared entry point is now spec-shaped, but the tree
   below it is not. Moving those files is safe in principle — nothing outside
@@ -276,6 +316,7 @@ function so a second entry point can reach it; the block's contents and its
   visible benefit, so it is left for a later release.
 
 ### Upgrade Notes
+
 Existing hand-installed deployments need no action. The service entry, ports
 (3802 extension lane / 3803 agent lane), data directory layout and wire
 protocol are unchanged, and `keys.json` is preserved across upgrades — no
