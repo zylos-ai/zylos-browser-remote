@@ -13,7 +13,9 @@
  *    connection secrets and observations/ holds captured page content, so
  *    tighten anything left permissive.
  *
- * CommonJS on purpose: package.json declares "type": "commonjs".
+ * ESM: package.json declares "type": "module". Core runs this hook as its own
+ * child process, never by importing it, so the module system here is free to
+ * match the rest of the repository.
  */
 
 import fs from "fs";

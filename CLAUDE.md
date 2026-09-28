@@ -12,7 +12,9 @@ Two non-negotiables:
   machine-enforces the resulting final-tree version consistency; the
   PR/commit discipline itself is guaranteed by the release flow and review
   gate.
-- **CommonJS** — this repository is `"type": "commonjs"` throughout, a
-  deliberate deviation from the Zylos component template. Do not introduce
-  ESM syntax in new files, and do not "fix" the module system as a side
-  effect of an unrelated change; see AGENTS.md, "Open: ESM migration".
+- **ESM** — this repository is `"type": "module"` throughout, matching the
+  Zylos component template. Do not introduce `require()`/`module.exports` in
+  new files. Three ESM traps here fail *silently* rather than failing a test
+  — the PM2 entry-point check, data-directory paths resolved at module load,
+  and tests that expect to re-import a module to reset it. Read AGENTS.md,
+  "ESM: three rules that are not optional", before touching any of them.
