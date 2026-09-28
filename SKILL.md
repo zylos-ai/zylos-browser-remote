@@ -22,9 +22,37 @@ lifecycle:
   preserve:
     - keys.json
     - observations/
+    - config.json
+
+# The extension lane is the ONLY public surface. Caddy strips the prefix, so
+# the lane receives its single internal path, /ext, and refuses everything
+# else itself. The agent lane (:3803) is loopback-only and must never be
+# routed publicly. See docs/DESIGN.md §5.
+http_routes:
+  - path: /browser-remote/*
+    type: reverse_proxy
+    target: 127.0.0.1:3802
+    strip_prefix: /browser-remote
+
 upgrade:
   repo: zylos-ai/zylos-browser-remote
   branch: main
+
+# No config.required: the component needs nothing collected at install time.
+# Connection keys are credentials minted by scripts/key.js, not configuration.
+# The one optional item below is read from config.json when present; the file
+# is never created empty, and the environment variable outranks it so pm2 and
+# one-off shell runs can still override a file they cannot see.
+# The ports and the debug trace are deliberately environment-only -- see
+# PORTS_ARE_ENV_ONLY and MONITOR_IS_ENV_ONLY in src/lib/config.js.
+config:
+  optional:
+    - name: activityEnabled
+      description: >-
+        Stream agent activity to connected panels. false stops the live run
+        feed; panels keep working. Env override: BROWSER_REMOTE_ACTIVITY
+        (any value other than "0" enables).
+      default: true
 dependencies:
   - comm-bridge
 ---

@@ -13,7 +13,12 @@ const { materializeAttachments } = require("../scripts/attachments");
 const { AgentExchange } = require("./lib/agent-exchange");
 const { replyCommands } = require("../scripts/reply-route");
 const { interruptAgent } = require("./lib/agent-interrupt");
+const { setting } = require("./lib/config");
 
+// Environment-only by design: SKILL.md `http_routes` proxies Caddy to
+// 127.0.0.1:3802 and every CLI client in scripts/ dials the agent lane, so a
+// port that lived in config.json could move the listener while leaving both
+// of those pointing at the old one. See src/lib/config.js.
 const EXT_PORT = Number(process.env.BROWSER_REMOTE_EXT_PORT || 3802);
 const AGENT_PORT = Number(process.env.BROWSER_REMOTE_AGENT_PORT || 3803);
 const EXT_BIND = "127.0.0.1"; // Caddy reaches it on loopback; nothing else should
@@ -183,12 +188,18 @@ function start({
   agentPort = AGENT_PORT,
   onRequest = deliverRequestToC4,
   onStop = (event) => interruptAgent(event, log),
+  // The debug trace stays environment-only: ecosystem.config.cjs pins
+  // BROWSER_REMOTE_MONITOR=0 on every deployment, so a config.json switch for
+  // it could never take effect there. See MONITOR_IS_ENV_ONLY in lib/config.js.
   monitor = process.env.BROWSER_REMOTE_MONITOR === "1",
   monitorFile = process.env.BROWSER_REMOTE_MONITOR_FILE,
   agentMonitorDir = process.env.BROWSER_REMOTE_MONITOR_AGENT_DIR,
   agentTraceOptions,
   activityOptions,
-  activityEnabled = process.env.BROWSER_REMOTE_ACTIVITY !== "0",
+  // Environment first, then config.json, then the built-in default -- so an
+  // unset variable with no config file keeps the exact behaviour this line had
+  // when it read process.env directly.
+  activityEnabled = setting("activityEnabled"),
 } = {}) {
   const trace = monitor ? new Monitor({ file: monitorFile }) : null;
   const agentTrace =
