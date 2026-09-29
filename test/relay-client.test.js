@@ -43,7 +43,7 @@ function clientFixture() {
   return { client: sandbox.module.exports, requests, timers };
 }
 
-test("HTTP waits are bounded and an ambiguous timeout never resends the reply", async () => {
+test("decision connection/delivery is bounded and an ambiguous timeout never resends the reply", async () => {
   const s = clientFixture();
   const pending = s.client.decision({
     endpoint: "a".repeat(12),
@@ -52,29 +52,74 @@ test("HTTP waits are bounded and an ambiguous timeout never resends the reply", 
   });
   const rejected = assert.rejects(
     pending,
-    (e) => e.code === "RELAY_RESPONSE_TIMEOUT" && /unknown/.test(e.message),
+    (e) => e.code === "RELAY_REQUEST_TIMEOUT" && /unknown/.test(e.message),
   );
   const timer = [...s.timers.values()][0];
-  assert.equal(timer.ms, 125000);
+  assert.equal(timer.ms, 10000);
   timer.callback();
   await rejected;
   assert.equal(s.requests.length, 1);
   assert.equal(s.timers.size, 0);
 });
 
-test("Decision HTTP budget includes execution waiting and successful responses clear the timer", async () => {
+test("a sent decision waits without a deadline on the same HTTP request", async () => {
   const s = clientFixture();
   const pending = s.client.decision({
     endpoint: "a".repeat(12),
     id: "r1",
     decision: {},
   });
-  assert.equal([...s.timers.values()][0].ms, 125000);
+  assert.equal([...s.timers.values()][0].ms, 10000);
+  s.requests[0].emit("finish");
+  assert.equal(s.timers.size, 0);
+  let settled = false;
+  void pending.then(() => {
+    settled = true;
+  });
+  await Promise.resolve();
+  assert.equal(settled, false);
+  assert.equal(s.requests.length, 1);
   const response = new EventEmitter();
   response.statusCode = 200;
   s.requests[0].respond(response);
   response.emit("data", '{"ok":true,"result":{}}');
   response.emit("end");
   assert.equal((await pending).body.ok, true);
+  assert.equal(s.timers.size, 0);
+});
+
+test("status requests still time out after sending", async () => {
+  const s = clientFixture();
+  const pending = s.client.status();
+  const rejected = assert.rejects(
+    pending,
+    (e) => e.code === "RELAY_RESPONSE_TIMEOUT",
+  );
+  s.requests[0].emit("finish");
+  const timer = [...s.timers.values()][0];
+  assert.equal(timer.ms, 10000);
+  timer.callback();
+  await rejected;
+  assert.equal(s.requests.length, 1);
+  assert.equal(s.timers.size, 0);
+});
+
+test("a disconnected decision response rejects without submitting the decision again", async () => {
+  const s = clientFixture();
+  const pending = s.client.decision({
+    endpoint: "a".repeat(12),
+    id: "r1",
+    decision: {},
+  });
+  const rejected = assert.rejects(pending, (e) => e.code === "ECONNRESET");
+  s.requests[0].emit("finish");
+  const response = new EventEmitter();
+  s.requests[0].respond(response);
+  response.emit(
+    "error",
+    Object.assign(new Error("Connection closed"), { code: "ECONNRESET" }),
+  );
+  await rejected;
+  assert.equal(s.requests.length, 1);
   assert.equal(s.timers.size, 0);
 });

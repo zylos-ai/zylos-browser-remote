@@ -120,6 +120,52 @@ test("a stopped task returns its terminal status and cannot leak the next task s
   assert.equal(exchange.ingest(message("new", 1, "new-task")), false);
 });
 
+for (const outcome of ["next", "stopped", "disconnect", "replace", "shutdown"])
+  test(`long-running decisions keep waiting and release on ${outcome}`, async (t) => {
+    const { ext, exchange } = setup(t);
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    let calls = 0;
+    ext.request = async () => {
+      calls++;
+      return { accepted: true };
+    };
+    let settled = false;
+    const pending = exchange
+      .respond("aaaaaaaaaaaa", "r1", {})
+      .then((result) => {
+        settled = true;
+        return result;
+      });
+    t.mock.timers.tick(24 * 60 * 60 * 1000);
+    await new Promise(setImmediate);
+    assert.equal(settled, false);
+    assert.equal(calls, 1);
+    assert.equal(
+      (await exchange.respond("aaaaaaaaaaaa", "r1", {})).code,
+      "DECISION_BUSY",
+    );
+    if (outcome === "next") exchange.ingest(message("r2", 2));
+    else if (outcome === "stopped")
+      ext.emit("agent-turn-end", {
+        endpointId: "aaaaaaaaaaaa",
+        taskId: "task",
+        status: "stopped",
+      });
+    else if (outcome === "disconnect") ext.emit("disconnected", "aaaaaaaaaaaa");
+    else if (outcome === "replace")
+      exchange.ingest(message("new", 1, "new-task"));
+    else exchange.close();
+    const result = await pending;
+    if (outcome === "next") assert.equal(result.next.id, "r2");
+    else if (outcome === "stopped") assert.equal(result.status, "stopped");
+    else
+      assert.equal(
+        result.code,
+        outcome === "replace" ? "STALE_DECISION" : "EXT_OFFLINE",
+      );
+    assert.equal(calls, 1);
+  });
+
 for (const status of ["done", "blocked", "stopped", "interrupted"])
   test(`${status} releases every round's files but preserves another browser's task`, async (t) => {
     const { ext, exchange } = setup(t);

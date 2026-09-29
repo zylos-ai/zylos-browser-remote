@@ -94,9 +94,11 @@ and failures; a database row alone does not prove delivery. Identical retries do
 not display another reply in the extension while the receipt is retained.
 
 The extension performs browser input, observations and completion. Do not execute
-actions yourself or poll for state. Allow 125 seconds and enough output for the
-returned schema/state (roughly 12,000 tokens). Prefer an initial wait of at least
-10 seconds; if the shell yields a running process, wait on that same process.
+actions yourself or poll for state. Execution waits have no fixed deadline;
+do not impose a total command/task deadline. Allow enough output for the returned
+schema/state (roughly 12,000 tokens). Prefer an initial wait of at least 10 seconds;
+if the shell yields a running process, wait on that same process until a result
+or explicit stop/disconnect. The initial shell wait is not a task duration limit.
 
 `BAD_DECISION` permits correction for the pending ID. `STALE_DECISION` means the
 request ended or was cancelled. `DECISION_CONFLICT` means the ID already belongs

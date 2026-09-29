@@ -86,6 +86,28 @@ test("ambiguous layouts, cross-message references, repeated bodies and oversized
   ])
     assert.throws(() => normalizeAgentRequest({ ...request(), ...invalid }));
 });
+test("continuation rounds have no task cap but must be positive safe integers", () => {
+  const continuation = {
+    ...request(),
+    message: { id: "t1" },
+    context: { pages: [] },
+  };
+  for (const round of [30, 31, 1000, Number.MAX_SAFE_INTEGER])
+    assert.equal(
+      normalizeAgentRequest({ ...continuation, round }).round,
+      round,
+    );
+  for (const round of [
+    0,
+    -1,
+    1.5,
+    "31",
+    NaN,
+    Infinity,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])
+    assert.throws(() => normalizeAgentRequest({ ...continuation, round }));
+});
 test("older clients are normalized once at ingress including their selected passage", () => {
   const legacy = {
     id: "r1",

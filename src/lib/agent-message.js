@@ -59,9 +59,8 @@ function normalizeAgentRequest(input) {
   if (
     !validId(input.id) ||
     !validId(input.taskId) ||
-    !Number.isInteger(input.round) ||
-    input.round < 1 ||
-    input.round > 30
+    !Number.isSafeInteger(input.round) ||
+    input.round < 1
   )
     throw new Error("Invalid request identity");
   const msg = input.version === undefined ? upgradeLegacy(input) : input;
