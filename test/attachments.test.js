@@ -1,18 +1,17 @@
-"use strict";
-const { test, after } = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
+import { test, after } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "br-attachments-"));
 process.env.BROWSER_REMOTE_OBS_DIR = dir;
-const {
+import {
   materializeAttachments,
   materializeImages,
   AttachmentScope,
-} = require("../scripts/attachments");
-const { inputDetails } = require("../src/lib/monitor-input");
-const { deliverRequestToC4, start } = require("../src/index");
+} from "../scripts/attachments.js";
+import { inputDetails } from "../src/lib/monitor-input.js";
+import { deliverRequestToC4, start } from "../src/index.js";
 const file = {
   type: "file",
   id: "file-1",

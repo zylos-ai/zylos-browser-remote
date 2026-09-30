@@ -1,6 +1,5 @@
-"use strict";
 // Agent-host HTTP entry: decisions and read-only diagnostics.
-const http = require("http");
+import http from "http";
 
 const BIND = "127.0.0.1";
 const BODY_LIMIT_BYTES = 256 * 1024; // params can carry a selector list, not a screenshot
@@ -147,4 +146,4 @@ function readJson(req, limitBytes) {
   });
 }
 
-module.exports = { AgentLane, BIND, BODY_LIMIT_BYTES, RELAY_ERROR_STATUS };
+export { AgentLane, BIND, BODY_LIMIT_BYTES, RELAY_ERROR_STATUS };

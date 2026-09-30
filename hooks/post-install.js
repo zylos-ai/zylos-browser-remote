@@ -11,12 +11,14 @@
  * scripts/key.js and must never be generated automatically — an
  * unrequested key is a credential nobody asked for.
  *
- * CommonJS on purpose: package.json declares "type": "commonjs".
+ * ESM: package.json declares "type": "module". Core runs this hook as its own
+ * child process, never by importing it, so the module system here is free to
+ * match the rest of the repository.
  */
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+import fs from "fs";
+import path from "path";
+import os from "os";
 
 const DATA_DIR = path.join(os.homedir(), 'zylos/components/browser-remote');
 

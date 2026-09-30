@@ -1,18 +1,17 @@
-"use strict";
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const {
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
   AgentActivity,
   ActivitySession,
   CAPABILITY,
   HISTORY_CAPABILITY,
   describeTool,
-} = require("../src/lib/agent-activity");
-const { Monitor } = require("../src/lib/monitor");
-const { RolloutSession } = require("../src/lib/agent-trace");
+} from "../src/lib/agent-activity.js";
+import { Monitor } from "../src/lib/monitor.js";
+import { RolloutSession } from "../src/lib/agent-trace.js";
 
 function fixture(runtime = "codex", history = false) {
   let now = 10000;

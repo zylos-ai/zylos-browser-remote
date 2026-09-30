@@ -1,8 +1,7 @@
-"use strict";
-const os = require("node:os");
-const path = require("node:path");
-const { execFile } = require("node:child_process");
-const { promisify } = require("node:util");
+import os from "node:os";
+import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 const run = promisify(execFile);
 
 const INTERRUPT_CAPABILITY = "agent-interrupt-v1";
@@ -80,4 +79,4 @@ async function interruptAgent(
   return { ok: false, code: "AGENT_INTERRUPT_UNCONFIRMED" };
 }
 
-module.exports = { INTERRUPT_CAPABILITY, c4ControlPath, interruptAgent };
+export { INTERRUPT_CAPABILITY, c4ControlPath, interruptAgent };

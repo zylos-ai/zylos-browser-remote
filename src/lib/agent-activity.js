@@ -1,10 +1,9 @@
-"use strict";
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { randomUUID } = require("node:crypto");
-const { AgentTrace, RolloutSession } = require("./agent-trace");
-const { redactText } = require("./monitor-input");
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { AgentTrace, RolloutSession } from "./agent-trace.js";
+import { redactText } from "./monitor-input.js";
 const CAPABILITY = "agent-activity-v1";
 const HISTORY_CAPABILITY = "agent-history-v1";
 const HISTORY_BATCH = 100;
@@ -483,10 +482,4 @@ class AgentActivity {
     this.sessions.clear();
   }
 }
-module.exports = {
-  AgentActivity,
-  ActivitySession,
-  CAPABILITY,
-  HISTORY_CAPABILITY,
-  describeTool,
-};
+export { AgentActivity, ActivitySession, CAPABILITY, HISTORY_CAPABILITY, describeTool };

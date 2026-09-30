@@ -1,14 +1,15 @@
-"use strict";
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { once } = require("node:events");
-const http = require("node:http");
-const WebSocket = require("ws");
-const { Monitor, MAX_RUNS, MAX_STEPS } = require("../src/lib/monitor");
-const { start } = require("../src/index");
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { once } from "node:events";
+import http from "node:http";
+import WebSocket from "ws";
+import { Monitor, MAX_RUNS, MAX_STEPS } from "../src/lib/monitor.js";
+import { start } from "../src/index.js";
+// A .cjs file under an ESM package: default import, never named.
+import eco from "../ecosystem.config.cjs";
 
 test("monitor follows intake, running tools, failures and completion without equating them", () => {
   let now = 1000;
@@ -361,8 +362,5 @@ test("monitor defaults off and starts no collector even with diagnostic paths co
   assert.equal(relay.monitor, null);
   assert.equal(discoveries, 0);
   assert.equal(fs.existsSync(monitorFile), false);
-  assert.equal(
-    require("../ecosystem.config.cjs").apps[0].env.BROWSER_REMOTE_MONITOR,
-    "0",
-  );
+  assert.equal(eco.apps[0].env.BROWSER_REMOTE_MONITOR, "0");
 });

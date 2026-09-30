@@ -1,4 +1,3 @@
-"use strict";
 
 const AGENT_MESSAGE_CAPABILITY = "agent-message-v2";
 const STEER_CAPABILITY = "agent-input-v1";
@@ -209,7 +208,8 @@ function normalizeAgentInput(input) {
     context: validated.context,
   };
 }
-module.exports = {
+
+export {
   AGENT_MESSAGE_CAPABILITY,
   STEER_CAPABILITY,
   normalizeAgentRequest,

@@ -1,11 +1,10 @@
-"use strict";
-const { test, after } = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { once } = require("node:events");
-const WebSocket = require("ws");
+import { test, after } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { once } from "node:events";
+import WebSocket from "ws";
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "br-input-"));
 process.env.BROWSER_REMOTE_KEY = "ef".repeat(32);
 process.env.BROWSER_REMOTE_OBS_DIR = path.join(tmp, "files");
@@ -15,8 +14,8 @@ fs.writeFileSync(
   process.env.ZYLOS_C4_RECEIVE,
   `const fs=require('fs'); fs.appendFileSync(${JSON.stringify(output)},JSON.stringify(process.argv.slice(2))+'\\n');console.log(JSON.stringify({ok:true,action:'queued',id:1}));`,
 );
-const { start, deliverRequestToC4 } = require("../src/index");
-const { normalizeAgentInput } = require("../src/lib/agent-message");
+import { start, deliverRequestToC4 } from "../src/index.js";
+import { normalizeAgentInput } from "../src/lib/agent-message.js";
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 const input = (id = "u1", sequence = 1) => ({
   type: "agent-input",

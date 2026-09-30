@@ -1,15 +1,17 @@
-"use strict";
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { once } = require("node:events");
-const { spawn, spawnSync } = require("node:child_process");
-const WebSocket = require("ws");
-const http = require("node:http");
-const { start } = require("../src/index");
-const { replyCommands, parseReplyEndpoint } = require("../scripts/reply-route");
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { once } from "node:events";
+import { spawn, spawnSync } from "node:child_process";
+import WebSocket from "ws";
+import http from "node:http";
+import { start } from "../src/index.js";
+import { replyCommands, parseReplyEndpoint } from "../scripts/reply-route.js";
+
+import { fileURLToPath } from "node:url";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const remote = path.resolve(__dirname, "..");
 const coreSend =

@@ -1,14 +1,13 @@
-"use strict";
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { interruptAgent } = require("../src/lib/agent-interrupt");
-const { start } = require("../src/index");
-const WebSocket = require("ws");
-const { once } = require("node:events");
-const { digest, keyIdOf } = require("../src/lib/keys");
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { interruptAgent } from "../src/lib/agent-interrupt.js";
+import { start } from "../src/index.js";
+import WebSocket from "ws";
+import { once } from "node:events";
+import { digest, keyIdOf } from "../src/lib/keys.js";
 
 test("interrupt uses a bounded out-of-band Escape and waits for delivery, without retrying", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "br-interrupt-"));
@@ -19,7 +18,7 @@ test("interrupt uses a bounded out-of-band Escape and waits for delivery, withou
   fs.writeFileSync(
     script,
     `
-    const fs = require('fs');
+    const fs = require("fs");
     fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(process.argv.slice(2))+'\\n');
     if (process.argv[2] === 'enqueue') console.log('OK: enqueued control 42');
     else console.log('status='+fs.readFileSync(${JSON.stringify(status)},'utf8'));

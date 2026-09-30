@@ -1,12 +1,15 @@
-"use strict";
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
-const { once } = require("node:events");
-const WebSocket = require("ws");
-const { start } = require("../src/index");
-const { digest, keyIdOf } = require("../src/lib/keys");
-const { SUBPROTOCOL, LEGACY_SUBPROTOCOL } = require("../src/lib/ext-lane");
-const { INSTANCE_CAPABILITY } = require("../src/lib/endpoint");
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { once } from "node:events";
+import WebSocket from "ws";
+import { start } from "../src/index.js";
+import { digest, keyIdOf } from "../src/lib/keys.js";
+import { SUBPROTOCOL, LEGACY_SUBPROTOCOL } from "../src/lib/ext-lane.js";
+import { INSTANCE_CAPABILITY } from "../src/lib/endpoint.js";
+import {
+  ActivitySession,
+  CAPABILITY,
+} from "../src/lib/agent-activity.js";
 const KEY = "ab".repeat(32),
   OTHER_KEY = "cd".repeat(32);
 const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -284,7 +287,6 @@ test("a superseded socket that throws on close does not take the relay down", as
 });
 
 test("activity frames reach only the originating installation and stop after completion", async (t) => {
-  const { ActivitySession, CAPABILITY } = require("../src/lib/agent-activity");
   const { relay, requests, dial, request, end } = await setup(t);
   const a = await dial(A, { capabilities: [...caps, CAPABILITY] });
   const b = await dial(B, { capabilities: [...caps, CAPABILITY] });

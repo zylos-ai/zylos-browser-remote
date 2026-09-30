@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 "use strict";
 // Opaque, correlated Agent response. Browser action schemas live in the extension.
-const client = require("./relay-client");
-const { ENDPOINT_RE } = require("../src/lib/endpoint");
+import client from "./relay-client.js";
+import { ENDPOINT_RE } from "../src/lib/endpoint.js";
 const [endpoint, id, flag, inputId, ...extra] = process.argv.slice(2);
 if (
   !ENDPOINT_RE.test(endpoint || "") ||

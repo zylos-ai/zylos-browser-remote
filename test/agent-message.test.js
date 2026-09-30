@@ -1,10 +1,9 @@
-"use strict";
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
-const {
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
   normalizeAgentRequest,
   messageText,
-} = require("../src/lib/agent-message");
+} from "../src/lib/agent-message.js";
 const request = () => ({
   type: "agent-request",
   version: 2,

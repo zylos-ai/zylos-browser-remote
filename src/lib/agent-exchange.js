@@ -1,6 +1,5 @@
-"use strict";
-const { AttachmentScope } = require("../../scripts/attachments");
-const { replyCommands } = require("../../scripts/reply-route");
+import { AttachmentScope } from "../../scripts/attachments.js";
+import { replyCommands } from "../../scripts/reply-route.js";
 
 // Generic request/response exchange. No action names, page rules or decisions
 // are interpreted here. One response can carry the client's next request.
@@ -153,4 +152,4 @@ class AgentExchange {
     for (const key of this.states.keys()) this.disconnected(key);
   }
 }
-module.exports = { AgentExchange };
+export { AgentExchange };

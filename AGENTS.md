@@ -7,14 +7,15 @@ Release Process section below.
 
 ## Project Conventions
 
-- **CommonJS** — `require()`/`module.exports`, with `"type": "commonjs"` in
-  package.json. This is a deliberate, repository-wide deviation from the
-  Zylos component template, which specifies ESM. Every file under `src/`,
-  `scripts/`, `tools/`, `hooks/` and `test/` is CommonJS today, and
-  `hooks/configure.js` documents the choice inline. A migration to ESM is an
-  open decision, not a settled one — see "Open: ESM migration" below. Until
-  it is settled, new files follow the existing CommonJS style; do not mix
-  module systems within the repository.
+- **ESM** — `import`/`export`, with `"type": "module"` in package.json, as
+  the Zylos component template specifies. Every file under `src/`,
+  `scripts/`, `tools/`, `hooks/` and `test/` is an ES module; new files
+  follow suit, and the module systems are not mixed. Two deliberate
+  exceptions: `ecosystem.config.cjs` stays CommonJS because PM2 reads it as
+  a plain config file, and the throwaway scripts that tests write into temp
+  directories are generated as CommonJS (`.cjs`, or extensionless with a
+  shebang) because nothing above them declares a type. Three ESM constraints
+  bind anything new here — see "ESM: three rules that are not optional".
 - **Node.js 20+** — Minimum runtime version
 - **Conventional commits** — `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`
 - **Runtime state lives in `~/zylos/components/browser-remote/`** — never
@@ -27,14 +28,38 @@ Release Process section below.
   including both "Why … NOT in `config.json`" subsections.
 - **English for code** — Comments, commit messages, PR descriptions, documentation
 
-### Open: ESM migration
+### ESM: three rules that are not optional
 
-The Zylos registry `CONTRIBUTING.md` lists ESM as a prerequisite for
-registration, and the component template ships `"type": "module"`. This
-repository does not currently satisfy that. Converting is a breaking,
-whole-repository change touching every `require()` call site, the PM2 entry
-point, and all four lifecycle hooks; it is tracked as its own decision and
-must not be done incidentally inside an unrelated PR.
+The repository migrated from CommonJS to ESM in one dedicated change, which
+also cleared the Zylos registry `CONTRIBUTING.md` prerequisite for
+registration. Three traps surfaced during that migration. Each one fails
+**silently**, so none of them is caught by a green unit-test run:
+
+1. **Never test whether this file is the entry point with
+   `import.meta.url === pathToFileURL(process.argv[1]).href`.** PM2 decides
+   ESM-vs-CommonJS from package.json `"type"` and loads an ESM entry with a
+   dynamic `import()` from inside its own wrapper, so `argv[1]` names the
+   wrapper and that comparison is permanently false in the only deployment
+   that matters — the service boots, reports healthy, logs nothing and never
+   listens. Use `src/index.js`'s `isMainModule()`, which prefers
+   `process.env.pm_exec_path` and `realpath`s both sides (a symlink in the
+   path defeats a plain string compare).
+2. **Never resolve a data-directory path at module load.** ESM evaluates
+   every `import` before any statement in the importing module, so a test
+   that sets `HOME` or `BROWSER_REMOTE_OBS_DIR` above its imports can no
+   longer win that race. A load-time constant therefore captures the real
+   `~/zylos/components/browser-remote/...` and the suite reads, writes and
+   prunes the live store instead of its temp directory. `src/lib/config.js`
+   and `scripts/attachments.js` resolve their paths per call for exactly
+   this reason; keep it that way.
+3. **Never assume a test can re-import a module to reset it.** There is no
+   `require.cache` to delete and a module is evaluated once per process.
+   Expose an explicit reset (`resetConfigCache()`) or a factory that takes
+   its seams as arguments (`createClient()` in `scripts/relay-client.js`)
+   rather than re-evaluating source text in a `vm` sandbox.
+
+A `.cjs` file imported from ESM (`ecosystem.config.cjs`) exposes its
+`module.exports` as the **default** export; named imports from it fail.
 
 ## Release Process (hard gate)
 

@@ -270,7 +270,5 @@ handler escapes into the emitter and takes the relay process down with it.
 
 ## 8. Future improvements
 
-- **ESM migration** — required for Zylos registry registration; tracked as an
-  open decision in AGENTS.md, deliberately not bundled with other work.
 - Per-machine keys rather than one shared key across browsers, so that a
   single machine can be revoked independently.

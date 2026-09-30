@@ -1,12 +1,13 @@
-"use strict";
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { once } = require("node:events");
-const { spawn } = require("node:child_process");
-const WebSocket = require("ws");
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { once } from "node:events";
+import { spawn } from "node:child_process";
+import WebSocket from "ws";
+import { fileURLToPath } from "node:url";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "br-loop-"));
 process.env.BROWSER_REMOTE_OBS_DIR = path.join(tmp, "images");
 process.env.BROWSER_REMOTE_KEY = "ef".repeat(32);
@@ -25,7 +26,7 @@ fs.writeFileSync(
   process.env.ZYLOS_C4_RECEIVE,
   `const fs=require('fs');const a=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(output)},JSON.stringify(a)+'\\n');console.log(JSON.stringify({ok:true,action:'queued',id:1}));`,
 );
-const { start } = require("../src/index");
+import { start } from "../src/index.js";
 const waitFor = async (predicate) => {
   for (let i = 0; i < 200; i++) {
     const value = predicate();

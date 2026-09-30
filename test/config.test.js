@@ -1,12 +1,15 @@
-"use strict";
 // Resolution order, validation and the two deliberate exclusions (ports and
 // the debug trace) for src/lib/config.js, plus proof that src/index.js
 // actually consumes it.
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import * as config from "../src/lib/config.js";
+import { start } from "../src/index.js";
+// A .cjs file under an ESM package: default import, never named.
+import eco from "../ecosystem.config.cjs";
 
 const CONFIG_ENV = [
   "BROWSER_REMOTE_ACTIVITY",
@@ -15,9 +18,10 @@ const CONFIG_ENV = [
   "BROWSER_REMOTE_MONITOR_AGENT_DIR",
 ];
 
-// config.js resolves CONFIG_PATH from the home directory at load time, so each
-// case gets its own HOME and its own module instance. Nothing here touches the
-// real ~/zylos/components/browser-remote.
+// config.js resolves its paths lazily from the home directory on every read, so
+// each case gets its own HOME and a cleared cache rather than its own module
+// instance -- ESM evaluates a module once per process and has no require.cache
+// to drop. Nothing here touches the real ~/zylos/components/browser-remote.
 function withConfig(contents, run) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "br-config-"));
   const dir = path.join(home, "zylos", "components", "browser-remote");
@@ -35,16 +39,15 @@ function withConfig(contents, run) {
     delete process.env[name];
   }
   process.env.HOME = home;
-  const modulePath = require.resolve("../src/lib/config");
-  delete require.cache[modulePath];
+  config.resetConfigCache();
   const warnings = [];
   const realWarn = console.warn;
   console.warn = (...args) => warnings.push(args.join(" "));
   try {
-    return run(require("../src/lib/config"), warnings);
+    return run(config, warnings);
   } finally {
     console.warn = realWarn;
-    delete require.cache[modulePath];
+    config.resetConfigCache();
     process.env.HOME = savedHome;
     for (const name of CONFIG_ENV) {
       if (savedEnv[name] === undefined) delete process.env[name];
@@ -172,8 +175,7 @@ test("the debug trace is deliberately not configurable from config.json", () => 
 // The pin this exclusion exists for. If a future edit drops it from
 // ecosystem.config.cjs, the reasoning above stops holding and this fails.
 test("ecosystem.config.cjs still pins the trace off for deployments", () => {
-  const { apps } = require("../ecosystem.config.cjs");
-  assert.equal(apps[0].env.BROWSER_REMOTE_MONITOR, "0");
+  assert.equal(eco.apps[0].env.BROWSER_REMOTE_MONITOR, "0");
 });
 
 test("start() honours config.json: activity is off when the file says so", async () => {
@@ -188,20 +190,15 @@ test("start() honours config.json: activity is off when the file says so", async
   const savedActivity = process.env.BROWSER_REMOTE_ACTIVITY;
   delete process.env.BROWSER_REMOTE_ACTIVITY;
   process.env.HOME = home;
-  for (const name of ["../src/lib/config", "../src/index"]) {
-    delete require.cache[require.resolve(name)];
-  }
+  config.resetConfigCache();
   let relay;
   try {
-    const { start } = require("../src/index");
     // Ephemeral ports: this must never touch the real 3802/3803 listeners.
     relay = await start({ extPort: 0, agentPort: 0 });
     assert.equal(relay.activity, null, "config.json did not reach start()");
   } finally {
     relay?.close();
-    for (const name of ["../src/lib/config", "../src/index"]) {
-      delete require.cache[require.resolve(name)];
-    }
+    config.resetConfigCache();
     process.env.HOME = savedHome;
     if (savedActivity === undefined) delete process.env.BROWSER_REMOTE_ACTIVITY;
     else process.env.BROWSER_REMOTE_ACTIVITY = savedActivity;
@@ -218,19 +215,14 @@ test("start() leaves activity on when nothing disables it", async () => {
   const savedActivity = process.env.BROWSER_REMOTE_ACTIVITY;
   delete process.env.BROWSER_REMOTE_ACTIVITY;
   process.env.HOME = home;
-  for (const name of ["../src/lib/config", "../src/index"]) {
-    delete require.cache[require.resolve(name)];
-  }
+  config.resetConfigCache();
   let relay;
   try {
-    const { start } = require("../src/index");
     relay = await start({ extPort: 0, agentPort: 0 });
     assert.notEqual(relay.activity, null);
   } finally {
     relay?.close();
-    for (const name of ["../src/lib/config", "../src/index"]) {
-      delete require.cache[require.resolve(name)];
-    }
+    config.resetConfigCache();
     process.env.HOME = savedHome;
     if (savedActivity === undefined) delete process.env.BROWSER_REMOTE_ACTIVITY;
     else process.env.BROWSER_REMOTE_ACTIVITY = savedActivity;

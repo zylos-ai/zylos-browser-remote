@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-09-30
+
+Module-system change only. No runtime, protocol or configuration change:
+the HTTP/WebSocket routes, the CLI entry points, the environment variables
+and `config.json` behave exactly as they did in 0.10.0, and the extension
+compatibility matrix is unchanged.
+
+### Changed
+
+- **The whole repository is now ESM** (`"type": "module"`); `src/`,
+  `scripts/`, `tools/`, `hooks/` and `test/` use `import`/`export`
+  throughout. This clears the Zylos registry `CONTRIBUTING.md` prerequisite
+  that previously blocked registration. Runtime behaviour is unchanged and
+  no public interface moved: the HTTP/WebSocket routes, the CLI entry
+  points, the environment variables and `config.json` all behave exactly as
+  they did in 0.9.0. `ecosystem.config.cjs` deliberately stays CommonJS —
+  PM2 reads it as a plain config file — and is imported as a default import
+  where tests assert on it.
+- `src/index.js` no longer decides "am I the entry point?" from
+  `process.argv[1]` alone. PM2 picks ESM-vs-CommonJS from package.json
+  `"type"` and loads an ESM entry through a dynamic `import()` inside its
+  own wrapper, which makes `argv[1]` name the wrapper rather than this file;
+  the usual check would have been permanently false under PM2 and the
+  service would have started, reported healthy and never listened. The entry
+  check now prefers `process.env.pm_exec_path` and compares `realpath` on
+  both sides, since a symlink in the deployed path defeats a string compare.
+  Verified by running the entry directly, under PM2, and as a test import.
+- `src/lib/config.js` and `scripts/attachments.js` resolve their data
+  directories on every call instead of at module load, and `config.js` gains
+  `resetConfigCache()`. ESM evaluates every `import` before any statement in
+  the importing module, so a load-time constant could no longer be
+  redirected by a test setting `HOME` or `BROWSER_REMOTE_OBS_DIR` above its
+  imports — the suite would have read, written and pruned the live
+  `~/zylos/components/browser-remote` store instead of its temp directory.
+  `config.js` exports are correspondingly `dataDir()`/`configPath()` rather
+  than the former `DATA_DIR`/`CONFIG_PATH` constants.
+- `scripts/relay-client.js` is now a `createClient({http, base, setTimeout,
+  clearTimeout})` factory with an unchanged default singleton export. Its
+  test previously re-evaluated the file's source text in a `vm` sandbox,
+  which cannot execute ESM; injecting the seams as arguments tests the
+  module that actually ships rather than a copy of its text.
+
+### Upgrade notes
+
+A normal component upgrade; no owner action is required. Node >= 20.0.0 is
+unchanged. `ecosystem.config.cjs` deliberately stays CommonJS, so existing
+pm2 deployments keep working — but the entry-point check in `src/index.js`
+had to change for pm2 to start an ESM entry at all, so restart the component
+through pm2 after upgrading rather than reloading it in place.
+
 ## [0.10.0] - 2026-09-30
 
 Ships alongside Zylos Browser Extension 0.16.0.

@@ -1,4 +1,3 @@
-'use strict';
 /*
  * Extension keys.
  *
@@ -14,10 +13,10 @@
  * take effect without a restart.
  */
 
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const crypto = require('crypto');
+import fs from "fs";
+import os from "os";
+import path from "path";
+import crypto from "crypto";
 
 const DEFAULT_KEYS_FILE = path.join(os.homedir(), 'zylos', 'components', 'browser-remote', 'keys.json');
 const KEY_ID_LEN = 12;
@@ -110,7 +109,16 @@ function loadKeysFromFileOnly(file) {
   }
 }
 
-module.exports = {
-  DEFAULT_KEYS_FILE, KEY_ID_LEN, keysFile, keyIdOf, digest,
-  loadKeys, saveKeys, verifyKey, newKey, revokeKey, listKeys,
+export {
+  DEFAULT_KEYS_FILE,
+  KEY_ID_LEN,
+  keysFile,
+  keyIdOf,
+  digest,
+  loadKeys,
+  saveKeys,
+  verifyKey,
+  newKey,
+  revokeKey,
+  listKeys,
 };

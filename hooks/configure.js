@@ -21,12 +21,14 @@
  * Connection keys are NOT configuration: they are minted on demand by
  * scripts/key.js and stored as sha256 digests in keys.json.
  *
- * CommonJS on purpose: package.json declares "type": "commonjs".
+ * ESM: package.json declares "type": "module". Core runs this hook as its own
+ * child process (spawnSync), never by importing it, so the module system here
+ * is free to match the rest of the repository.
  */
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+import fs from "fs";
+import path from "path";
+import os from "os";
 
 const CONFIG_PATH = path.join(os.homedir(), 'zylos/components/browser-remote/config.json');
 

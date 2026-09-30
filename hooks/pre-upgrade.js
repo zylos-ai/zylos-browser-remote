@@ -9,12 +9,14 @@
  * stored as sha256 digests, so a lost keys.json cannot be reconstructed
  * and every connected extension must be re-paired by hand.
  *
- * CommonJS on purpose: package.json declares "type": "commonjs".
+ * ESM: package.json declares "type": "module". Core runs this hook as its own
+ * child process, never by importing it, so the module system here is free to
+ * match the rest of the repository.
  */
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+import fs from "fs";
+import path from "path";
+import os from "os";
 
 const DATA_DIR = path.join(os.homedir(), 'zylos/components/browser-remote');
 const keysPath = path.join(DATA_DIR, 'keys.json');
