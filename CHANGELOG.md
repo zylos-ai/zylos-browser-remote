@@ -5,9 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.0] - 2026-09-30
+
+Ships alongside Zylos Browser Extension 0.16.0.
 
 ### Added
+
+- `agent-input-v1` sends additional owner messages directly to C4 during an
+  active task, without a Remote-side message queue. Inputs are correlated by
+  browser endpoint, task and sequence; decisions acknowledge the latest input.
+- `agent-history-v1` relays public Agent commentary and limited tool activity
+  from attributed Codex or Claude Code root sessions. Hidden reasoning and raw
+  tool arguments or outputs are excluded. The extension can retain this public
+  history locally.
 
 - `src/lib/config.js`: optional `config.json` support for the one
   per-deployment runtime option, `activityEnabled`. Resolution order is
@@ -47,6 +57,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repository.
 - `package.json` metadata required by the component template: `homepage`,
   `bugs`, `repository`, `keywords`, `author`, `license`, `engines`.
+
+### Changed
+
+- Browser tasks no longer expire because of a total-duration or decision-round
+  limit. Delivery and connection timeouts remain separate from task duration.
+- Codex activity discovery recognizes both CLI and editor root sessions for
+  the configured Agent directory, while keeping conservative task attribution.
+- Decision and final-answer commands carry the latest owner input identifier
+  so stale replies cannot finish a task or replay superseded actions.
+
+### Upgrade notes
+
+Update Remote before loading Extension 0.16.0. Existing keys and port settings
+are retained. Older clients and their negotiated capabilities remain supported.
+No zylos-core change is required for these features; C4 and the selected Agent
+runtime still determine when a delivered follow-up is processed.
 
 ## [0.9.0] - 2026-09-28
 
