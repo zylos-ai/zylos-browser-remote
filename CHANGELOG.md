@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `src/lib/config.js`: optional `config.json` support for the one
+  per-deployment runtime option, `activityEnabled`. Resolution order is
+  explicit argument → environment variable → `config.json` → built-in
+  default, so **a deployment with no `config.json` behaves exactly as
+  before**. Malformed files, wrongly typed values and unknown keys warn and
+  are skipped instead of failing startup. Two families stay environment-only
+  on purpose: the **ports**, which are baked into `SKILL.md` `http_routes`
+  and the `scripts/` CLI clients (a port moved in `config.json` would leave
+  both pointing at the old one), and the **monitor trace**
+  (`BROWSER_REMOTE_MONITOR`, `_MONITOR_FILE`, `_MONITOR_AGENT_DIR`), which
+  `ecosystem.config.cjs` pins to `0` on every deployment — with the
+  environment outranking the file, a `config.json` asking for the trace could
+  never take effect under pm2. Both exclusions carry negative controls in
+  `test/config.test.js`. See README "组件配置 `config.json`" and
+  `docs/DESIGN.md` §3.1.
+- `http_routes` declaration in `SKILL.md`: the public extension-lane route
+  (`/browser-remote/*` → `127.0.0.1:3802`, prefix stripped) is now applied by
+  zylos-core on install and upgrade instead of being hand-added to the
+  Caddyfile. Existing deployments carry an equivalent hand-written block
+  outside the managed markers and should remove it after upgrading — see
+  README, "配置公网入口".
+- `SKILL.md`: `config.optional` now declares the single optional setting
+  (`activityEnabled`) as COMPONENT-SPEC §4 requires, and `lifecycle.preserve`
+  carries `config.json` so an owner-edited file survives upgrades. The file is
+  still never created empty on install.
+- `AGENTS.md` / `CLAUDE.md`: engineering conventions and the release process
+  as a hard gate, per the Zylos component template.
+- `docs/DESIGN.md`: architecture, the two-lane exposure model, what
+  `config.json` may and may not carry (§3.1, including why the ports and the
+  monitor trace are environment-only), and why COMPONENT-SPEC §4.4 does not
+  apply to a WebSocket-only public route.
+- `test/release-consistency.test.js`: machine gate keeping the four release
+  version faces (package.json, package-lock.json, SKILL.md frontmatter,
+  CHANGELOG.md) in agreement, with the template's negative controls intact.
+  Ported from the template's ESM original to CommonJS to match this
+  repository.
+- `package.json` metadata required by the component template: `homepage`,
+  `bugs`, `repository`, `keywords`, `author`, `license`, `engines`.
+
 ## [0.9.0] - 2026-09-28
 
 Ships alongside Zylos Browser Extension 0.15.5 with arbitrary file uploads and

@@ -78,18 +78,29 @@ npm start
 使用 Agent 已有的公网 HTTPS 域名。Core 的域名通常在 `~/zylos/.zylos/config.json`，
 实际以平台入口为准。外层网关可能负责 TLS，不能用内部监听协议推断公网协议。
 
-使用 Caddy 时，将以下路由加入 `~/zylos/http/Caddyfile` 的现有站点块：
+**无需手工编辑 Caddyfile。** 路由声明在 `SKILL.md` 的 `http_routes` 里，
+安装与升级时由 zylos-core 自动写入 Zylos 托管的 Caddyfile，并包在
+`# BEGIN/END zylos-component:browser-remote` 标记内：
 
 ```caddyfile
+redir /browser-remote /browser-remote/ permanent
 handle /browser-remote/* {
     uri strip_prefix /browser-remote
-    reverse_proxy 127.0.0.1:3802
+    reverse_proxy 127.0.0.1:3802 {
+        header_up X-Forwarded-Prefix /browser-remote
+    }
 }
 ```
 
-按照部署环境校验并重新加载 Caddy。保留已有站点配置；不要给 3803 添加公网路由。
+不要给 3803 添加公网路由。
 交给用户的连接地址为 `wss://实际域名/browser-remote/ext`。
 只有浏览器与 Remote 在同一台机器上时，才使用 `ws://127.0.0.1:3802/ext`。
+
+> **升级既有部署**：0.9.0 及更早版本没有声明 `http_routes`，其部署通常在
+> Caddyfile 里留有一份**手工添加**的等价路由（在托管标记之外）。升级后
+> core 会在站点块末尾追加托管版本，两者并存 —— 配置仍然有效（`caddy
+> validate` 通过，先出现的手工块生效，托管块成为死配置），但应当**删除手工
+> 块**，把这条路由交还给 core 托管。
 
 ## 连接 Key
 
@@ -180,6 +191,44 @@ PNG/JPEG/WebP/GIF 按 MIME 与文件头校验；标准输出不携带截图 Base
 更新 Remote 适配器。历史每批最多 100 条，待发缓冲最多 500 条；超过上限会发送省略数量。
 插件会合并相同工具 ID 的开始与结束，并限制本地历史体积；这些限制不影响任务执行。
 Monitor 的完整诊断记录仍由下面的开关单独控制。
+
+## 组件配置 `config.json`
+
+**可选。** 不存在时组件按内置默认值运行，行为与从前完全一致 —— 全新安装无需任何
+配置即可使用。连接 Key **不是配置**：由 `scripts/key.js` 现签，以 sha256 摘要存在
+`keys.json`，永远不写进 `config.json`。
+
+`config.json` 承载的是少量**每部署一次的运行选项**，适合固化下来、免得每次重启都
+重新导出环境变量。位置 `~/zylos/components/browser-remote/config.json`：
+
+```json
+{
+  "activityEnabled": false
+}
+```
+
+| 键 | 类型 | 默认 | 等价环境变量 |
+|----|------|------|--------------|
+| `activityEnabled` | boolean | `true` | `BROWSER_REMOTE_ACTIVITY` |
+
+**取值优先级**（从高到低）：调用方显式传参 → 环境变量 → `config.json` → 内置默认。
+环境变量刻意压过文件：pm2/ecosystem 和临时 shell 运行必须能覆盖它们看不见的文件。
+
+改完 `config.json` 需要 `pm2 restart zylos-browser-remote` 生效（端口已监听，不做热重载）。
+文件格式错误、类型不对或键名拼错只会**告警并跳过该项**，不会导致服务起不来。
+
+⚠️ **端口不在此处配置**：`BROWSER_REMOTE_EXT_PORT` / `BROWSER_REMOTE_AGENT_PORT`
+只认环境变量。插件端口写死在 `SKILL.md` 的 `http_routes` 里（Caddy 反代
+`127.0.0.1:3802`），Agent 端口写死在 `scripts/` 的各个 CLI 客户端里；若从
+`config.json` 改端口，监听会搬家而这两处仍指向旧端口，组件会「看起来健康、实际不通」。
+
+⚠️ **Monitor 调试开关也不在此处配置**：`BROWSER_REMOTE_MONITOR` /
+`BROWSER_REMOTE_MONITOR_FILE` / `BROWSER_REMOTE_MONITOR_AGENT_DIR` 同样只认环境
+变量。随组件发布的 `ecosystem.config.cjs` 明确钉死 `BROWSER_REMOTE_MONITOR=0`，
+免得开发机 shell 里的调试开关被带进生产；而环境变量优先于本文件，所以写在
+`config.json` 里的 `"monitor": true` 在 pm2 下**永远解析为 false**——一个在唯一
+要紧的部署方式下必然失效的开关，不该出现在配置文件里。要临时开调试，见下方
+「本地 Monitor」。
 
 ## 本地 Monitor
 

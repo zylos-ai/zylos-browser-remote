@@ -8,9 +8,15 @@
  *
  * NOTE: browser-remote declares no `config.required` items today, so zylos
  * has nothing to collect and this hook is a no-op in practice. It exists for
- * spec conformance and as the correct landing spot if a setting is ever
- * added. It is deliberately written to do nothing visible when handed empty
- * input rather than leaving an empty config.json that no code reads.
+ * spec conformance and as the correct landing spot if a required setting is
+ * ever added. It still writes nothing when handed empty input: config.json is
+ * optional, and src/lib/config.js falls back to built-in defaults when the
+ * file is absent, so an empty one would only be noise.
+ *
+ * Optional settings ARE read at runtime -- see src/lib/config.js for the
+ * accepted keys (activityEnabled today) and for why the ports and the monitor
+ * trace are environment-only. Those are owner-edited, not collected here,
+ * because zylos only prompts for `config.required` items.
  *
  * Connection keys are NOT configuration: they are minted on demand by
  * scripts/key.js and stored as sha256 digests in keys.json.
