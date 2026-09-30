@@ -121,6 +121,95 @@ test("final reply endpoints require an explicit request and terminal status", ()
   }
 });
 
+test("actions and real C4 final replies carry owner input acknowledgements without changing decision content", async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "br-input-reply-"));
+  const endpoint = "aaaaaaaaaaaa.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const calls = [];
+  const server = http.createServer((req, res) => {
+    let input = "";
+    req.on("data", (chunk) => {
+      input += chunk;
+    });
+    req.on("end", () => {
+      const call = JSON.parse(input);
+      calls.push(call);
+      res.setHeader("Content-Type", "application/json");
+      res.end(
+        JSON.stringify({
+          ok: true,
+          finished: true,
+          status: call.decision.kind,
+        }),
+      );
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(() => {
+    server.close();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+  const skills = path.join(tmp, ".claude/skills");
+  fs.mkdirSync(skills, { recursive: true });
+  fs.symlinkSync(remote, path.join(skills, "browser-remote"), "dir");
+  const env = {
+    ZYLOS_DIR: tmp,
+    BROWSER_REMOTE_AGENT_URL: `http://127.0.0.1:${server.address().port}`,
+  };
+  const decision = { kind: "actions", actions: [{ method: "opaque-tool" }] };
+  const action = await run(
+    [
+      path.join(remote, "scripts/decision.js"),
+      endpoint,
+      "r1",
+      "--input-id",
+      "u1",
+    ],
+    env,
+    JSON.stringify(decision),
+  );
+  assert.equal(action.code, 0, action.stderr);
+  assert.deepEqual(calls[0], { endpoint, id: "r1", inputId: "u1", decision });
+  const commands = replyCommands(endpoint, "r2", "u2");
+  assert.match(commands.actions, /--input-id u2$/);
+  const target = commands.done.match(/'([^']+)'$/)[1];
+  assert.deepEqual(parseReplyEndpoint(target), {
+    endpoint,
+    id: "r2",
+    status: "done",
+    inputId: "u2",
+  });
+  const final = await run(
+    [coreSend, "browser-remote", target],
+    env,
+    "Updated final answer",
+  );
+  assert.equal(final.code, 0, final.stdout + final.stderr);
+  assert.deepEqual(calls[1], {
+    endpoint,
+    id: "r2",
+    inputId: "u2",
+    decision: { kind: "done", text: "Updated final answer" },
+  });
+  for (const suffix of ["|input:", "|input:u2|input:u3", "|input:$(echo bad)"])
+    assert.throws(() =>
+      parseReplyEndpoint(`${endpoint}|req:r2|status:done${suffix}`),
+    );
+  const bad = await run(
+    [
+      path.join(remote, "scripts/decision.js"),
+      endpoint,
+      "r1",
+      "--input-id",
+      "u1",
+      "extra",
+    ],
+    env,
+  );
+  assert.equal(bad.code, 2);
+  assert.equal(calls.length, 2);
+});
+
 async function finalReplyScenario(t, useC4) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "br-final-"));
   const oldKey = process.env.BROWSER_REMOTE_KEY;

@@ -29,6 +29,7 @@ const {
   AGENT_MESSAGE_CAPABILITY,
   STEER_CAPABILITY,
   normalizeAgentRequest,
+  normalizeAgentInput,
   messageText,
 } = require("./agent-message");
 
@@ -325,12 +326,14 @@ class ExtLane extends EventEmitter {
             AGENT_MESSAGE_CAPABILITY,
             INTERRUPT_CAPABILITY,
             STEER_CAPABILITY,
+            "agent-steer-v1", // Older clients still send updates in decision requests.
           ]
         : [
             "agent-loop-v1",
             ATTACHMENT_CAPABILITY,
             AGENT_MESSAGE_CAPABILITY,
             STEER_CAPABILITY,
+            "agent-steer-v1",
           ],
     });
   }
@@ -366,6 +369,8 @@ class ExtLane extends EventEmitter {
         return this._hello(conn, msg);
       case "agent-request":
         return this._onAgentRequest(conn, msg);
+      case "agent-input":
+        return this._onAgentInput(conn, msg);
       case "agent-turn-end": {
         if (!conn.agentTurn || msg.taskId !== conn.agentTurn) return;
         conn.agentTurn = null;
@@ -500,7 +505,10 @@ class ExtLane extends EventEmitter {
       conn.agentRequests.delete(conn.agentRequests.values().next().value);
     conn.agentTurn = msg.taskId;
     conn.agentRound = request.round;
-    if (request.round === 1) conn.ownerText = messageText(request.message);
+    if (request.round === 1) {
+      conn.ownerText = messageText(request.message);
+      conn.inputSequence = 0;
+    }
     this.emit(
       "agent-request",
       {
@@ -510,6 +518,50 @@ class ExtLane extends EventEmitter {
         label: conn.label,
         text: conn.ownerText,
         chatId: msg.taskId,
+        request,
+      },
+      reportStatus,
+    );
+  }
+
+  _onAgentInput(conn, msg) {
+    const reportStatus = (status) => {
+      if (this.conns.get(conn.endpointId) === conn)
+        this._send(conn, {
+          type: "agent-input-status",
+          taskId: msg.taskId,
+          inputId: msg.id,
+          ...status,
+        });
+    };
+    if (conn.agentStopping)
+      return reportStatus({ state: "failed", code: "AGENT_STOPPING" });
+    let request;
+    try {
+      request = normalizeAgentInput(msg);
+    } catch {
+      return reportStatus({ state: "failed", code: "BAD_AGENT_INPUT" });
+    }
+    if (
+      !conn.capabilities.includes(STEER_CAPABILITY) ||
+      conn.agentTurn !== request.taskId
+    )
+      return reportStatus({ state: "failed", code: "STALE_INPUT" });
+    // WS frames are ordered. This counter rejects duplicates even in very long
+    // tasks, without retaining a queue of message bodies or an unbounded ID set.
+    if (request.sequence !== conn.inputSequence + 1)
+      return reportStatus({ state: "failed", code: "BAD_INPUT_SEQUENCE" });
+    conn.inputSequence = request.sequence;
+    this.emit(
+      "agent-input",
+      {
+        kind: "input",
+        endpointId: conn.endpointId,
+        keyId: conn.keyId,
+        browserId: conn.browserId,
+        label: conn.label,
+        text: messageText(request.message),
+        chatId: request.taskId,
         request,
       },
       reportStatus,

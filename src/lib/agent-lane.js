@@ -80,7 +80,10 @@ class AgentLane {
           !REQUEST_ID_RE.test(body.id) ||
           !body.decision ||
           typeof body.decision !== "object" ||
-          Array.isArray(body.decision)
+          Array.isArray(body.decision) ||
+          (body.inputId !== undefined &&
+            (typeof body.inputId !== "string" ||
+              !REQUEST_ID_RE.test(body.inputId)))
         )
           return fail(
             400,
@@ -93,6 +96,7 @@ class AgentLane {
             target.endpointId,
             body.id,
             body.decision,
+            body.inputId,
           ),
         );
       }

@@ -378,7 +378,7 @@ test("distribution counts survive timeline truncation and persistence", (t) => {
   restored.close();
 });
 
-test("collector discovers only Zylos CLI sessions and degrades independently of browser recording", async (t) => {
+test("collector discovers Zylos root sessions from both CLI distributions and excludes unrelated/subagent sessions", async (t) => {
   const { dir, monitor } = fixture(t);
   fs.mkdirSync(path.join(dir, ".zylos"));
   fs.writeFileSync(
@@ -390,8 +390,11 @@ test("collector discovers only Zylos CLI sessions and degrades independently of 
   execFileSync("sqlite3", [
     db,
     `CREATE TABLE threads(id TEXT,rollout_path TEXT,cwd TEXT,source TEXT,archived INTEGER,updated_at INTEGER);
-    INSERT INTO threads VALUES('wanted','${cwd}/rollout.jsonl','${cwd}','cli',0,1),
-    ('codex-app','elsewhere','${cwd}','vscode',0,4),('foreign','elsewhere','/different-project','cli',0,3),
+    INSERT INTO threads VALUES('wanted-cli','elsewhere','${cwd}','cli',0,1),
+    ('wanted-vscode','${cwd}/rollout.jsonl','${cwd}','vscode',0,4),
+    ('foreign','elsewhere','/different-project','cli',0,3),
+    ('foreign-app','elsewhere','/different-project','vscode',0,5),
+    ('subagent','elsewhere','${cwd}','{"subagent":{"thread_spawn":{}}}',0,6),
     ('archived','elsewhere','${cwd}','cli',1,2);`,
   ]);
   const trace = new AgentTrace(monitor, {
@@ -400,7 +403,7 @@ test("collector discovers only Zylos CLI sessions and degrades independently of 
   });
   assert.deepEqual(
     (await trace.findSessions()).map((row) => row.id),
-    ["wanted"],
+    ["wanted-vscode", "wanted-cli"],
   );
   fs.writeFileSync(
     path.join(dir, "rollout.jsonl"),

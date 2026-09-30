@@ -1,7 +1,7 @@
 "use strict";
 
 const AGENT_MESSAGE_CAPABILITY = "agent-message-v2";
-const STEER_CAPABILITY = "agent-steer-v1";
+const STEER_CAPABILITY = "agent-input-v1";
 const record = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const validId = (v) =>
   typeof v === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(v);
@@ -182,9 +182,37 @@ function normalizeAgentRequest(input) {
     execution: msg.execution,
   };
 }
+function normalizeAgentInput(input) {
+  if (
+    input.version !== 2 ||
+    !validId(input.taskId) ||
+    input.id === input.taskId ||
+    !Number.isSafeInteger(input.sequence) ||
+    input.sequence < 1
+  )
+    throw new Error("Invalid owner input identity");
+  const validated = normalizeAgentRequest({
+    version: 2,
+    id: input.id,
+    taskId: input.id,
+    round: 1,
+    message: input.message,
+    context: input.context,
+    execution: {},
+  });
+  return {
+    version: 2,
+    id: input.id,
+    taskId: input.taskId,
+    sequence: input.sequence,
+    message: validated.message,
+    context: validated.context,
+  };
+}
 module.exports = {
   AGENT_MESSAGE_CAPABILITY,
   STEER_CAPABILITY,
   normalizeAgentRequest,
+  normalizeAgentInput,
   messageText,
 };

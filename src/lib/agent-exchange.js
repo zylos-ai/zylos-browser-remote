@@ -71,7 +71,7 @@ class AgentExchange {
     state.waiter = null;
     waiter.resolve(response);
   }
-  async respond(endpointId, id, decision) {
+  async respond(endpointId, id, decision, inputId) {
     const state = this.states.get(endpointId);
     if (!state)
       return {
@@ -106,7 +106,7 @@ class AgentExchange {
       // retries whose earlier browser actions have already happened.
       await this.ext.request(endpointId, {
         method: "agent-decision",
-        params: { id, decision },
+        params: { id, decision, ...(inputId ? { inputId } : {}) },
         timeoutMs: 10000,
       });
       if (previous && !state.terminal && state.waiter?.id === id) {

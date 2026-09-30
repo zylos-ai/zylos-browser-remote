@@ -79,4 +79,4 @@ function inputDetails(input) {
   return { json, originalBytes: Buffer.byteLength(original), redacted, truncated };
 }
 
-module.exports = { inputDetails, MAX_INPUT_BYTES, normalizeKey, SECRET_SUFFIX };
+module.exports = { inputDetails, redactText, MAX_INPUT_BYTES, normalizeKey, SECRET_SUFFIX };

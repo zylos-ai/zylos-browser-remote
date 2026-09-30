@@ -371,7 +371,10 @@ class AgentTrace {
         "-readonly",
         "-json",
         path.join(this.codexDirectory, "state_5.sqlite"),
-        `SELECT id,rollout_path FROM threads WHERE archived=0 AND source='cli' AND cwd='${cwd}' ORDER BY updated_at DESC LIMIT 4;`,
+        // The desktop-bundled Codex binary can label a terminal runtime as
+        // vscode. Scope to the Zylos workspace and root sessions; attribution
+        // still requires the exact per-task Activity token in the input.
+        `SELECT id,rollout_path FROM threads WHERE archived=0 AND source IN ('cli','vscode') AND cwd='${cwd}' ORDER BY updated_at DESC LIMIT 4;`,
       ],
       { encoding: "utf8", timeout: 1500, maxBuffer: 256 * 1024 },
     );

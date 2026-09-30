@@ -7,7 +7,7 @@ const { parseReplyEndpoint } = require("./reply-route");
 
 async function main() {
   const [target, message, ...extra] = process.argv.slice(2);
-  const { endpoint, id, status } = parseReplyEndpoint(target);
+  const { endpoint, id, status, inputId } = parseReplyEndpoint(target);
   if (
     extra.length ||
     typeof message !== "string" ||
@@ -20,6 +20,7 @@ async function main() {
     endpoint,
     id,
     decision: { kind: status, text: message.trim() },
+    ...(inputId ? { inputId } : {}),
   });
   process.stdout.write(JSON.stringify(body) + "\n");
   if (body.ok && body.next)

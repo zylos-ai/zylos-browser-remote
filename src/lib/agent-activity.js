@@ -4,7 +4,46 @@ const os = require("node:os");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const { AgentTrace, RolloutSession } = require("./agent-trace");
+const { redactText } = require("./monitor-input");
 const CAPABILITY = "agent-activity-v1";
+const HISTORY_CAPABILITY = "agent-history-v1";
+const HISTORY_BATCH = 100;
+const HISTORY_BUFFER = 500;
+const publicTools = new Set([
+  "exec_command",
+  "write_stdin",
+  "exec",
+  "wait",
+  "apply_patch",
+  "view_image",
+  "read_file",
+  "write_file",
+  "list_files",
+  "search",
+  "web_search",
+  "web_search_call",
+  "tool_search",
+  "tool_search_call",
+  "Bash",
+  "Read",
+  "Write",
+  "Edit",
+  "MultiEdit",
+  "Grep",
+  "Glob",
+  "WebFetch",
+  "WebSearch",
+  "Task",
+  "Agent",
+  "TodoWrite",
+]);
+function publicText(text) {
+  if (typeof text !== "string") return "";
+  const clean = redactText(text)
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "")
+    .trim();
+  return clean.length > 2000 ? clean.slice(0, 1998) + "\n…" : clean;
+}
 
 // Only fixed categories and allowlisted executable names cross the wire. Never
 // send arguments, file names, model reasoning, stdout or an arbitrary tool name.
@@ -58,12 +97,37 @@ class ActivitySession extends RolloutSession {
       at > this.monitor.now() + 5000
     )
       return;
-    if (this.runtime !== "claude") return super.event(record);
     if (
       record.isSidechain ||
       (record.sessionId && record.sessionId !== this.id)
     )
       return;
+    if (this.runtime !== "claude") {
+      super.event(record);
+      const p = record.payload;
+      // Only the user-facing commentary channel. Never analysis, reasoning
+      // records, encrypted content, final answers or tool output.
+      if (
+        record.type === "response_item" &&
+        p?.type === "message" &&
+        p.role === "assistant" &&
+        (p.channel === "commentary" ||
+          (!p.channel && p.phase === "commentary")) &&
+        Array.isArray(p.content)
+      ) {
+        const text = p.content
+          .filter((c) => c.type === "output_text")
+          .map((c) => c.text)
+          .join("\n");
+        this.monitor.commentary(
+          this.run,
+          `${this.id}:${p.id || at}:text`,
+          text,
+          at,
+        );
+      }
+      return;
+    }
     if (record.uuid) {
       if (this.records.has(record.uuid)) return;
       this.records.add(record.uuid);
@@ -96,7 +160,14 @@ class ActivitySession extends RolloutSession {
           .map((c) => ({ type: "input_text", text: c.text })),
       });
     }
-    for (const item of content) {
+    for (const [index, item] of content.entries()) {
+      if (record.type === "assistant" && item.type === "text")
+        this.monitor.commentary(
+          this.run,
+          `${this.id}:${record.uuid || at}:${index}:text`,
+          item.text,
+          at,
+        );
       if (record.type === "assistant" && item.type === "tool_use")
         feed({
           type: "function_call",
@@ -193,6 +264,9 @@ class AgentActivity {
       sequence: 0,
       steps: [],
       pending: new Map(),
+      history: new Map(),
+      historyDropped: 0,
+      commentarySeen: new Set(),
     });
     return this.bindings.get(msg.endpointId).token;
   }
@@ -200,6 +274,33 @@ class AgentActivity {
     this.bindings.delete(endpointId);
   }
   add() {}
+  history(run, event) {
+    if (
+      !run ||
+      run.agentMixed ||
+      !this.valid(run) ||
+      !run.conn.capabilities.includes(HISTORY_CAPABILITY) ||
+      event.at < run.startedAt ||
+      event.at > this.now() + 5000
+    )
+      return;
+    run.history.set(event.id, event);
+    while (run.history.size > HISTORY_BUFFER) {
+      run.history.delete(run.history.keys().next().value);
+      run.historyDropped++;
+    }
+    run.dirty = true;
+  }
+  commentary(run, id, text, at) {
+    if (!run || run.commentarySeen.has(id)) return;
+    const cleaned = publicText(text);
+    if (!cleaned) return;
+    run.commentarySeen.add(id);
+    if (run.commentarySeen.size > 1000)
+      run.commentarySeen.delete(run.commentarySeen.values().next().value);
+    this.history(run, { id, kind: "commentary", text: cleaned, at });
+    this.update(run, { category: "processing" }, at);
+  }
   agentInputObserved(run, at) {
     run.agentMixed = false;
     this.update(run, { category: "processing" }, at);
@@ -226,6 +327,15 @@ class AgentActivity {
       id: `${event.sessionId}:${event.callId}`,
       activity: event.activity || describeTool(event),
     };
+    const name = event.name.split(".").at(-1);
+    ticket.event = {
+      id: ticket.id,
+      kind: "tool",
+      at: event.at,
+      ...ticket.activity,
+      ...(publicTools.has(name) ? { tool: name } : {}),
+    };
+    this.history(run, ticket.event);
     if (run.pending.size >= 120)
       run.pending.delete(run.pending.keys().next().value);
     run.pending.set(ticket.id, ticket);
@@ -235,6 +345,8 @@ class AgentActivity {
   agentEnded(ticket, result, at) {
     if (!ticket) return;
     const run = ticket.run;
+    if (result.status !== "unknown")
+      this.history(run, { ...ticket.event, endedAt: at });
     run.pending.delete(ticket.id);
     const latest = [...run.pending.values()].at(-1);
     this.update(
@@ -249,16 +361,25 @@ class AgentActivity {
   flush() {
     for (const run of this.bindings.values()) {
       // A mixed-channel turn cannot safely be attributed to either browser.
-      if (run.agentMixed) run.latest = { category: "idle" };
+      if (run.agentMixed) {
+        run.latest = { category: "idle" };
+        run.history.clear();
+        run.historyDropped = 0;
+      }
       if (!run.dirty || !this.valid(run)) continue;
-      run.dirty = false;
+      const events = [...run.history.values()].slice(0, HISTORY_BATCH);
+      for (const event of events) run.history.delete(event.id);
+      run.dirty = run.history.size > 0;
       this.ext._send(run.conn, {
         type: "agent-activity",
         endpointId: run.endpointId,
         taskId: run.taskId,
         sequence: ++run.sequence,
-        ...run.latest,
+        ...(run.latest || { category: "processing" }),
+        ...(events.length ? { events } : {}),
+        ...(run.historyDropped ? { dropped: run.historyDropped } : {}),
       });
+      run.historyDropped = 0;
     }
   }
   async findSessions() {
@@ -362,4 +483,10 @@ class AgentActivity {
     this.sessions.clear();
   }
 }
-module.exports = { AgentActivity, ActivitySession, CAPABILITY, describeTool };
+module.exports = {
+  AgentActivity,
+  ActivitySession,
+  CAPABILITY,
+  HISTORY_CAPABILITY,
+  describeTool,
+};
