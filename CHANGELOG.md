@@ -5,7 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.1] - 2026-09-30
+
+Module-system change only. No runtime, protocol or configuration change:
+the HTTP/WebSocket routes, the CLI entry points, the environment variables
+and `config.json` behave exactly as they did in 0.10.0, and the extension
+compatibility matrix is unchanged.
 
 ### Changed
 
@@ -41,6 +46,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test previously re-evaluated the file's source text in a `vm` sandbox,
   which cannot execute ESM; injecting the seams as arguments tests the
   module that actually ships rather than a copy of its text.
+
+### Upgrade notes
+
+A normal component upgrade; no owner action is required. Node >= 20.0.0 is
+unchanged. `ecosystem.config.cjs` deliberately stays CommonJS, so existing
+pm2 deployments keep working — but the entry-point check in `src/index.js`
+had to change for pm2 to start an ESM entry at all, so restart the component
+through pm2 after upgrading rather than reloading it in place.
 
 ## [0.10.0] - 2026-09-30
 
