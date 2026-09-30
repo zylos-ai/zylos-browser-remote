@@ -1,6 +1,7 @@
 "use strict";
 
 const AGENT_MESSAGE_CAPABILITY = "agent-message-v2";
+const STEER_CAPABILITY = "agent-steer-v1";
 const record = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const validId = (v) =>
   typeof v === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(v);
@@ -135,6 +136,40 @@ function normalizeAgentRequest(input) {
   ) {
     throw new Error("Continuation must reference the original message");
   }
+  let updates;
+  if (msg.updates !== undefined) {
+    if (
+      msg.round === 1 ||
+      !Array.isArray(msg.updates) ||
+      !msg.updates.length ||
+      msg.updates.length > 8
+    )
+      throw new Error("Invalid steering updates");
+    const ids = new Set([msg.taskId]);
+    updates = msg.updates.map((update) => {
+      if (
+        !record(update) ||
+        Object.keys(update).some((k) => !["message", "context"].includes(k)) ||
+        !record(update.message) ||
+        !validId(update.message.id) ||
+        ids.has(update.message.id)
+      )
+        throw new Error("Invalid steering message");
+      ids.add(update.message.id);
+      // Reuse the full owner-input validation; never accept routing/execution
+      // overrides from an update, or change the parent task's identity.
+      const validated = normalizeAgentRequest({
+        version: 2,
+        id: msg.id,
+        taskId: update.message.id,
+        round: 1,
+        message: update.message,
+        context: update.context,
+        execution: {},
+      });
+      return { message: validated.message, context: validated.context };
+    });
+  }
   // Do not trust endpoint/routing fields supplied by a client.
   return {
     version: 2,
@@ -143,11 +178,13 @@ function normalizeAgentRequest(input) {
     round: msg.round,
     message: msg.message,
     context: msg.context,
+    ...(updates ? { updates } : {}),
     execution: msg.execution,
   };
 }
 module.exports = {
   AGENT_MESSAGE_CAPABILITY,
+  STEER_CAPABILITY,
   normalizeAgentRequest,
   messageText,
 };

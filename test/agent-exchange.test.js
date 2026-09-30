@@ -45,6 +45,54 @@ function setup(t) {
   exchange.ingest(message("r1"));
   return { ext, exchange };
 }
+test("a superseded final returns steering on the same task, materializes files and isolates endpoints", async (t) => {
+  const { ext, exchange } = setup(t);
+  const update = message("r2", 2);
+  update.request.updates = [
+    {
+      message: {
+        id: "update-1",
+        role: "user",
+        content: [{ type: "text", text: "Use these notes" }, file],
+      },
+      context: { pages: [{ tabId: 7 }] },
+    },
+  ];
+  let forwarded = false;
+  ext.request = async (endpoint) => {
+    assert.equal(endpoint, "aaaaaaaaaaaa");
+    if (!forwarded) {
+      forwarded = true;
+      exchange.ingest(update);
+    }
+    return { accepted: true };
+  };
+  const other = message("other-request");
+  other.endpointId = "bbbbbbbbbbbb";
+  exchange.ingest(other);
+  const result = await exchange.respond("aaaaaaaaaaaa", "r1", {
+    kind: "done",
+    text: "Old answer",
+  });
+  assert.equal(result.finished, undefined);
+  assert.equal(result.next.taskId, "task");
+  assert.equal(result.next.updates[0].message.id, "update-1");
+  const resource = result.next.updates[0].message.content[1];
+  assert.equal(resource.data, undefined);
+  assert.equal(fs.readFileSync(resource.path, "utf8"), "hi");
+  assert.equal(exchange.states.get("bbbbbbbbbbbb").next.updates, undefined);
+  const retry = await exchange.respond("aaaaaaaaaaaa", "r1", {
+    kind: "done",
+    text: "Old answer",
+  });
+  assert.equal(retry.replayed, true);
+  ext.emit("agent-turn-end", {
+    endpointId: "aaaaaaaaaaaa",
+    taskId: "task",
+    status: "done",
+  });
+  assert.equal(fs.existsSync(resource.path), false);
+});
 test("exchange arms before acknowledgement, returns fresh state, and preserves a retry receipt", async (t) => {
   const { ext, exchange } = setup(t);
   let calls = 0;

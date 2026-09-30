@@ -7,6 +7,7 @@ const path = require("node:path");
 const { once } = require("node:events");
 const { spawn, spawnSync } = require("node:child_process");
 const WebSocket = require("ws");
+const http = require("node:http");
 const { start } = require("../src/index");
 const { replyCommands, parseReplyEndpoint } = require("../scripts/reply-route");
 
@@ -36,6 +37,55 @@ async function run(args, env, input = "") {
   return { code, stdout, stderr };
 }
 
+test("C4 preserves a steering continuation when the client's final decision is superseded", async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "br-steer-final-"));
+  const endpoint = "aaaaaaaaaaaa";
+  const next = {
+    id: "r2",
+    taskId: "task1",
+    round: 2,
+    updates: [
+      {
+        message: {
+          id: "update1",
+          role: "user",
+          content: [{ type: "text", text: "Chinese videos only" }],
+        },
+        context: { pages: [] },
+      },
+    ],
+    replyCommands: replyCommands(endpoint, "r2"),
+  };
+  const server = http.createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ ok: true, accepted: true, next }));
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(() => {
+    server.close();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+  const skills = path.join(tmp, ".claude/skills");
+  fs.mkdirSync(skills, { recursive: true });
+  fs.symlinkSync(remote, path.join(skills, "browser-remote"), "dir");
+  const result = await run(
+    [coreSend, "browser-remote", `${endpoint}|req:r1|status:done`],
+    {
+      ZYLOS_DIR: tmp,
+      BROWSER_REMOTE_AGENT_URL: `http://127.0.0.1:${server.address().port}`,
+    },
+    "Outdated answer",
+  );
+  assert.notEqual(result.code, 0);
+  assert.match(result.stdout, /"id":"r2"/);
+  assert.match(result.stdout, /Chinese videos only/);
+  assert.match(result.stderr, /Continue with next.replyCommands/);
+  assert.doesNotMatch(result.stdout, /Message sent via/);
+});
 test("final reply endpoints require an explicit request and terminal status", () => {
   const endpoint = "a".repeat(12);
   assert.deepEqual(parseReplyEndpoint(`${endpoint}|req:r-2|status:blocked`), {

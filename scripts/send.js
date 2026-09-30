@@ -22,6 +22,10 @@ async function main() {
     decision: { kind: status, text: message.trim() },
   });
   process.stdout.write(JSON.stringify(body) + "\n");
+  if (body.ok && body.next)
+    console.error(
+      "New owner input superseded this final reply. Nothing was finalized. Continue with next.replyCommands; do not retry the old final answer.",
+    );
   // A transport acknowledgement alone must never be reported as delivered.
   if (!body.ok || !body.finished || body.status !== status)
     process.exitCode = 1;

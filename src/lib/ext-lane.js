@@ -27,6 +27,7 @@ const { ATTACHMENT_CAPABILITY } = require("../../scripts/attachments");
 const { INTERRUPT_CAPABILITY } = require("./agent-interrupt");
 const {
   AGENT_MESSAGE_CAPABILITY,
+  STEER_CAPABILITY,
   normalizeAgentRequest,
   messageText,
 } = require("./agent-message");
@@ -323,8 +324,14 @@ class ExtLane extends EventEmitter {
             ATTACHMENT_CAPABILITY,
             AGENT_MESSAGE_CAPABILITY,
             INTERRUPT_CAPABILITY,
+            STEER_CAPABILITY,
           ]
-        : ["agent-loop-v1", ATTACHMENT_CAPABILITY, AGENT_MESSAGE_CAPABILITY],
+        : [
+            "agent-loop-v1",
+            ATTACHMENT_CAPABILITY,
+            AGENT_MESSAGE_CAPABILITY,
+            STEER_CAPABILITY,
+          ],
     });
   }
 
