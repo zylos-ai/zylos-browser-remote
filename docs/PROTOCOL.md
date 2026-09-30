@@ -78,7 +78,8 @@ Empty pages means no additional initial context; it does not clear the task.
 The consumer retains the original owner input throughout the task.
 
 Remote bounds IDs to 128 characters, combined user text to 8,000 characters,
-context JSON to 18,000 characters, and rounds to 1–30. Owner messages support
+context JSON to 18,000 characters. Rounds are sequential positive safe integers,
+without a task round-count cap. Owner messages support
 up to eight attachments. Continuation references must match the active task and
 rounds must progress in order. Execution and decision semantics remain opaque;
 the extension validates the browser contract before any action executes.
@@ -180,8 +181,16 @@ by this final-answer endpoint.
 ## Errors and retries
 
 Every decision requires its explicit endpoint and request ID; omitted or offline targets never fall back to another browser. The exchange permits one waiting decision per endpoint. Decision acceptance has
-a 10-second transport budget; execution/continuation waits up to 120 seconds,
-with a 125-second CLI HTTP deadline. A timeout does not prove an action failed.
+a 10-second transport budget. Execution/continuation waits have no deadline;
+the next client request, task end, replacement or disconnect releases the waiter.
+The CLI bounds connection/request delivery to 10 seconds, then waits on the same
+HTTP request without an execution timeout. Status requests retain a 10-second
+response deadline. A transport timeout does not prove an action failed.
+
+The extension has no total task duration, decision-wait, round-count or
+consecutive-failure cap. Individual browser operations retain their own deadlines
+and return failures as evidence for the next decision. Tasks still end on
+completion, an explicit blocked decision, owner stop or connection interruption.
 
 `BAD_DECISION` permits correction of the pending request. `DECISION_CONFLICT`
 rejects different contents for an already accepted ID. `STALE_DECISION` rejects

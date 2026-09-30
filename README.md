@@ -169,11 +169,14 @@ PNG/JPEG/WebP/GIF 按 MIME 与文件头校验；标准输出不携带截图 Base
 
 新插件通过 `agent-activity-v1` 订阅当前 Agent 工具活动。在原有 WebSocket 上推送
 任务关联的 `agent-activity`，让同一行显示执行命令、读取文件、搜索等，工具返回后
-显示处理结果。插件本地浏览器动作优先；这些事件不追加聊天历史。
+显示处理结果。额外声明 `agent-history-v1` 时，还会推送公开进展文字和 Agent 工具记录，
+用于 Thinking 展开区域；插件自己的浏览器动作不混入展开列表。记录保存在插件本地聊天历史，
+结束后仍可查看。旧插件继续接收原来的单行状态。
 
 此功能不依赖 Monitor，无需修改 zylos-core。Remote 只读 Agent 现有的 Codex CLI
-或 Claude Code 根会话 JSONL 日志，只发送固定分类和已知程序名，不发送命令参数、
-原始输出、路径或思考内容。活动标记位于 C4 消息开头，短预览也能关联；未知标记、
+或 Claude Code 根会话 JSONL 日志。公开文字仅来自 Codex commentary / Claude assistant text，
+会过滤常见凭证；工具记录含固定分类、已知工具和程序名及起止时间，不发送命令参数、
+原始输出或隐藏的 analysis / reasoning / thinking 内容。活动标记位于 C4 消息开头，短预览也能关联；未知标记、
 其他 Channel、混合任务及已结束连接不推测归属。
 
 - `BROWSER_REMOTE_AGENT_DIR`：Agent 工作目录，需含 `.zylos/config.json`，默认
@@ -185,7 +188,9 @@ PNG/JPEG/WebP/GIF 按 MIME 与文件头校验；标准输出不携带截图 Base
 有订阅任务时每 750 毫秒读取新增日志，每 5 秒刷新会话发现，最多跟踪 4 个会话，
 每个会话每次最多读取 1 MiB。没有活动任务时不读取日志。日志不可用、无法确定归属
 或状态过期时，插件回退到原有进度提示，不阻断任务。运行时日志格式变化可能需要
-更新 Remote 适配器。Monitor 的完整诊断记录仍由下面的开关单独控制。
+更新 Remote 适配器。历史每批最多 100 条，待发缓冲最多 500 条；超过上限会发送省略数量。
+插件会合并相同工具 ID 的开始与结束，并限制本地历史体积；这些限制不影响任务执行。
+Monitor 的完整诊断记录仍由下面的开关单独控制。
 
 ## 组件配置 `config.json`
 
@@ -281,3 +286,14 @@ Agent 应按请求中的契约持续提交决策，直到 `finished:true` 或明
 | `scripts/send.js`、`scripts/reply-route.js`      | C4 最终回复适配与当前请求的命令地址     |
 | `scripts/attachments.js`                         | Agent 主机图片、文件附件校验与保存      |
 | `src/lib/monitor.js`、`src/lib/agent-trace.js`   | 可选执行诊断                            |
+
+### Messages during an active task
+
+Clients advertising `agent-input-v1` send follow-ups as independent `agent-input`
+frames. Remote forwards each directly to C4, including while a browser decision
+command is running. It does not queue these messages behind the decision exchange.
+C4 and the Agent runtime own message scheduling; browser execution remains serial.
+The latest owner input ID accompanies actions and final replies so the extension
+can reject outdated decisions. Existing clients and their `agent-steer-v1`
+continuations remain supported; new clients require Remote's `agent-input-v1`
+capability to enable follow-ups. No zylos-core modification is required.

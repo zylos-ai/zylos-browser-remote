@@ -1,5 +1,6 @@
 
 const AGENT_MESSAGE_CAPABILITY = "agent-message-v2";
+const STEER_CAPABILITY = "agent-input-v1";
 const record = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const validId = (v) =>
   typeof v === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(v);
@@ -58,9 +59,8 @@ function normalizeAgentRequest(input) {
   if (
     !validId(input.id) ||
     !validId(input.taskId) ||
-    !Number.isInteger(input.round) ||
-    input.round < 1 ||
-    input.round > 30
+    !Number.isSafeInteger(input.round) ||
+    input.round < 1
   )
     throw new Error("Invalid request identity");
   const msg = input.version === undefined ? upgradeLegacy(input) : input;
@@ -135,6 +135,40 @@ function normalizeAgentRequest(input) {
   ) {
     throw new Error("Continuation must reference the original message");
   }
+  let updates;
+  if (msg.updates !== undefined) {
+    if (
+      msg.round === 1 ||
+      !Array.isArray(msg.updates) ||
+      !msg.updates.length ||
+      msg.updates.length > 8
+    )
+      throw new Error("Invalid steering updates");
+    const ids = new Set([msg.taskId]);
+    updates = msg.updates.map((update) => {
+      if (
+        !record(update) ||
+        Object.keys(update).some((k) => !["message", "context"].includes(k)) ||
+        !record(update.message) ||
+        !validId(update.message.id) ||
+        ids.has(update.message.id)
+      )
+        throw new Error("Invalid steering message");
+      ids.add(update.message.id);
+      // Reuse the full owner-input validation; never accept routing/execution
+      // overrides from an update, or change the parent task's identity.
+      const validated = normalizeAgentRequest({
+        version: 2,
+        id: msg.id,
+        taskId: update.message.id,
+        round: 1,
+        message: update.message,
+        context: update.context,
+        execution: {},
+      });
+      return { message: validated.message, context: validated.context };
+    });
+  }
   // Do not trust endpoint/routing fields supplied by a client.
   return {
     version: 2,
@@ -143,7 +177,42 @@ function normalizeAgentRequest(input) {
     round: msg.round,
     message: msg.message,
     context: msg.context,
+    ...(updates ? { updates } : {}),
     execution: msg.execution,
   };
 }
-export { AGENT_MESSAGE_CAPABILITY, normalizeAgentRequest, messageText };
+function normalizeAgentInput(input) {
+  if (
+    input.version !== 2 ||
+    !validId(input.taskId) ||
+    input.id === input.taskId ||
+    !Number.isSafeInteger(input.sequence) ||
+    input.sequence < 1
+  )
+    throw new Error("Invalid owner input identity");
+  const validated = normalizeAgentRequest({
+    version: 2,
+    id: input.id,
+    taskId: input.id,
+    round: 1,
+    message: input.message,
+    context: input.context,
+    execution: {},
+  });
+  return {
+    version: 2,
+    id: input.id,
+    taskId: input.taskId,
+    sequence: input.sequence,
+    message: validated.message,
+    context: validated.context,
+  };
+}
+
+export {
+  AGENT_MESSAGE_CAPABILITY,
+  STEER_CAPABILITY,
+  normalizeAgentRequest,
+  normalizeAgentInput,
+  messageText,
+};

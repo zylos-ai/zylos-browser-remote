@@ -3,12 +3,17 @@
 // Opaque, correlated Agent response. Browser action schemas live in the extension.
 import client from "./relay-client.js";
 import { ENDPOINT_RE } from "../src/lib/endpoint.js";
-const [endpoint, id] = process.argv.slice(2);
+const [endpoint, id, flag, inputId, ...extra] = process.argv.slice(2);
 if (
   !ENDPOINT_RE.test(endpoint || "") ||
-  !/^[A-Za-z0-9._:-]{1,128}$/.test(id || "")
+  !/^[A-Za-z0-9._:-]{1,128}$/.test(id || "") ||
+  extra.length ||
+  (flag !== undefined &&
+    (flag !== "--input-id" || !/^[A-Za-z0-9._:-]{1,128}$/.test(inputId || "")))
 ) {
-  console.error("usage: decision.js <endpoint> <request-id> < response.json");
+  console.error(
+    "usage: decision.js <endpoint> <request-id> [--input-id <owner-input-id>] < response.json",
+  );
   process.exit(2);
 }
 let input = "";
@@ -23,7 +28,12 @@ process.stdin.on("data", (chunk) => {
 process.stdin.on("end", async () => {
   try {
     const decision = JSON.parse(input);
-    const { body } = await client.decision({ endpoint, id, decision });
+    const { body } = await client.decision({
+      endpoint,
+      id,
+      decision,
+      ...(inputId ? { inputId } : {}),
+    });
     process.stdout.write(JSON.stringify(body) + "\n");
     process.exitCode = body.ok ? 0 : 1;
   } catch (error) {

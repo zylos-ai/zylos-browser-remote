@@ -7,7 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The whole repository is now ESM** (`"type": "module"`); `src/`,
+  `scripts/`, `tools/`, `hooks/` and `test/` use `import`/`export`
+  throughout. This clears the Zylos registry `CONTRIBUTING.md` prerequisite
+  that previously blocked registration. Runtime behaviour is unchanged and
+  no public interface moved: the HTTP/WebSocket routes, the CLI entry
+  points, the environment variables and `config.json` all behave exactly as
+  they did in 0.9.0. `ecosystem.config.cjs` deliberately stays CommonJS —
+  PM2 reads it as a plain config file — and is imported as a default import
+  where tests assert on it.
+- `src/index.js` no longer decides "am I the entry point?" from
+  `process.argv[1]` alone. PM2 picks ESM-vs-CommonJS from package.json
+  `"type"` and loads an ESM entry through a dynamic `import()` inside its
+  own wrapper, which makes `argv[1]` name the wrapper rather than this file;
+  the usual check would have been permanently false under PM2 and the
+  service would have started, reported healthy and never listened. The entry
+  check now prefers `process.env.pm_exec_path` and compares `realpath` on
+  both sides, since a symlink in the deployed path defeats a string compare.
+  Verified by running the entry directly, under PM2, and as a test import.
+- `src/lib/config.js` and `scripts/attachments.js` resolve their data
+  directories on every call instead of at module load, and `config.js` gains
+  `resetConfigCache()`. ESM evaluates every `import` before any statement in
+  the importing module, so a load-time constant could no longer be
+  redirected by a test setting `HOME` or `BROWSER_REMOTE_OBS_DIR` above its
+  imports — the suite would have read, written and pruned the live
+  `~/zylos/components/browser-remote` store instead of its temp directory.
+  `config.js` exports are correspondingly `dataDir()`/`configPath()` rather
+  than the former `DATA_DIR`/`CONFIG_PATH` constants.
+- `scripts/relay-client.js` is now a `createClient({http, base, setTimeout,
+  clearTimeout})` factory with an unchanged default singleton export. Its
+  test previously re-evaluated the file's source text in a `vm` sandbox,
+  which cannot execute ESM; injecting the seams as arguments tests the
+  module that actually ships rather than a copy of its text.
+
+## [0.10.0] - 2026-09-30
+
+Ships alongside Zylos Browser Extension 0.16.0.
+
 ### Added
+
+- `agent-input-v1` sends additional owner messages directly to C4 during an
+  active task, without a Remote-side message queue. Inputs are correlated by
+  browser endpoint, task and sequence; decisions acknowledge the latest input.
+- `agent-history-v1` relays public Agent commentary and limited tool activity
+  from attributed Codex or Claude Code root sessions. Hidden reasoning and raw
+  tool arguments or outputs are excluded. The extension can retain this public
+  history locally.
 
 - `src/lib/config.js`: optional `config.json` support for the one
   per-deployment runtime option, `activityEnabled`. Resolution order is
@@ -43,44 +90,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `test/release-consistency.test.js`: machine gate keeping the four release
   version faces (package.json, package-lock.json, SKILL.md frontmatter,
   CHANGELOG.md) in agreement, with the template's negative controls intact.
-  Ported from the component template.
+  Ported from the template's ESM original to CommonJS to match this
+  repository.
 - `package.json` metadata required by the component template: `homepage`,
   `bugs`, `repository`, `keywords`, `author`, `license`, `engines`.
 
 ### Changed
 
-- **The whole repository is now ESM** (`"type": "module"`); `src/`,
-  `scripts/`, `tools/`, `hooks/` and `test/` use `import`/`export`
-  throughout. This clears the Zylos registry `CONTRIBUTING.md` prerequisite
-  that previously blocked registration. Runtime behaviour is unchanged and
-  no public interface moved: the HTTP/WebSocket routes, the CLI entry
-  points, the environment variables and `config.json` all behave exactly as
-  they did in 0.9.0. `ecosystem.config.cjs` deliberately stays CommonJS —
-  PM2 reads it as a plain config file — and is imported as a default import
-  where tests assert on it.
-- `src/index.js` no longer decides "am I the entry point?" from
-  `process.argv[1]` alone. PM2 picks ESM-vs-CommonJS from package.json
-  `"type"` and loads an ESM entry through a dynamic `import()` inside its
-  own wrapper, which makes `argv[1]` name the wrapper rather than this file;
-  the usual check would have been permanently false under PM2 and the
-  service would have started, reported healthy and never listened. The entry
-  check now prefers `process.env.pm_exec_path` and compares `realpath` on
-  both sides, since a symlink in the deployed path defeats a string compare.
-  Verified by running the entry directly, under PM2, and as a test import.
-- `src/lib/config.js` and `scripts/attachments.js` resolve their data
-  directories on every call instead of at module load, and `config.js` gains
-  `resetConfigCache()`. ESM evaluates every `import` before any statement in
-  the importing module, so a load-time constant could no longer be
-  redirected by a test setting `HOME` or `BROWSER_REMOTE_OBS_DIR` above its
-  imports — the suite would have read, written and pruned the live
-  `~/zylos/components/browser-remote` store instead of its temp directory.
-  `config.js` exports are correspondingly `dataDir()`/`configPath()` rather
-  than the former `DATA_DIR`/`CONFIG_PATH` constants.
-- `scripts/relay-client.js` is now a `createClient({http, base, setTimeout,
-  clearTimeout})` factory with an unchanged default singleton export. Its
-  test previously re-evaluated the file's source text in a `vm` sandbox,
-  which cannot execute ESM; injecting the seams as arguments tests the
-  module that actually ships rather than a copy of its text.
+- Browser tasks no longer expire because of a total-duration or decision-round
+  limit. Delivery and connection timeouts remain separate from task duration.
+- Codex activity discovery recognizes both CLI and editor root sessions for
+  the configured Agent directory, while keeping conservative task attribution.
+- Decision and final-answer commands carry the latest owner input identifier
+  so stale replies cannot finish a task or replay superseded actions.
+
+### Upgrade notes
+
+Update Remote before loading Extension 0.16.0. Existing keys and port settings
+are retained. Older clients and their negotiated capabilities remain supported.
+No zylos-core change is required for these features; C4 and the selected Agent
+runtime still determine when a delivered follow-up is processed.
 
 ## [0.9.0] - 2026-09-28
 

@@ -16,7 +16,6 @@ class AgentExchange {
     if (!state || state.taskId !== chatId) {
       state?.attachments.close();
       if (state?.waiter) {
-        clearTimeout(state.waiter.timer);
         state.waiter.resolve({
           ok: false,
           code: "STALE_DECISION",
@@ -69,10 +68,9 @@ class AgentExchange {
     while (state.receipts.size > 32)
       state.receipts.delete(state.receipts.keys().next().value);
     state.waiter = null;
-    clearTimeout(waiter.timer);
     waiter.resolve(response);
   }
-  async respond(endpointId, id, decision) {
+  async respond(endpointId, id, decision, inputId) {
     const state = this.states.get(endpointId);
     if (!state)
       return {
@@ -97,18 +95,9 @@ class AgentExchange {
     // before acknowledging receipt of this response.
     state.mode = true;
     const next = new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        if (state.waiter?.id !== id) return;
-        state.waiter = null;
-        resolve({
-          ok: false,
-          code: "DECISION_WAIT_TIMEOUT",
-          message:
-            "Execution outcome unknown. Retry this same request ID only; never invent a new action request.",
-        });
-      }, 120000);
-      timer.unref?.();
-      state.waiter = { id, resolve, timer };
+      // One waiter per endpoint, released by the next request, task end,
+      // replacement or disconnect. Execution has no wall-clock deadline.
+      state.waiter = { id, resolve };
     });
     const previous = state.receipts.get(id);
     try {
@@ -116,13 +105,12 @@ class AgentExchange {
       // retries whose earlier browser actions have already happened.
       await this.ext.request(endpointId, {
         method: "agent-decision",
-        params: { id, decision },
+        params: { id, decision, ...(inputId ? { inputId } : {}) },
         timeoutMs: 10000,
       });
       if (previous && !state.terminal && state.waiter?.id === id) {
         const waiter = state.waiter;
         state.waiter = null;
-        clearTimeout(waiter.timer);
         waiter.resolve({ ...previous, replayed: true });
       } else if (state.waiter && (state.terminal || state.next?.id !== id))
         this.deliver(state);
@@ -130,7 +118,6 @@ class AgentExchange {
       const waiter = state.waiter;
       if (waiter?.id === id) {
         state.waiter = null;
-        clearTimeout(waiter.timer);
         waiter.resolve({
           ok: false,
           code: error.code || "EXT_ERROR",
@@ -153,7 +140,6 @@ class AgentExchange {
     this.states.delete(endpointId);
     state?.attachments.close();
     if (state?.waiter) {
-      clearTimeout(state.waiter.timer);
       state.waiter.resolve({
         ok: false,
         code: "EXT_OFFLINE",

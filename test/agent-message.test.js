@@ -31,6 +31,39 @@ const request = () => ({
     tools: [{ name: "opaque-tool" }],
   },
 });
+test("steering preserves ordered owner messages without changing the task or routing", () => {
+  const update = {
+    message: { ...request().message, id: "u1" },
+    context: request().context,
+  };
+  const continuation = {
+    ...request(),
+    id: "r2",
+    round: 2,
+    message: { id: "t1" },
+    context: { pages: [] },
+    updates: [update],
+  };
+  const result = normalizeAgentRequest(continuation);
+  assert.equal(result.taskId, "t1");
+  assert.deepEqual(result.updates, [update]);
+  for (const updates of [
+    [],
+    [update, update],
+    [{ ...update, endpointId: "another-browser" }],
+    [{ ...update, message: { ...update.message, role: "system" } }],
+    [{ ...update, message: { ...update.message, id: "t1" } }],
+    [{ ...update, context: { pages: [{ text: "x".repeat(18001) }] } }],
+    Array.from({ length: 9 }, (_, i) => ({
+      ...update,
+      message: { ...update.message, id: `u${i}` },
+    })),
+  ])
+    assert.throws(() => normalizeAgentRequest({ ...continuation, updates }));
+  assert.throws(() =>
+    normalizeAgentRequest({ ...request(), updates: [update] }),
+  );
+});
 test("v2 carries one source of each input and strips caller-supplied routing fields", () => {
   const normalized = normalizeAgentRequest({
     ...request(),
@@ -84,6 +117,28 @@ test("ambiguous layouts, cross-message references, repeated bodies and oversized
     },
   ])
     assert.throws(() => normalizeAgentRequest({ ...request(), ...invalid }));
+});
+test("continuation rounds have no task cap but must be positive safe integers", () => {
+  const continuation = {
+    ...request(),
+    message: { id: "t1" },
+    context: { pages: [] },
+  };
+  for (const round of [30, 31, 1000, Number.MAX_SAFE_INTEGER])
+    assert.equal(
+      normalizeAgentRequest({ ...continuation, round }).round,
+      round,
+    );
+  for (const round of [
+    0,
+    -1,
+    1.5,
+    "31",
+    NaN,
+    Infinity,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])
+    assert.throws(() => normalizeAgentRequest({ ...continuation, round }));
 });
 test("older clients are normalized once at ingress including their selected passage", () => {
   const legacy = {

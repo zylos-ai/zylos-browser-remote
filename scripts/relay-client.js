@@ -39,7 +39,8 @@ function createClient(deps = {}) {
         return;
       }
       const data = body === undefined ? null : JSON.stringify(body);
-      const timeoutMs = pathname === "/decision" ? 125000 : 10000;
+      const waitingForExecution = pathname === "/decision";
+      const timeoutMs = 10000;
       let timer;
       const req = httpImpl.request(
         {
@@ -47,6 +48,7 @@ function createClient(deps = {}) {
           port: url.port,
           path: url.pathname,
           method,
+          timeout: 0,
           headers: data
             ? {
                 "content-type": "application/json",
@@ -77,6 +79,9 @@ function createClient(deps = {}) {
           });
         },
       );
+      // Bound connecting/sending, but let an accepted command wait for browser
+      // execution or task completion for as long as it needs. Keep the same request.
+      if (waitingForExecution) req.once("finish", () => clearTimer(timer));
       req.on("error", (err) => {
         clearTimer(timer);
         if (err.code === "ECONNREFUSED") {
@@ -96,9 +101,13 @@ function createClient(deps = {}) {
         req.destroy(
           Object.assign(
             new Error(
-              `Relay HTTP response timed out after ${timeoutMs}ms; delivery is unknown, do not automatically resend`,
+              `Relay HTTP ${waitingForExecution ? "request delivery" : "response"} timed out after ${timeoutMs}ms; delivery is unknown, do not automatically resend`,
             ),
-            { code: "RELAY_RESPONSE_TIMEOUT" },
+            {
+              code: waitingForExecution
+                ? "RELAY_REQUEST_TIMEOUT"
+                : "RELAY_RESPONSE_TIMEOUT",
+            },
           ),
         );
       }, timeoutMs);

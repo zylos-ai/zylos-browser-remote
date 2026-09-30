@@ -7,12 +7,13 @@ import {
   AgentActivity,
   ActivitySession,
   CAPABILITY,
+  HISTORY_CAPABILITY,
   describeTool,
 } from "../src/lib/agent-activity.js";
 import { Monitor } from "../src/lib/monitor.js";
 import { RolloutSession } from "../src/lib/agent-trace.js";
 
-function fixture(runtime = "codex") {
+function fixture(runtime = "codex", history = false) {
   let now = 10000;
   const frames = [];
   const ext = {
@@ -24,7 +25,7 @@ function fixture(runtime = "codex") {
   const connect = (
     endpointId,
     taskId = "same-task",
-    capabilities = [CAPABILITY],
+    capabilities = history ? [CAPABILITY, HISTORY_CAPABILITY] : [CAPABILITY],
   ) => {
     ext.conns.set(endpointId, { agentTurn: taskId, capabilities });
     const token = collector.bind({ endpointId, request: { taskId } });
@@ -117,6 +118,127 @@ test("Codex activity replaces one current frame, pairs overlapping tools and nev
   f.emit("event_msg", { type: "task_complete" });
   f.collector.flush();
   assert.equal(f.frames.at(-1).category, "idle");
+});
+
+for (const field of ["channel", "phase"])
+  test(`Codex ${field} commentary and paired tools preserve quick events between polls`, () => {
+    const f = fixture("codex", true);
+    f.prompt();
+    const comment = {
+      type: "message",
+      id: "comment-1",
+      role: "assistant",
+      [field]: "commentary",
+      content: [
+        {
+          type: "output_text",
+          text: "I will compare the sources. API_KEY=secret-value",
+        },
+      ],
+    };
+    f.emit("response_item", comment);
+    f.emit("response_item", comment);
+    f.emit("response_item", {
+      ...comment,
+      id: "private",
+      channel: "analysis",
+      content: [{ type: "output_text", text: "PRIVATE reasoning" }],
+    });
+    f.emit("response_item", {
+      type: "reasoning",
+      summary: [{ text: "PRIVATE summary" }],
+    });
+    f.emit("response_item", {
+      ...comment,
+      id: "final",
+      channel: "final",
+      content: [{ type: "output_text", text: "FINAL" }],
+    });
+    f.call();
+    f.result();
+    f.call("two", "read_file");
+    f.collector.flush();
+    const events = f.frames.at(-1).events;
+    assert.equal(events.length, 3);
+    assert.match(events[0].text, /compare the sources/);
+    assert.match(events[0].text, /已隐藏/);
+    assert.equal(events[1].tool, "exec_command");
+    assert.equal(events[1].detail, "python3");
+    assert.ok(events[1].endedAt >= events[1].at);
+    assert.equal(events[2].tool, "read_file");
+    assert.doesNotMatch(
+      JSON.stringify(f.frames),
+      /PRIVATE|FINAL|secret-value|script.py|SECRET OUTPUT/,
+    );
+    f.result("two");
+    f.collector.flush();
+    assert.equal(f.frames.at(-1).events.length, 1);
+    assert.equal(f.frames.at(-1).events[0].id, events[2].id);
+    assert.ok(f.frames.at(-1).events[0].endedAt);
+  });
+
+test("Claude public text is captured once; hidden thinking, tools output and other routes remain excluded", () => {
+  const f = fixture("claude", true);
+  f.claude("user", `[Browser] [Activity ${f.token}]`);
+  const content = [
+    { type: "text", text: "Checking the next group of results." },
+    { type: "thinking", thinking: "PRIVATE" },
+    { type: "redacted_thinking", data: "PRIVATE" },
+    {
+      type: "tool_use",
+      id: "read",
+      name: "Read",
+      input: { path: "/secret/file" },
+    },
+  ];
+  f.claude("assistant", content, { uuid: "once" });
+  f.claude("assistant", content, { uuid: "once" });
+  f.claude("assistant", [{ type: "text", text: "SIDECHAIN" }], {
+    isSidechain: true,
+  });
+  f.collector.flush();
+  assert.equal(f.frames.at(-1).events.length, 2);
+  const count = f.frames.length;
+  f.claude("user", [
+    { type: "tool_result", tool_use_id: "read", content: "PRIVATE" },
+  ]);
+  f.claude("user", "different channel");
+  f.claude("assistant", [{ type: "text", text: "UNRELATED" }]);
+  f.collector.flush();
+  assert.ok(f.frames.length > count);
+  assert.doesNotMatch(
+    JSON.stringify(f.frames),
+    /PRIVATE|SIDECHAIN|UNRELATED|secret/,
+  );
+});
+
+test("history is bounded, capability gated, and never drained into another browser or mixed turn", () => {
+  const old = fixture();
+  old.prompt();
+  old.call();
+  old.collector.flush();
+  assert.equal(old.frames.at(-1).events, undefined);
+  const f = fixture("codex", true);
+  const a = [...f.ext.conns.keys()][0];
+  const b = "aaaaaaaaaaaa.bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const tokenB = f.connect(b);
+  f.prompt();
+  for (let i = 0; i < 550; i++) f.call(`call-${i}`);
+  f.collector.flush();
+  assert.equal(f.frames.at(-1).endpointId, a);
+  assert.equal(f.frames.at(-1).events.length, 100);
+  assert.equal(f.frames.at(-1).dropped, 50);
+  for (let i = 0; i < 4; i++) f.collector.flush();
+  assert.equal(f.frames.flatMap((frame) => frame.events || []).length, 500);
+  assert.ok(f.frames.every((frame) => frame.endpointId === a));
+  f.call("unflushed");
+  f.prompt(tokenB);
+  f.collector.flush();
+  assert.ok(
+    !f.frames
+      .flatMap((frame) => frame.events || [])
+      .some((event) => event.id.includes("unflushed")),
+  );
 });
 
 test("same key and same task ID in two installations, reconnects, old tokens and mixed channels remain isolated", () => {
