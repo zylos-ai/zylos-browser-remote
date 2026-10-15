@@ -1,5 +1,6 @@
 // Agent-host HTTP entry: decisions and read-only diagnostics.
 import http from "http";
+import { diagnosticParams, diagnosticResult, DIAGNOSTICS_CAPABILITY, DIAGNOSTICS_TIMEOUT_MS } from "./diagnostics.js";
 
 const BIND = "127.0.0.1";
 const BODY_LIMIT_BYTES = 256 * 1024; // params can carry a selector list, not a screenshot
@@ -50,6 +51,35 @@ class AgentLane {
       if (this.monitor?.handle(req, res, url, this.ext.status())) return;
       if (req.method === "GET" && url.pathname === "/status") {
         return reply(200, { ok: true, extensions: this.ext.status() });
+      }
+
+      if (req.method === "POST" && url.pathname === "/diagnostics") {
+        let body, params;
+        try {
+          body = await readJson(req, 4096);
+          params = diagnosticParams(body);
+        } catch (err) {
+          return fail(/too large/.test(err.message) ? 413 : 400, "BAD_REQUEST", err.message);
+        }
+        const target = this.ext.resolve(body.endpoint);
+        if (target.error) return fail(RELAY_ERROR_STATUS[target.error] || 500, target.error, target.message);
+        if (!this.ext.status()[target.endpointId]?.capabilities.includes(DIAGNOSTICS_CAPABILITY)) {
+          return fail(409, "DIAGNOSTICS_UNSUPPORTED", "This browser does not support diagnostics retrieval");
+        }
+        let result;
+        try {
+          result = await this.ext.request(target.endpointId, {
+            method: "diagnostics.get", params, timeoutMs: DIAGNOSTICS_TIMEOUT_MS,
+          });
+        } catch (err) {
+          const code = ["EXT_OFFLINE", "EXT_TIMEOUT"].includes(err.code) ? err.code : "DIAGNOSTICS_ERROR";
+          return fail(RELAY_ERROR_STATUS[code] || 502, code, "Diagnostics retrieval failed");
+        }
+        try {
+          return reply(200, { ok: true, endpointId: target.endpointId, ...diagnosticResult(result, params.limit) });
+        } catch {
+          return fail(502, "BAD_DIAGNOSTICS_RESPONSE", "Invalid diagnostics response");
+        }
       }
 
       if (req.method === "POST" && url.pathname === "/decision") {

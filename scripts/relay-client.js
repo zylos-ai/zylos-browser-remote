@@ -119,6 +119,7 @@ function createClient(deps = {}) {
   return {
     BASE: base,
     status: () => call("GET", "/status"),
+    diagnostics: (body) => call("POST", "/diagnostics", body),
     decision: (body) => call("POST", "/decision", body),
   };
 }
