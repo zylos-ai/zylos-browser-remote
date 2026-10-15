@@ -25,11 +25,21 @@ async function setup(t, interruption) {
   const ws = new WebSocket(`ws://127.0.0.1:${ext.server.address().port}/ext`, [SUBPROTOCOL, `key.${key}`]);
   await once(ws, "open");
   let forwarded = 0;
+  let signature;
+  let executions = 0;
   ws.on("message", raw => {
     const frame = JSON.parse(raw);
     if (frame.type !== "req") return;
     forwarded++;
+    const current = JSON.stringify([frame.params.decision, frame.params.inputId]);
+    if (signature !== undefined && signature !== current) {
+      ws.send(JSON.stringify({ type: "error", id: frame.id, code: "DECISION_CONFLICT", message: "conflicting contents" }));
+      return;
+    }
     ws.send(JSON.stringify({ type: "resp", id: frame.id, result: { accepted: true } }));
+    if (signature !== undefined) return;
+    signature = current;
+    executions++;
     ws.send(JSON.stringify({ type: "agent-turn-end", taskId: "task", status: "interrupted", interruption }));
   });
   const connected = once(ext, "connected");
@@ -38,11 +48,11 @@ async function setup(t, interruption) {
   ext.conns.get(endpoint).agentTurn = "task";
   exchange.ingest({ endpointId: endpoint, chatId: "task", request: { id: "r1", taskId: "task", round: 1 } });
   const client = createClient({ base: `http://127.0.0.1:${agent.server.address().port}` });
-  return { client, endpoint, forwarded: () => forwarded };
+  return { client, endpoint, forwarded: () => forwarded, executions: () => executions };
 }
 
-test("control-loss evidence reaches actual /decision terminal response without another decision or replay", async t => {
-  const { client, endpoint, forwarded } = await setup(t, receipt);
+test("control-loss evidence reaches actual /decision; terminal retries preserve extension conflict checks without action replay", async t => {
+  const { client, endpoint, forwarded, executions } = await setup(t, receipt);
   const body = { endpoint, id: "r1", decision: { kind: "actions", actions: [{ method: "fill" }] } };
   const first = (await client.decision(body)).body;
   assert.equal(first.finished, true);
@@ -53,7 +63,10 @@ test("control-loss evidence reaches actual /decision terminal response without a
   const retry = (await client.decision(body)).body;
   assert.equal(retry.replayed, true);
   assert.deepEqual(retry.interruption, receipt);
-  assert.equal(forwarded(), 1);
+  assert.equal(forwarded(), 2);
+  assert.equal((await client.decision({ ...body, decision: { kind: "done", text: "different" } })).body.code, "DECISION_CONFLICT");
+  assert.equal((await client.decision({ ...body, inputId: "new-input" })).body.code, "DECISION_CONFLICT");
+  assert.equal(executions(), 1);
   assert.equal((await client.decision({ ...body, id: "other" })).body.code, "STALE_DECISION");
 });
 
@@ -70,11 +83,12 @@ test("malformed evidence is refused without blocking terminal stop; old clients 
   }
 });
 
-test("control-loss receipt schema bounds counts and permits no raw data or unknown methods", () => {
+test("control-loss receipt schema bounds counts and syntax, without a browser method inventory", () => {
   for (const value of [{ ...receipt, results: Array(11).fill(receipt.results[0]) },
-    { ...receipt, results: [{ method: "SECRET", outcome: "completed" }] },
+    { ...receipt, results: [{ method: "https://private.example/", outcome: "completed" }] },
     { ...receipt, results: [{ method: "fill", outcome: "SECRET" }] },
     { ...receipt, resume: "auto-reattach" }, { ...receipt, reason: "SECRET" }]) {
     assert.equal(controlLossReceipt(value), undefined);
   }
+  assert.equal(controlLossReceipt({ ...receipt, results: [{ method: "future-browser-method", outcome: "completed" }] }).results[0].method, "future-browser-method");
 });

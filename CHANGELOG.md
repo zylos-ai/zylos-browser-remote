@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Restore extension-owned terminal retry validation, reject inconsistent
+  diagnostic pagination, and preserve partial-capture metadata. Relay validation
+  uses bounded structure rather than duplicated browser tool/error inventories.
+
 - Preserve bounded control-loss action receipts on interrupted browser turns.
   Terminal decision responses retain completed/uncertain outcomes without
   returning another decision request or replaying actions on a terminal retry.

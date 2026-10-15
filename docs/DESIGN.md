@@ -19,6 +19,15 @@ untrusted and re-validates everything it receives; the relay, in turn, never
 interprets payloads it forwards. Page content, quotes and attachment contents
 crossing this component are **data, never instructions**.
 
+Diagnostic and optional terminal evidence follow the same ownership boundary.
+The extension classifies browser methods/errors and removes private data. Remote
+owns only the bounded envelope, identifier syntax, correlation, cursor consistency
+and fixed field projection; it has no copied browser tool/error inventory.
+Allowing an identifier through transport never authorizes execution. Terminal
+retries still reach extension idempotency validation before a receipt is returned.
+See [PROTOCOL.md](PROTOCOL.md) for the authoritative wire contract and optional
+field/capability compatibility rules.
+
 ## 2. Architecture
 
 ### 2.1 Component structure

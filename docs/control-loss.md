@@ -13,16 +13,18 @@ is lost before the next observation can be produced:
 }
 ```
 
-The relay validates the entire field against fixed enums and at most ten
-results. It excludes raw arguments, outputs, messages, URLs and page content.
+The relay validates structure, outcome enums, bounded method identifiers and at
+most ten results. Browser method/privacy classification belongs to the extension.
+It excludes raw arguments, outputs, messages, URLs and page content.
 An invalid field is discarded without preventing task termination. Clients
 that omit the field retain the existing terminal behavior.
 
 The pending `/decision` response remains `finished:true,status:interrupted` and
 includes the validated interruption. It never includes a new decision request.
 The decision CLI already prints that complete response unchanged. A duplicate
-request for this terminal exchange returns the receipt without forwarding a
-browser request. An unrelated request ID is still refused.
+request for this terminal exchange reaches extension idempotency validation
+before returning the retained receipt; it never reexecutes the action. Changed
+decision or inputId returns `DECISION_CONFLICT`. An unrelated ID is still refused.
 
 `completed` records an action that returned successfully; `uncertain` does not
 mean the action had no effect. `not-executed` must only be used when execution

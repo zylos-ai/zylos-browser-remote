@@ -52,7 +52,7 @@ export async function exportDiagnostics(body, { all = false, client: transport =
         (result.hasMore && result.nextCursor <= (query.after ?? 0))) return incomplete("EXPORT_INVALID_PAGE");
     bytes += Buffer.byteLength(JSON.stringify(result));
     if (bytes > 1024 * 1024 || events.length + result.events.length > 4000) return incomplete("EXPORT_LIMIT");
-    truncated ||= result.truncated || result.dropped > 0 || !result.storageHealthy || result.restartCount > 0 || !result.enabled;
+    truncated ||= result.truncated || result.dropped > 0 || !result.storageHealthy || result.restartCount > 0 || !result.enabled || result.partialCapture;
     events.push(...result.events);
     last = result;
     if (!all || !result.hasMore) return { ...last, events, snapshot, truncated, complete: !result.hasMore && !truncated };

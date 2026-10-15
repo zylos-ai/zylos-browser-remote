@@ -93,10 +93,6 @@ class AgentExchange {
         message:
           "A decision is still executing; do not submit concurrent decisions",
       };
-    if (state.terminal === "interrupted" && state.interruption) {
-      return { ok: true, accepted: true, finished: true, status: state.terminal,
-        interruption: state.interruption, ...(state.receipts.has(id) ? { replayed: true } : {}) };
-    }
     // Arm before forwarding: a very fast client may return its next request
     // before acknowledging receipt of this response.
     state.mode = true;
@@ -114,7 +110,7 @@ class AgentExchange {
         params: { id, decision, ...(inputId ? { inputId } : {}) },
         timeoutMs: 10000,
       });
-      if (previous && !state.terminal && state.waiter?.id === id) {
+      if (previous && (!state.terminal || previous.finished) && state.waiter?.id === id) {
         const waiter = state.waiter;
         state.waiter = null;
         waiter.resolve({ ...previous, replayed: true });

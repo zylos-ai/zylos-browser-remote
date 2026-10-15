@@ -11,7 +11,7 @@ import { diagnosticResult } from "../src/lib/diagnostics.js";
 const key = "ab".repeat(32);
 const sample = () => ({ enabled: true, version: "0.17.0", events: [], nextCursor: 0, dropped: 0,
   schemaVersion: 2, epoch: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", highWater: 0,
-  oldestCursor: 0, hasMore: false, truncated: false, storageHealthy: true, restartCount: 0 });
+  oldestCursor: 0, hasMore: false, truncated: false, storageHealthy: true, restartCount: 0, partialCapture: false });
 async function setup(t) {
   const ext = new ExtLane({ loadKeys: () => ({ [keyIdOf(key)]: { sha256: digest(key) } }) });
   await ext.listen(0, "127.0.0.1");
@@ -86,7 +86,7 @@ test("diagnostic limits and response fields are bounded", async t => {
   assert.throws(() => diagnosticResult({ ...sample(), extra: "x".repeat(262144) }, 100));
   assert.throws(() => diagnosticResult({ ...sample(), events: Array(201).fill({}) }, 200));
   assert.deepEqual(diagnosticResult({ ...sample(), url: "private" }, 100), sample());
-  assert.throws(() => diagnosticResult({ ...sample(), events: [{ seq: 1, at: 10, event: "typed_secret" }] }, 100));
+  assert.throws(() => diagnosticResult({ ...sample(), events: [{ seq: 1, at: 10, event: "private text" }] }, 100));
   assert.deepEqual(diagnosticResult({ ...sample(), nextCursor: 1, highWater: 1, events: [{ seq: 1, at: 10, event: "socket-close", source: "background", level: "warn", reason: "remote_disconnect", url: "private" }] }, 100).events,
     [{ seq: 1, at: 10, event: "socket-close", source: "background", level: "warn", reason: "remote_disconnect" }]);
   await assert.rejects(createClient({ base: "http://example.com:3803" }).diagnostics({ endpoint: a.endpoint }), /non-loopback/);
