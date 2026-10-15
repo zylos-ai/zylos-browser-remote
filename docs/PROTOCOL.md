@@ -54,11 +54,64 @@ browser routing, not the Agent's conversation context or memory.
 | Remote → Extension | `{type:"req",id,method:"agent-decision",params:{id,decision},deadline}`                                    | Correlated opaque decision               |
 | Extension → Remote | `{type:"resp",id,result}` or `{type:"error",id,code,message,details?}`                                     | Decision acceptance or rejection         |
 | Extension → Remote | `{type:"agent-event",taskId,id,phase,method,params?,result?,error?}`                                       | Optional diagnostic metadata             |
-| Extension → Remote | `{type:"agent-turn-end",taskId,status,text?}`                                                              | Durable completion or interruption       |
+| Extension → Remote | `{type:"agent-turn-end",taskId,status,text?,interruption?}`                                                | Durable completion or interruption       |
 
 The numeric `req.id` correlates socket responses. `params.id` is the pending
 Agent request ID. `taskId` groups all rounds from one user message. These are
 separate from the connection's `endpointId`.
+
+### Optional interruption evidence
+
+For `status:"interrupted"`, an extension may include
+`interruption:{reason:"CONTROL_LOST",results:[{method,outcome}],observation:"unavailable",resume:"new-user-message-required"}`.
+At most ten results are accepted. Outcome is `completed`, `uncertain`, or
+`not-executed`. Methods are extension-defined identifiers, not relay-owned tools.
+The relay bounds identifier syntax to `[A-Za-z][A-Za-z0-9_.:-]{0,63}` and validates
+the structure without interpreting which actions are permitted. Unknown fields
+invalidate this optional evidence, never prevent terminal handling.
+
+The pending `/decision` response retains this evidence with `finished:true`;
+it does not create a new decision request. Retried decisions still pass through
+extension validation: identical decision/inputId returns the retained receipt,
+different contents return `DECISION_CONFLICT`. Validation RPCs are not action
+replays. The relay stores no additional decision signature or browser policy.
+Old extensions may omit the field; old relays ignore it and still terminate.
+This additive field does not require a new mandatory handshake capability.
+
+### Opt-in diagnostic pulls
+
+The extension advertises `diagnostics-v2` in hello. Only then may the loopback
+`POST /diagnostics` route send a correlated `req` with method `diagnostics.get`.
+The HTTP body names an exact `endpoint` and accepts `after`, `limit` (1..200),
+`epoch`, `through`, `level`, `source`, and local numeric `task` filters. The WS
+params omit `endpoint`. This read requires no active task/control grant and may
+not enable collection or execute a browser action. WS timeout is five seconds.
+
+The response is `{schemaVersion:2,enabled,version,epoch,events,nextCursor,highWater,
+oldestCursor,dropped,hasMore,truncated,storageHealthy,restartCount,partialCapture}`.
+Epoch is a UUID. Counts/cursors are nonnegative safe integers. Partial capture
+means collection began after a task started; absent metadata is conservatively
+treated as partial. Source is `background|sidepanel|executor` and level is
+`debug|info|warn|error`. Each event carries `seq,at,event,source,level`; optional
+fields are `reason,task,op,argCount,closeCode,errorKind,method,code,status,count`.
+The extension owns the semantic/privacy allowlists for identifier fields; the
+relay checks bounded syntax, types and size, projects known fields, and rejects
+raw message/stack/argument containers from its output. Syntax validation cannot
+prove that an identifier contains no private data; the extension is responsible
+for generating classifications rather than copying user-controlled values.
+
+Pages are bounded to 200 events/256 KiB. Events increase strictly in sequence.
+For `hasMore:false`, `nextCursor` must equal `highWater`; for `hasMore:true`,
+it must be smaller and advance past the input cursor. A frozen export keeps
+the same epoch and high-water (`through`) across pages. Filters scan past
+nonmatching events. Reset returns `DIAGNOSTICS_RESET`, unsupported capability
+returns `DIAGNOSTICS_UNSUPPORTED`; disconnect/timeout remain distinct errors.
+The relay never persists diagnostic pages. CLI export bounds and JSON/NDJSON
+format are specified in [diagnostics](diagnostics.md).
+
+Upgrade Remote before the extension when new diagnostic/evidence delivery is
+required. Unsupported diagnostics are explicit; an older relay may omit new
+optional evidence. Never silently change an existing capability's meaning.
 
 An `agent-request` id must be unique **within its task**, not across the whole
 connection: the relay dedupes on `taskId` + `id` and releases a task's ids once

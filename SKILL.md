@@ -176,6 +176,21 @@ instead of deleting active-task files.
 
 ## Operations
 
+For owner-requested plugin debugging, use `node scripts/diagnostics.js <endpointId>
+--after 0 --limit 100` with the exact browser endpoint. This reads metadata only
+and does not require an active browser task. The owner must first enable the
+extension's diagnostics switch; never enable it by modifying storage or bypassing
+the switch. Read [diagnostics](docs/diagnostics.md) for fields, pagination, bounds,
+and disabled/unsupported/offline responses. Use `--all --format ndjson` for a
+bounded snapshot export; filter with `--level`, `--source`, or local numeric
+`--task`. Correlate task/op IDs with epoch and sequence, never by adjacency alone.
+Preserve dropped/truncated/restart/storage/partialCapture metadata and `complete:false`; do not
+call an incomplete export a full log. Do not replay browser actions to
+recover a failed query. Keep the agent HTTP lane private.
+Use [the authoritative protocol](docs/PROTOCOL.md) for diagnostic capability and
+terminal receipt compatibility. The extension owns browser/privacy classification;
+Remote's identifier validation is a transport bound, never action authorization.
+
 ```bash
 node ~/zylos/.claude/skills/browser-remote/scripts/key.js new --label owner-browser
 node ~/zylos/.claude/skills/browser-remote/scripts/key.js list

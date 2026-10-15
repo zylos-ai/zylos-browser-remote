@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Restore extension-owned terminal retry validation, reject inconsistent
+  diagnostic pagination, and preserve partial-capture metadata. Relay validation
+  uses bounded structure rather than duplicated browser tool/error inventories.
+
+- Preserve bounded control-loss action receipts on interrupted browser turns.
+  Terminal decision responses retain completed/uncertain outcomes without
+  returning another decision request or replaying actions on a terminal retry.
+
+- Versioned execution-chain diagnostic events and filtered JSON/NDJSON snapshot
+  export. `--all` fixes an epoch and high-water cursor and reports retention,
+  restart, storage, reset and export-limit gaps without claiming completeness.
+
+- Read-only extension diagnostics retrieval through the loopback agent lane and
+  `scripts/diagnostics.js`, scoped to an explicit browser endpoint. Requests use
+  the existing authenticated WebSocket with a five-second deadline. Unsupported,
+  disabled, offline, and timeout states remain distinct; diagnostics are not
+  persisted by the relay and require no browser control grant.
+
 ## [0.10.1] - 2026-09-30
 
 Module-system change only. No runtime, protocol or configuration change:
