@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Versioned execution-chain diagnostic events and filtered JSON/NDJSON snapshot
+  export. `--all` fixes an epoch and high-water cursor and reports retention,
+  restart, storage, reset and export-limit gaps without claiming completeness.
+
 - Read-only extension diagnostics retrieval through the loopback agent lane and
   `scripts/diagnostics.js`, scoped to an explicit browser endpoint. Requests use
   the existing authenticated WebSocket with a five-second deadline. Unsupported,

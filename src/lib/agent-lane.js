@@ -72,11 +72,19 @@ class AgentLane {
             method: "diagnostics.get", params, timeoutMs: DIAGNOSTICS_TIMEOUT_MS,
           });
         } catch (err) {
-          const code = ["EXT_OFFLINE", "EXT_TIMEOUT"].includes(err.code) ? err.code : "DIAGNOSTICS_ERROR";
-          return fail(RELAY_ERROR_STATUS[code] || 502, code, "Diagnostics retrieval failed");
+          const code = ["EXT_OFFLINE", "EXT_TIMEOUT", "DIAGNOSTICS_RESET", "BAD_PARAMS"].includes(err.code) ? err.code : "DIAGNOSTICS_ERROR";
+          return fail(RELAY_ERROR_STATUS[code] || (code === "DIAGNOSTICS_RESET" ? 409 : code === "BAD_PARAMS" ? 400 : 502), code, "Diagnostics retrieval failed");
         }
         try {
-          return reply(200, { ok: true, endpointId: target.endpointId, ...diagnosticResult(result, params.limit) });
+          const page = diagnosticResult(result, params.limit);
+          if ((params.epoch !== undefined && page.epoch !== params.epoch) ||
+              (params.through !== undefined && page.highWater !== params.through) ||
+              page.nextCursor < params.after ||
+              page.events.some(event => event.seq <= params.after ||
+                ["level", "source", "task"].some(name => params[name] !== undefined && event[name] !== params[name]))) {
+            return fail(502, "BAD_DIAGNOSTICS_RESPONSE", "Diagnostics response does not match the query");
+          }
+          return reply(200, { ok: true, endpointId: target.endpointId, ...page });
         } catch {
           return fail(502, "BAD_DIAGNOSTICS_RESPONSE", "Invalid diagnostics response");
         }

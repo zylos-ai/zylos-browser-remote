@@ -181,9 +181,11 @@ For owner-requested plugin debugging, use `node scripts/diagnostics.js <endpoint
 and does not require an active browser task. The owner must first enable the
 extension's diagnostics switch; never enable it by modifying storage or bypassing
 the switch. Read [diagnostics](docs/diagnostics.md) for fields, pagination, bounds,
-and disabled/unsupported/offline responses. Records contain sequence/time but no
-task IDs: use a fresh capture for one reproduction, and do not infer that adjacent
-events necessarily belong to the same task. Do not replay browser actions to
+and disabled/unsupported/offline responses. Use `--all --format ndjson` for a
+bounded snapshot export; filter with `--level`, `--source`, or local numeric
+`--task`. Correlate task/op IDs with epoch and sequence, never by adjacency alone.
+Preserve dropped/truncated/restart/storage metadata and `complete:false`; do not
+call an incomplete export a full log. Do not replay browser actions to
 recover a failed query. Keep the agent HTTP lane private.
 
 ```bash
