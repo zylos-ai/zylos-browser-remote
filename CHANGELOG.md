@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Preserve bounded control-loss action receipts on interrupted browser turns.
+  Terminal decision responses retain completed/uncertain outcomes without
+  returning another decision request or replaying actions on a terminal retry.
+
 - Versioned execution-chain diagnostic events and filtered JSON/NDJSON snapshot
   export. `--all` fixes an epoch and high-water cursor and reports retention,
   restart, storage, reset and export-limit gaps without claiming completeness.

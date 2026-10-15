@@ -20,6 +20,7 @@
 
 import http from "http";
 import { EventEmitter } from "events";
+import { controlLossReceipt } from "./control-loss.js";
 import { WebSocketServer } from "ws";
 import { verifyKey, loadKeys } from "./keys.js";
 import { ATTACHMENT_CAPABILITY } from "../../scripts/attachments.js";
@@ -391,6 +392,8 @@ class ExtLane extends EventEmitter {
             browserId: conn.browserId,
             taskId: msg.taskId,
             interrupt,
+            ...(msg.status === "interrupted" && controlLossReceipt(msg.interruption)
+              ? { interruption: controlLossReceipt(msg.interruption) } : {}),
             status: ["done", "blocked", "interrupted", "stopped"].includes(
               msg.status,
             )
