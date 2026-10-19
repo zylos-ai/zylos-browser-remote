@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Negotiate bounded same-runtime task recovery across transport disconnects and
+  socket replacement. Retain exchanges, attachments and waiters; acknowledge and
+  deduplicate client delivery frames; replay pending decisions only through the
+  extension's existing signature validation. Runtime changes, revocation and
+  recovery expiry terminate retained state.
+
 - Restore extension-owned terminal retry validation, reject inconsistent
   diagnostic pagination, and preserve partial-capture metadata. Relay validation
   uses bounded structure rather than duplicated browser tool/error inventories.

@@ -104,7 +104,7 @@ class AgentLane {
         if (!body || typeof body !== "object" || Array.isArray(body)) {
           return fail(400, "BAD_REQUEST", "body must be a JSON object");
         }
-        const target = this.ext.resolve(body.endpoint);
+        const target = this.ext.resolve(body.endpoint, { allowRecovery: true });
         if (target.error)
           return fail(
             RELAY_ERROR_STATUS[target.error] || 500,

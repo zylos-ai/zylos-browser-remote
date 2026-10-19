@@ -19,6 +19,7 @@
  */
 
 import http from "http";
+import { createHash } from "node:crypto";
 import { EventEmitter } from "events";
 import { controlLossReceipt } from "./control-loss.js";
 import { WebSocketServer } from "ws";
@@ -68,6 +69,8 @@ const MAX_COMMAND_TIMEOUT_MS = 120_000;
 const MAX_CHAT_TEXT = 8000;
 // Sent by the extension in `error` frames when it did not supply a code itself.
 const DEFAULT_ERROR_CODE = "EXT_ERROR";
+const RESUME_CAPABILITY = "task-resume-v1";
+const RECOVERY_MS = 120000;
 
 /**
  * Emits:
@@ -76,10 +79,11 @@ const DEFAULT_ERROR_CODE = "EXT_ERROR";
  *   'agent-request' ({endpointId, keyId, browserId, label, text, request})
  */
 class ExtLane extends EventEmitter {
-  constructor({ log = () => {}, loadKeys: loader = loadKeys } = {}) {
+  constructor({ log = () => {}, loadKeys: loader = loadKeys, recoveryMs = RECOVERY_MS } = {}) {
     super();
     this.log = log;
     this.loadKeys = loader;
+    this.recoveryMs = Math.min(RECOVERY_MS, Math.max(1, recoveryMs));
     this.conns = new Map(); // endpointId -> registered Conn
 
     this.server = http.createServer((req, res) => {
@@ -124,7 +128,7 @@ class ExtLane extends EventEmitter {
 
   // Decisions must name their original endpoint. Never guess another browser,
   // even if only one happens to remain connected.
-  resolve(endpoint) {
+  resolve(endpoint, { allowRecovery = false } = {}) {
     if (typeof endpoint !== "string" || !ENDPOINT_RE.test(endpoint)) {
       return {
         error: "BAD_ENDPOINT",
@@ -132,6 +136,8 @@ class ExtLane extends EventEmitter {
       };
     }
     if (this.isConnected(endpoint)) return { endpointId: endpoint };
+    if (allowRecovery && this.conns.get(endpoint)?.recoveryTimer)
+      return { endpointId: endpoint };
     let known = false;
     try {
       known = Boolean(this.loadKeys()[endpoint.split(".")[0]]);
@@ -153,7 +159,8 @@ class ExtLane extends EventEmitter {
         endpointId,
         keyId: c.keyId,
         browserId: c.browserId,
-        connected: !!c.ready,
+        connected: this.isConnected(endpointId),
+        recovery: c.recoveryTimer ? { state: "reconnecting", expiresAt: c.recoveryExpiresAt } : null,
         label: c.label,
         since: c.since,
         version: c.version || null,
@@ -238,9 +245,7 @@ class ExtLane extends EventEmitter {
     ws.on("close", (code) => {
       clearTimeout(conn.handshakeTimer);
       if (this.conns.get(conn.endpointId) === conn) {
-        this.conns.delete(conn.endpointId);
-        this._failAllPending(conn, "extension disconnected");
-        this.emit("disconnected", conn.endpointId, code);
+        if (!this._suspend(conn, code)) this._terminate(conn, code);
       }
       this.log(`ext[${conn.endpointId || keyId}]: closed (${code})`);
     });
@@ -258,6 +263,12 @@ class ExtLane extends EventEmitter {
     const caps = Array.isArray(msg.capabilities)
       ? msg.capabilities.filter((c) => typeof c === "string").slice(0, 32)
       : [];
+    if (caps.includes(RESUME_CAPABILITY) &&
+        (!instanceProtocol || typeof msg.runtimeEpoch !== "string" ||
+         !/^[a-zA-Z0-9_-]{16,128}$/.test(msg.runtimeEpoch))) {
+      safeClose(conn.ws, 4002, "invalid runtime epoch");
+      return;
+    }
     if (
       !caps.includes("agent-loop-v1") ||
       (instanceProtocol &&
@@ -277,6 +288,27 @@ class ExtLane extends EventEmitter {
       ? `${conn.keyId}.${conn.browserId}`
       : conn.keyId;
     const prev = this.conns.get(endpointId);
+    const resumable = caps.includes(RESUME_CAPABILITY);
+    const newTask = Boolean(prev && msg.resume && !prev.agentTurn &&
+      !prev.seenTasks?.has(msg.resume.taskId) && msg.resume.phase === "waiting" && msg.resume.round === 1);
+    const requestMatches = msg.resume && (newTask || msg.resume.phase === "terminal" ||
+      (typeof msg.resume.requestId === "string" &&
+       (msg.resume.requestId === prev?.currentRequestId && msg.resume.round === prev.agentRound ||
+        msg.resume.phase === "waiting" && msg.resume.round === (prev?.agentRound || 0) + 1)));
+    const resumed = Boolean(prev && resumable && prev.runtimeEpoch === msg.runtimeEpoch &&
+      prev.capabilities.includes(RESUME_CAPABILITY) && msg.resume &&
+      (newTask || !(prev.agentTurn || prev.lastTaskId) || (prev.agentTurn || prev.lastTaskId) === msg.resume.taskId) &&
+      typeof msg.resume.taskId === "string" && msg.resume.taskId.length > 0 && msg.resume.taskId.length <= 160 &&
+      ["waiting", "executing", "terminal"].includes(msg.resume.phase) &&
+      requestMatches &&
+      (!prev.recoveryExpiresAt || prev.recoveryExpiresAt > Date.now()));
+    if (msg.resume && !resumed) {
+      if (prev) this._terminate(prev, 4005, "resume identity mismatch");
+      this._send(conn, { type: "ready", endpointId, capabilities: [RESUME_CAPABILITY],
+        runtimeEpoch: msg.runtimeEpoch, resume: { status: "rejected", reason: "RESUME_STATE_MISMATCH" } });
+      safeClose(conn.ws, 4005, "resume rejected");
+      return;
+    }
     if (
       !prev &&
       [...this.conns.values()].filter((c) => c.keyId === conn.keyId).length >=
@@ -290,11 +322,19 @@ class ExtLane extends EventEmitter {
       this.log(
         `ext[${endpointId}]: superseding previous connection of this instance`,
       );
-      this.emit("disconnected", endpointId, 4001);
-      this._failAllPending(
-        prev,
-        "browser instance reconnected; in-flight request abandoned",
-      );
+      if (resumed) {
+        clearTimeout(prev.recoveryTimer);
+        for (const [id, pending] of prev.pending) {
+          if (pending.method === "agent-decision") continue;
+          clearTimeout(pending.timer);
+          prev.pending.delete(id);
+          pending.reject(Object.assign(new Error("connection replaced"), { code: "EXT_OFFLINE" }));
+        }
+        for (const name of ["agentTurn", "lastTaskId", "agentRound", "currentRequestId", "agentRequests", "ownerText",
+          "inputSequence", "agentStopping", "deliveries", "seenTasks", "pending", "nextId"])
+          conn[name] = prev[name];
+        for (const pending of conn.pending.values()) clearTimeout(pending.timer);
+      } else this._terminate(prev, 4001, "browser instance replaced");
       safeClose(prev.ws, 4001, "superseded by same browser instance");
     }
     clearTimeout(conn.handshakeTimer);
@@ -302,6 +342,8 @@ class ExtLane extends EventEmitter {
     conn.version =
       typeof msg.version === "string" ? msg.version.slice(0, 80) : null;
     conn.capabilities = caps;
+    conn.runtimeEpoch = resumable ? msg.runtimeEpoch : null;
+    conn.deliveries ||= new Map();
     conn.ready = true;
     this.conns.set(endpointId, conn);
     this.log(
@@ -318,10 +360,13 @@ class ExtLane extends EventEmitter {
     this._send(conn, {
       type: "ready",
       endpointId,
+      ...(resumable ? { runtimeEpoch: conn.runtimeEpoch, recoveryWindowMs: this.recoveryMs,
+        resume: { status: resumed ? "resumed" : "fresh" } } : {}),
       capabilities: instanceProtocol
         ? [
             "agent-loop-v1",
             INSTANCE_CAPABILITY,
+            RESUME_CAPABILITY,
             ATTACHMENT_CAPABILITY,
             AGENT_MESSAGE_CAPABILITY,
             INTERRUPT_CAPABILITY,
@@ -336,6 +381,83 @@ class ExtLane extends EventEmitter {
             "agent-steer-v1",
           ],
     });
+    if (resumed) {
+      for (const [id, pending] of conn.pending) this._sendPending(conn, id, pending);
+      this.emit("resumed", endpointId);
+    }
+  }
+
+  _suspend(conn, code) {
+    if (this.closing || conn.terminalTransport || [4002, 4004, 4005].includes(code) ||
+        !conn.capabilities.includes(RESUME_CAPABILITY)) return false;
+    if (conn.recoveryTimer) return true;
+    conn.recoveryExpiresAt = Date.now() + this.recoveryMs;
+    for (const [id, pending] of conn.pending) {
+      clearTimeout(pending.timer);
+      if (pending.method !== "agent-decision") {
+        conn.pending.delete(id);
+        pending.reject(Object.assign(new Error("extension disconnected"), { code: "EXT_OFFLINE" }));
+      }
+    }
+    conn.recoveryTimer = setTimeout(() => {
+      if (this.conns.get(conn.endpointId) === conn)
+        this._terminate(conn, 4005, "recovery window expired");
+    }, this.recoveryMs);
+    conn.recoveryTimer.unref?.();
+    this.emit("suspended", conn.endpointId, { expiresAt: conn.recoveryExpiresAt });
+    return true;
+  }
+
+  _terminate(conn, code, reason = "extension disconnected") {
+    conn.terminalTransport = true;
+    clearTimeout(conn.recoveryTimer);
+    conn.recoveryTimer = null;
+    if (this.conns.get(conn.endpointId) === conn) this.conns.delete(conn.endpointId);
+    this._failAllPending(conn, reason);
+    this.emit("disconnected", conn.endpointId, code);
+  }
+
+  _delivery(conn, msg) {
+    if (!conn.capabilities?.includes(RESUME_CAPABILITY)) return true;
+    if (msg.runtimeEpoch !== conn.runtimeEpoch || typeof msg.deliveryId !== "string" ||
+        !/^[a-zA-Z0-9_-]{1,128}$/.test(msg.deliveryId)) return false;
+    const signature = createHash("sha256").update(JSON.stringify(msg)).digest("hex");
+    const previous = conn.deliveries.get(msg.deliveryId);
+    if (previous) {
+      if (previous.signature !== signature) {
+        this._terminate(conn, 4005, "delivery identity collision");
+        safeClose(conn.ws, 4005, "delivery identity collision");
+        return false;
+      }
+      if (previous.acked) this._ackDelivery(conn, msg);
+      return false;
+    }
+    for (const [id, entry] of conn.deliveries) {
+      if (conn.deliveries.size < 256) break;
+      if (entry.acked) conn.deliveries.delete(id);
+    }
+    if (conn.deliveries.size >= 256) {
+      this._terminate(conn, 4005, "recovery delivery buffer full");
+      safeClose(conn.ws, 4005, "recovery delivery buffer full");
+      return false;
+    }
+    conn.deliveries.set(msg.deliveryId, { acked: false, signature });
+    return true;
+  }
+
+  _ackDelivery(conn, msg, statusFrame) {
+    if (!msg.deliveryId) return;
+    const receipt = conn.deliveries.get(msg.deliveryId);
+    if (receipt) {
+      receipt.acked = true;
+      if (statusFrame) receipt.statusFrame = statusFrame;
+    }
+    const current = this.conns.get(conn.endpointId);
+    if (current?.runtimeEpoch === conn.runtimeEpoch) {
+      if (receipt?.statusFrame && (!current.agentTurn || current.agentTurn === msg.taskId))
+        this._send(current, receipt.statusFrame);
+      this._send(current, { type: "task-ack", deliveryId: msg.deliveryId, runtimeEpoch: conn.runtimeEpoch });
+    }
   }
 
   // ------------------------------------------------------------ frames
@@ -368,11 +490,18 @@ class ExtLane extends EventEmitter {
       case "hello":
         return this._hello(conn, msg);
       case "agent-request":
+        if (!this._delivery(conn, msg)) return;
         return this._onAgentRequest(conn, msg);
       case "agent-input":
+        if (!this._delivery(conn, msg)) return;
         return this._onAgentInput(conn, msg);
       case "agent-turn-end": {
-        if (!conn.agentTurn || msg.taskId !== conn.agentTurn) return;
+        if (!this._delivery(conn, msg)) return;
+        if (!conn.agentTurn || msg.taskId !== conn.agentTurn) {
+          this._ackDelivery(conn, msg);
+          return;
+        }
+        conn.lastTaskId = conn.agentTurn;
         conn.agentTurn = null;
         // Release this task's dedup entries so the bounded set cannot evict a
         // live task's IDs just because an old finished task is still holding
@@ -417,6 +546,13 @@ class ExtLane extends EventEmitter {
             });
           },
         );
+        for (const [id, pending] of conn.pending) {
+          if (pending.method !== "agent-decision") continue;
+          clearTimeout(pending.timer);
+          conn.pending.delete(id);
+          pending.reject(Object.assign(new Error("browser task ended"), { code: "TURN_TERMINATED" }));
+        }
+        this._ackDelivery(conn, msg);
         return;
       }
       case "agent-event":
@@ -470,8 +606,11 @@ class ExtLane extends EventEmitter {
 
   _onAgentRequest(conn, msg) {
     const reportStatus = (status) => {
-      if (this.conns.get(conn.endpointId) === conn)
-        this._send(conn, {
+      const frame = { type: "agent-status", requestId: msg.id, ...status };
+      if (msg.deliveryId) return this._ackDelivery(conn, msg, frame);
+      const current = this.conns.get(conn.endpointId);
+      if (current === conn || (current?.runtimeEpoch && current.runtimeEpoch === conn.runtimeEpoch))
+        this._send(current, {
           type: "agent-status",
           requestId: msg.id,
           ...status,
@@ -486,7 +625,8 @@ class ExtLane extends EventEmitter {
     } catch {
       return reportStatus({ state: "failed", code: "BAD_AGENT_REQUEST" });
     }
-    if (conn.agentTurn && conn.agentTurn !== msg.taskId)
+    if ((conn.agentTurn && conn.agentTurn !== msg.taskId) ||
+        (!conn.agentTurn && conn.seenTasks?.has(msg.taskId)))
       return reportStatus({ state: "failed", code: "TURN_BUSY" });
     // Scope dedup to the task: the protocol only promises IDs correlate within
     // a task, so a client that restarts its counter must not have a legitimate
@@ -502,11 +642,20 @@ class ExtLane extends EventEmitter {
       (conn.agentTurn === request.taskId ? conn.agentRound + 1 : 1)
     )
       return reportStatus({ state: "failed", code: "BAD_AGENT_REQUEST" });
+    conn.seenTasks ||= new Set();
+    if (!conn.seenTasks.has(msg.taskId) && conn.seenTasks.size >= 1024) {
+      reportStatus({ state: "failed", code: "TASK_HISTORY_FULL" });
+      this._terminate(conn, 4005, "task history full");
+      safeClose(conn.ws, 4005, "task history full");
+      return;
+    }
+    conn.seenTasks.add(msg.taskId);
     conn.agentRequests.add(dedupKey);
     while (conn.agentRequests.size > 100)
       conn.agentRequests.delete(conn.agentRequests.values().next().value);
     conn.agentTurn = msg.taskId;
     conn.agentRound = request.round;
+    conn.currentRequestId = request.id;
     if (request.round === 1) {
       conn.ownerText = messageText(request.message);
       conn.inputSequence = 0;
@@ -528,8 +677,11 @@ class ExtLane extends EventEmitter {
 
   _onAgentInput(conn, msg) {
     const reportStatus = (status) => {
-      if (this.conns.get(conn.endpointId) === conn)
-        this._send(conn, {
+      const frame = { type: "agent-input-status", taskId: msg.taskId, inputId: msg.id, ...status };
+      if (msg.deliveryId) return this._ackDelivery(conn, msg, frame);
+      const current = this.conns.get(conn.endpointId);
+      if (current === conn || (current?.runtimeEpoch && current.runtimeEpoch === conn.runtimeEpoch))
+        this._send(current, {
           type: "agent-input-status",
           taskId: msg.taskId,
           inputId: msg.id,
@@ -574,7 +726,8 @@ class ExtLane extends EventEmitter {
   request(endpointId, { method, params, requestId, timeoutMs } = {}) {
     return new Promise((resolve, reject) => {
       const conn = this.conns.get(endpointId);
-      if (!conn?.ready || conn.ws.readyState !== conn.ws.OPEN) {
+      if (!conn?.ready || (conn.ws.readyState !== conn.ws.OPEN &&
+          !(conn.recoveryTimer && method === "agent-decision"))) {
         const err = new Error("extension not connected");
         err.code = "EXT_OFFLINE";
         reject(err);
@@ -582,13 +735,6 @@ class ExtLane extends EventEmitter {
       }
       const ms = clampTimeout(timeoutMs);
       const id = conn.nextId++;
-      const timer = setTimeout(() => {
-        conn.pending.delete(id);
-        const err = new Error(`timeout after ${ms}ms waiting for ${method}`);
-        err.code = "EXT_TIMEOUT";
-        reject(err);
-      }, ms);
-      conn.pending.set(id, { method, timer, resolve, reject });
       const frame = {
         id,
         type: "req",
@@ -597,14 +743,24 @@ class ExtLane extends EventEmitter {
         deadline: Date.now() + ms,
       };
       if (requestId) frame.requestId = requestId;
-      if (!this._send(conn, frame)) {
-        clearTimeout(timer);
-        conn.pending.delete(id);
-        const err = new Error("send failed");
-        err.code = "EXT_OFFLINE";
-        reject(err);
-      }
+      const pending = { method, ms, frame, resolve, reject };
+      conn.pending.set(id, pending);
+      if (!conn.recoveryTimer) this._sendPending(conn, id, pending);
     });
+  }
+
+  _sendPending(conn, id, pending) {
+    pending.frame.deadline = Date.now() + pending.ms;
+    pending.timer = setTimeout(() => {
+      conn.pending.delete(id);
+      pending.reject(Object.assign(new Error(`timeout waiting for ${pending.method}`), { code: "EXT_TIMEOUT" }));
+    }, pending.ms);
+    if (!this._send(conn, pending.frame)) {
+      if (pending.method === "agent-decision" && this._suspend(conn, 1006)) return;
+      clearTimeout(pending.timer);
+      conn.pending.delete(id);
+      pending.reject(Object.assign(new Error("send failed"), { code: "EXT_OFFLINE" }));
+    }
   }
 
   _send(conn, frame) {
@@ -643,13 +799,13 @@ class ExtLane extends EventEmitter {
       this.log(`ext: keys unreadable during beat: ${err.message}`);
     }
     for (const conn of this.conns.values()) {
-      if (conn.ws.readyState !== conn.ws.OPEN) continue;
       if (known && !known[conn.keyId]) {
         this.log(`ext[${conn.endpointId || conn.keyId}]: key revoked, closing`);
-        this._failAllPending(conn, "key revoked");
+        this._terminate(conn, 4004, "key revoked");
         safeClose(conn.ws, 4004, "key revoked");
         continue;
       }
+      if (conn.ws.readyState !== conn.ws.OPEN) continue;
       if (!conn.alive) {
         this.log(`ext[${conn.endpointId}]: heartbeat missed, terminating`);
         try {
@@ -665,9 +821,10 @@ class ExtLane extends EventEmitter {
   }
 
   close() {
+    this.closing = true;
     clearInterval(this.heartbeat);
     for (const conn of this.conns.values()) {
-      this._failAllPending(conn, "relay shutting down");
+      this._terminate(conn, 1001, "relay shutting down");
       safeClose(conn.ws, 1001, "relay shutting down");
     }
     for (const ws of this.wss.clients) ws.terminate();
