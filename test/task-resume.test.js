@@ -265,3 +265,16 @@ test("new task first frame lost after a completed task reconciles without revivi
   await until(() => delivered.length === 2);
   assert.equal(ext.conns.get(endpoint).agentTurn, "new-task");
 });
+
+test("resume mismatch closes the previous live socket as well as rejecting replacement", async t => {
+  const { ext, exchange, delivered, dial } = await setup(t);
+  const a = await dial();
+  a.send(request());
+  await until(() => delivered.length);
+  const closed = once(a.ws, "close");
+  const b = await dial({ ...resume, requestId: "different" });
+  assert.equal(b.ready.resume.status, "rejected");
+  assert.equal((await closed)[0], 4005);
+  assert.equal(exchange.states.size, 0);
+  assert.equal(ext.conns.size, 0);
+});

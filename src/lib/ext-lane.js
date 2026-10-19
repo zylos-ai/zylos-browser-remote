@@ -303,7 +303,10 @@ class ExtLane extends EventEmitter {
       requestMatches &&
       (!prev.recoveryExpiresAt || prev.recoveryExpiresAt > Date.now()));
     if (msg.resume && !resumed) {
-      if (prev) this._terminate(prev, 4005, "resume identity mismatch");
+      if (prev) {
+        this._terminate(prev, 4005, "resume identity mismatch");
+        safeClose(prev.ws, 4005, "resume identity mismatch");
+      }
       this._send(conn, { type: "ready", endpointId, capabilities: [RESUME_CAPABILITY],
         runtimeEpoch: msg.runtimeEpoch, resume: { status: "rejected", reason: "RESUME_STATE_MISMATCH" } });
       safeClose(conn.ws, 4005, "resume rejected");
