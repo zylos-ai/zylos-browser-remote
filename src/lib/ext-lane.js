@@ -540,9 +540,11 @@ class ExtLane extends EventEmitter {
             if (reported) return;
             reported = true;
             conn.agentStopping = false;
-            if (this.conns.get(conn.endpointId) !== conn || conn.superseded)
-              return;
-            this._send(conn, {
+            const current = this.conns.get(conn.endpointId);
+            if (!current || (current !== conn &&
+                (!conn.runtimeEpoch || current.runtimeEpoch !== conn.runtimeEpoch || current.lastTaskId !== msg.taskId))) return;
+            current.agentStopping = false;
+            this._send(current, {
               type: "agent-stop-result",
               taskId: msg.taskId,
               ...result,

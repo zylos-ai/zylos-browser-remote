@@ -278,3 +278,24 @@ test("resume mismatch closes the previous live socket as well as rejecting repla
   assert.equal(exchange.states.size, 0);
   assert.equal(ext.conns.size, 0);
 });
+
+test("late stop result releases stopping guard on recovered connection", async t => {
+  const { ext, delivered, dial } = await setup(t);
+  let reportStop;
+  ext.on("agent-turn-end", (_event, report) => { reportStop = report; });
+  const a = await dial();
+  a.send(request());
+  await until(() => delivered.length);
+  a.send({ type: "agent-turn-end", taskId: "task", status: "stopped", interrupt: true,
+    deliveryId: "stop", runtimeEpoch });
+  await until(() => reportStop);
+  a.ws.terminate();
+  await until(() => ext.conns.get(endpoint)?.recoveryTimer);
+  const b = await dial({ taskId: "task", phase: "terminal" });
+  assert.equal(ext.conns.get(endpoint).agentStopping, true);
+  reportStop({ ok: true });
+  await until(() => b.frames.find(f => f.type === "agent-stop-result"));
+  assert.equal(ext.conns.get(endpoint).agentStopping, false);
+  b.send({ ...request("new-first"), taskId: "new-task" });
+  await until(() => delivered.length === 2);
+});
