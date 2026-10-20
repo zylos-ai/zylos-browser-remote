@@ -1,5 +1,19 @@
 # Browser Remote protocol
 
+## Detailed diagnostic snapshot sharing
+
+Capability `diagnostics-detail-share-v1` enables the fixed RPC
+`diagnostics.detail.fetch` with exactly empty params. It requires a current
+extension-UI sharing grant for the immutable preview on this WSS connection;
+the Agent cannot create a grant. Extension failures use `DETAIL_SHARE_UNAVAILABLE`
+for absent, revoked, expired or invalid requests. The successful result is exactly
+`{schemaVersion:1,text,sha256}`, where text is the exact preview JSON (at most
+2 MiB UTF-8) and sha256 is its lowercase hexadecimal SHA-256. The relay validates
+the envelope, hash and expected detailed-capture schema, and never adds raw
+content to general metadata or logs. Fetch consumes the grant before send.
+Do not automatically retry, resume or replay this method. See
+[sharing and privacy boundaries](diagnostics.md#one-time-detailed-sharing).
+
 Remote transports an extension-owned decision loop. All browser operation
 schemas, execution rules and final-answer semantics are supplied by the extension.
 

@@ -6,6 +6,7 @@ import { ExtLane, SUBPROTOCOL } from "../src/lib/ext-lane.js";
 import { AgentExchange } from "../src/lib/agent-exchange.js";
 import { AgentLane } from "../src/lib/agent-lane.js";
 import { digest, keyIdOf } from "../src/lib/keys.js";
+import { IncidentEvidence } from "../src/lib/incident-evidence.js";
 
 const key = "ab".repeat(32);
 const browserId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -23,6 +24,11 @@ async function until(predicate) {
 async function setup(t, recoveryMs = 5000) {
   const ext = new ExtLane({ recoveryMs, loadKeys: () => ({ [keyIdOf(key)]: { sha256: digest(key) } }) });
   const exchange = new AgentExchange(ext);
+  const evidence = new IncidentEvidence();
+  ext.on("connected", (endpoint, connection) => evidence.connection(endpoint, true, connection.evidenceResumeTaskId));
+  ext.on("disconnected", endpoint => evidence.connection(endpoint, false));
+  ext.on("agent-event", event => evidence.record(event.endpointId, "action", event));
+  ext.on("agent-event-rejected", event => evidence.record(event.endpointId, "rejected", event));
   const delivered = [];
   ext.on("agent-request", (msg, ack) => {
     if (!exchange.ingest(msg)) delivered.push(msg);
@@ -39,8 +45,46 @@ async function setup(t, recoveryMs = 5000) {
     const ready = await until(() => frames.find(f => f.type === "ready"));
     return { ws, frames, ready, send: frame => ws.send(JSON.stringify(frame)) };
   };
-  return { ext, exchange, delivered, dial };
+  return { ext, exchange, delivered, dial, evidence };
 }
+
+test("verified same-task resume retains incident evidence, fresh connection clears it", async t => {
+  const { ext, delivered, dial, evidence } = await setup(t);
+  const a = await dial();
+  a.send(request());
+  await until(() => delivered.length);
+  a.send({ type: "agent-event", taskId: "task", id: "action", phase: "start", method: "fill" });
+  await until(() => evidence.records.length === 1);
+  evidence.record(endpoint, "request", { taskId: "other-task", id: "other-request" });
+  a.ws.terminate();
+  await until(() => ext.conns.get(endpoint)?.recoveryTimer);
+  const b = await dial(resume);
+  assert.equal(b.ready.resume.status, "resumed");
+  assert.equal(evidence.records.length, 1);
+  assert.equal(evidence.records[0].actionId, "action");
+  const snapshot = evidence.snapshot(endpoint, { correlations: [{ taskId: "task", actionId: "action" }] });
+  assert.equal(snapshot.connection.resumed, true);
+  assert.ok(snapshot.gaps.some(g => g.includes("transport interruption")));
+  await dial();
+  assert.equal(evidence.records.length, 0);
+});
+
+test("rejected events retain trusted task categories without payload or untrusted task claims", async t => {
+  const { delivered, dial, evidence } = await setup(t);
+  const a = await dial(); a.send(request()); await until(() => delivered.length);
+  const event = { type: "agent-event", taskId: "task", id: "action", phase: "start", method: "fill" };
+  a.send({ ...event, taskId: "PRIVATE-TASK", params: "PRIVATE-PARAM" });
+  a.send({ ...event, id: "x".repeat(161) });
+  a.send({ ...event, params: "PRIVATE-PARAM".repeat(3000) });
+  await until(() => evidence.records.length === 3);
+  const snapshot = evidence.snapshot(endpoint, { correlations: [{ taskId: "task", actionId: "action" }] });
+  assert.deepEqual(snapshot.records.map(record => record.reason), ["task-mismatch", "malformed", "oversized"]);
+  assert.ok(snapshot.records.every(record => record.taskId === "task"));
+  assert.doesNotMatch(JSON.stringify(snapshot), /PRIVATE-TASK|PRIVATE-PARAM/);
+  assert.equal(evidence.snapshot(endpoint, { correlations: [{ taskId: "unrelated", actionId: "action" }] }).records.length, 0);
+  evidence.record(endpoint, "rejected", { taskId: null, reason: "malformed" });
+  assert.equal(evidence.records.length, 3);
+});
 const request = (id = "first", round = 1) => ({ type: "agent-request", id, round,
   taskId: "task", deliveryId: `delivery-${id}`, runtimeEpoch, text: "Owner message", context: "{}", payload: {} });
 const resume = { taskId: "task", requestId: "first", round: 1, phase: "waiting" };
@@ -251,16 +295,19 @@ test("changed contents under a delivery ID close recovery instead of acknowledgi
 });
 
 test("new task first frame lost after a completed task reconciles without reviving old task", async t => {
-  const { ext, delivered, dial } = await setup(t);
+  const { ext, delivered, dial, evidence } = await setup(t);
   const a = await dial();
   a.send(request());
   await until(() => delivered.length);
+  evidence.record(endpoint, "request", { taskId: "task", id: "old-request" });
   a.send({ type: "agent-turn-end", taskId: "task", status: "done", deliveryId: "end", runtimeEpoch });
   await until(() => !ext.conns.get(endpoint).agentTurn);
   a.ws.terminate();
   await until(() => ext.conns.get(endpoint)?.recoveryTimer);
   const b = await dial({ ...resume, taskId: "new-task", requestId: "new-first" });
   assert.equal(b.ready.resume.status, "resumed");
+  assert.equal(evidence.records.length, 0);
+  assert.equal(evidence.connections.get(endpoint).resumed, false);
   b.send({ ...request("new-first"), taskId: "new-task" });
   await until(() => delivered.length === 2);
   assert.equal(ext.conns.get(endpoint).agentTurn, "new-task");

@@ -1,5 +1,6 @@
 // Agent-host HTTP entry: decisions and read-only diagnostics.
 import http from "http";
+import { detailParams, detailResult, DETAIL_CAPABILITY } from "./detail-diagnostics.js";
 import { diagnosticParams, diagnosticResult, DIAGNOSTICS_CAPABILITY, DIAGNOSTICS_TIMEOUT_MS } from "./diagnostics.js";
 
 const BIND = "127.0.0.1";
@@ -21,12 +22,14 @@ class AgentLane {
     log = () => {},
     monitor = null,
     exchange = null,
+    incidentEvidence = null,
   }) {
     this.ext = extLane;
     this.port = port;
     this.log = log;
     this.monitor = monitor;
     this.exchange = exchange;
+    this.incidentEvidence = incidentEvidence;
     this.server = http.createServer((req, res) => this._onHttp(req, res));
   }
 
@@ -51,6 +54,38 @@ class AgentLane {
       if (this.monitor?.handle(req, res, url, this.ext.status())) return;
       if (req.method === "GET" && url.pathname === "/status") {
         return reply(200, { ok: true, extensions: this.ext.status() });
+      }
+
+      if (req.method === "POST" && url.pathname === "/diagnostics/detail") {
+        let body;
+        try { body = await readJson(req, 4096); detailParams(body); }
+        catch { return fail(400, "BAD_REQUEST", "An exact endpoint and no other fields are required"); }
+        // This path never enters task recovery, tracing, or the generic metadata export.
+        try {
+          const target = this.ext.resolve(body.endpoint);
+          if (target.error) return fail(RELAY_ERROR_STATUS[target.error] || 503, target.error, "Browser unavailable");
+          if (!this.ext.status()[target.endpointId]?.capabilities.includes(DETAIL_CAPABILITY)) {
+            return fail(409, "DETAIL_SHARE_UNSUPPORTED", "This browser does not support detailed diagnostic sharing");
+          }
+          const raw = await this.ext.request(target.endpointId, {
+            method: "diagnostics.detail.fetch", params: {}, timeoutMs: 5000,
+          });
+          let result;
+          try { result = detailResult(raw); }
+          catch { return fail(502, "BAD_DETAIL_RESPONSE", "Invalid detailed diagnostics response"); }
+          res.setHeader("cache-control", "no-store");
+          const bundle = JSON.parse(result.text);
+          let remoteEvidence;
+          // Companion collection must not discard the already consumed, valid grant.
+          try {
+            remoteEvidence = bundle.schemaVersion === 2 && this.incidentEvidence
+              ? this.incidentEvidence.snapshot(target.endpointId, bundle) : undefined;
+          } catch { /* An absent companion is an explicit gap in the incident report. */ }
+          return reply(200, { ok: true, endpointId: target.endpointId, ...result, ...(remoteEvidence ? { remoteEvidence } : {}) });
+        } catch (err) {
+          const code = ["EXT_OFFLINE", "EXT_TIMEOUT", "DETAIL_SHARE_UNAVAILABLE"].includes(err.code) ? err.code : "DETAIL_SHARE_ERROR";
+          return fail(RELAY_ERROR_STATUS[code] || (code === "DETAIL_SHARE_UNAVAILABLE" ? 409 : 502), code, "Detailed diagnostic retrieval failed; do not retry automatically");
+        }
       }
 
       if (req.method === "POST" && url.pathname === "/diagnostics") {

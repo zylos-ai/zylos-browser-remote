@@ -1,5 +1,9 @@
 # Extension diagnostics
 
+This document first describes structured metadata diagnostics. The independent
+detailed sharing path below can include private strings and requires a separate
+preview and one-time sharing consent.
+
 The owner enables diagnostic collection in the extension panel. Collection is
 off by default. The extension keeps a bounded, expiring local ring of structured
 events; disabling collection clears that ring. It does not collect page URLs,
@@ -67,3 +71,95 @@ ten-second HTTP bound. None of these errors automatically retries the request.
 
 The agent lane remains bound to `127.0.0.1`. Never route it publicly. The public
 extension lane retains its existing authentication and exposes only `/ext`.
+
+## One-time detailed sharing
+
+After an explicit owner request, the owner enables local detailed capture,
+previews its immutable export and authorizes that exact snapshot for the current
+WSS connection in the extension UI. The sharing grant lasts at most two minutes,
+is bound to the current capture and connection, and is consumed before sending
+the response. Disconnect, capture disable/expiry, or explicit revoke invalidates
+an unused grant. Browser task control is independent of this consent.
+
+```sh
+node scripts/detail-diagnostics.js <exact-endpointId>
+```
+
+The CLI accepts exactly one full browser endpoint and no options. It calls
+`POST /diagnostics/detail` on the loopback agent lane with only `{ "endpoint":
+"<exact-endpointId>" }`. The route requires `diagnostics-detail-share-v1`, then
+sends the fixed method `diagnostics.detail.fetch` with empty params. There are no
+remote enable, grant, snapshot-selection or bulk-fetch commands. This request
+has a five-second extension deadline and ten-second HTTP bound, and is never
+replayed through task recovery or retried after failure.
+
+The extension response is exactly `{schemaVersion:1,text,sha256}`. `text` is the
+owner-previewed JSON string, bounded to 2 MiB in UTF-8. The relay validates its
+SHA-256, JSON diagnostic schema and bounded records before returning
+`{ok:true,endpointId,schemaVersion:1,text,sha256}` with `Cache-Control: no-store`.
+The CLI also validates the response. Unknown fields or errors never pass through.
+`DETAIL_SHARE_UNSUPPORTED`, `DETAIL_SHARE_UNAVAILABLE`, `BAD_DETAIL_RESPONSE`,
+`EXT_OFFLINE` and `EXT_TIMEOUT` distinguish common failure classes. A timeout
+may follow consumption; never infer that consent is still available.
+
+Detailed capture covers extension background/sidepanel Console strings and
+supported native Error details, not webpage Console. Pattern redaction cannot
+guarantee removal of private data. Explain before retrieval that it sends the
+snapshot to the configured Agent host and places CLI output into model context,
+which may also expose it to the model provider. The relay does not persist this
+snapshot or include it in status, structured diagnostics, monitor or trace output.
+It cannot control Agent conversation/model-provider retention or retract copies
+after retrieval. Do not persist, forward or publish raw output without separate
+owner authorization. Revocation only prevents future use of an unused grant.
+
+### Incident bundles
+
+`node scripts/incident-report.js <exact-endpointId>` uses that same one-shot
+consented fetch. It does not replay actions or enable capture. The envelope
+remains version 1; its immutable `text` may contain a version 2
+`browser-incident-bundle` with the original version 1 capture, action mappings,
+bounded incident windows and limited non-value page state. Legacy snapshots
+remain supported without a Remote companion.
+
+For version 2 only, Remote adds `remoteEvidence` outside the hashed text. This
+contains receipt metadata, never parameters, page text, input values, raw errors,
+connection keys or raw Monitor history. In-memory retention is two minutes,
+2,000 records, 32 connected endpoints and 512 KiB globally. A verified resume of
+the same runtime and task retains matching task records within those limits;
+fresh connections, different runtimes and new tasks clear old endpoint evidence.
+Resume status comes from the transport's authenticated state checks, not the
+extension's claimed resume flag. Export requires a successful consented fetch and
+matches the exact endpoint plus bundle task IDs, and action IDs for actions.
+The companion cannot recover metadata collected before this process started.
+It preserves its process epoch, current connection generation, retention limits,
+and explicit reconnect gaps. Drop counts cover global retention eviction, not all
+connection discards. Request IDs come from request envelopes; they are never
+inferred from action IDs. Action method names use the extension tool catalog;
+unknown names become `other`. Collector failures cannot interrupt transport or
+discard an already fetched valid share. If the companion is unavailable, the
+incident report records that gap.
+The CLI also omits an invalid optional companion while retaining independently
+validated preview bytes and hash. It emits a fixed gap without copying the
+invalid metadata and never fetches again. Invalid primary preview data still
+fails validation.
+
+Rejected `agent-event` frames contribute only fixed reason categories, scoped
+to the connection's trusted active task rather than the rejected payload's
+claimed task. They share record, byte and TTL limits. The report counts only
+retained matching-task rejections; events with no trusted task cannot be
+attributed and are not exported. A zero count cannot prove nothing was rejected.
+
+The bundle distinguishes `previewRuntime` from each incident's
+`runtimeAtTrigger`, and `pageBefore` from `pageState`. Pending or stale observations
+are not evidence of a before/after transition. Non-CDP `operation-error` triggers
+are supported without claiming that they establish a debugger detach.
+Merged `triggerFacts` preserve distinct trigger receipts, and `pageBeforeTiming`
+states the observation's relation to action start. The report includes clock and
+companion gaps rather than implying cross-clock ordering.
+
+Remote receipt time and extension time are separate clocks. Neither simultaneous
+timestamps nor queue acceptance prove execution order. Reports preserve partial
+capture gaps and mark cause undetermined. Existing Monitor capture is neither
+enabled nor read by this feature; raw history is explicitly absent. The CLI
+output includes the original sensitive preview, so its existing sharing and
+retention consent still applies.

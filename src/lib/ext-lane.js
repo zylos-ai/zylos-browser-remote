@@ -359,6 +359,8 @@ class ExtLane extends EventEmitter {
       label: conn.label,
       version: conn.version,
       capabilities: caps,
+      // Computed from the authenticated previous connection, never a hello claim.
+      evidenceResumeTaskId: resumed && !newTask ? msg.resume.taskId : null,
     });
     this._send(conn, {
       type: "ready",
@@ -569,8 +571,13 @@ class ExtLane extends EventEmitter {
           msg.method.length > 128 ||
           !["start", "end"].includes(msg.phase) ||
           Buffer.byteLength(JSON.stringify(msg)) > 32000
-        )
+        ) {
+          // Fixed categories only; rejected payloads and claimed task IDs stay private.
+          const reason = msg.taskId !== conn.agentTurn ? "task-mismatch" :
+            Buffer.byteLength(JSON.stringify(msg)) > 32000 ? "oversized" : "malformed";
+          this.emit("agent-event-rejected", { endpointId: conn.endpointId, taskId: conn.agentTurn, reason });
           return;
+        }
         this.emit("agent-event", {
           ...msg,
           endpointId: conn.endpointId,

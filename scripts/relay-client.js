@@ -40,6 +40,7 @@ function createClient(deps = {}) {
       }
       const data = body === undefined ? null : JSON.stringify(body);
       const waitingForExecution = pathname === "/decision";
+      const detailed = pathname === "/diagnostics/detail";
       const timeoutMs = 10000;
       let timer;
       const req = httpImpl.request(
@@ -57,8 +58,19 @@ function createClient(deps = {}) {
             : {},
         },
         (res) => {
-          let b = "";
-          res.on("data", (c) => (b += c));
+          let b = "", bytes = 0;
+          if (detailed) res.setEncoding?.("utf8");
+          res.on("data", (c) => {
+            bytes += Buffer.byteLength(c);
+            if (detailed && bytes > 16 * 1024 * 1024) {
+              b = "";
+              clearTimer(timer);
+              res.destroy();
+              reject(new Error("Detailed diagnostic response exceeds limit"));
+              return;
+            }
+            b += c;
+          });
           res.on("end", () => {
             clearTimer(timer);
             let parsed;
@@ -68,7 +80,7 @@ function createClient(deps = {}) {
               parsed = {
                 ok: false,
                 code: "BAD_RESPONSE",
-                message: b.slice(0, 200),
+                message: detailed ? "Invalid detailed diagnostics response" : b.slice(0, 200),
               };
             }
             resolve({ status: res.statusCode, body: parsed });
@@ -120,6 +132,7 @@ function createClient(deps = {}) {
     BASE: base,
     status: () => call("GET", "/status"),
     diagnostics: (body) => call("POST", "/diagnostics", body),
+    detailDiagnostics: (body) => call("POST", "/diagnostics/detail", body),
     decision: (body) => call("POST", "/decision", body),
   };
 }
