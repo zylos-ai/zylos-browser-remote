@@ -176,6 +176,17 @@ instead of deleting active-task files.
 
 ## Operations
 
+For detailed plugin Console/native error debugging, use the separate
+`node scripts/detail-diagnostics.js <exact-endpointId>` only after the owner
+explicitly requests retrieval and approves the immutable preview in the extension
+UI. Explain first that this sends the preview to the configured Agent host and
+places CLI output in model context, which may expose it to the model provider.
+Pattern redaction is incomplete; local revocation cannot retract received copies.
+The Agent cannot enable capture or grant sharing. A grant expires within two
+minutes and is consumed by the first fetch; never retry automatically or save,
+forward, or publish the raw output without separate authorization. See
+[detailed sharing](docs/diagnostics.md#one-time-detailed-sharing).
+
 For owner-requested plugin debugging, use `node scripts/diagnostics.js <endpointId>
 --after 0 --limit 100` with the exact browser endpoint. This reads metadata only
 and does not require an active browser task. The owner must first enable the

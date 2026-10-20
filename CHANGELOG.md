@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Separate one-time detailed diagnostic snapshot retrieval through the loopback
+  agent lane and `detail-diagnostics.js`. Requires extension UI consent for an
+  immutable preview, validates schema and SHA-256, rejects extra parameters,
+  suppresses raw errors, and never retries or persists the returned snapshot.
+
 - Negotiate bounded same-runtime task recovery across transport disconnects and
   socket replacement. Retain exchanges, attachments and waiters; acknowledge and
   deduplicate client delivery frames; replay pending decisions only through the
