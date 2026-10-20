@@ -44,6 +44,30 @@ function setup(t) {
   exchange.ingest(message("r1"));
   return { ext, exchange };
 }
+
+test("recovery terminal expiry releases the waiter and late or stale judgment never forwards", async t => {
+  const { ext, exchange } = setup(t);
+  const recovery = message("recovery", 2);
+  recovery.request.execution = { mode: "recovery", recovery: {
+    recoveryId: "11111111-1111-4111-8111-111111111111", expiresAt: 123456,
+    reason: "target_closed", cause: "unknown" }, results: [{ outcome: "completed" }] };
+  ext.request = async () => { exchange.ingest(recovery); return { accepted: true }; };
+  const result = await exchange.respond("aaaaaaaaaaaa", "r1", { kind: "actions", actions: [] });
+  assert.deepEqual(result.next.execution, recovery.request.execution);
+  let sends = 0;
+  ext.request = async () => {
+    sends++;
+    ext.emit("agent-turn-end", { endpointId: "aaaaaaaaaaaa", taskId: "task", status: "interrupted" });
+    return { accepted: true };
+  };
+  const terminal = await exchange.respond("aaaaaaaaaaaa", "recovery", { kind: "actions", actions: [] });
+  assert.equal(terminal.finished, true);
+  assert.equal(terminal.status, "interrupted");
+  const late = await exchange.respond("aaaaaaaaaaaa", "recovery", { kind: "actions", actions: [] });
+  assert.equal(late.code, "RECOVERY_CLOSED");
+  assert.equal((await exchange.respond("aaaaaaaaaaaa", "unrelated", { kind: "done" })).code, "STALE_DECISION");
+  assert.equal(sends, 1);
+});
 test("a superseded final returns steering on the same task, materializes files and isolates endpoints", async (t) => {
   const { ext, exchange } = setup(t);
   const update = message("r2", 2);

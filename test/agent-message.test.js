@@ -31,6 +31,22 @@ const request = () => ({
     tools: [{ name: "opaque-tool" }],
   },
 });
+
+test("recovery continuation preserves bounded evidence and rejects malformed recovery metadata", () => {
+  const recovery = { recoveryId: "11111111-1111-4111-8111-111111111111", expiresAt: 123456,
+    reason: "target_closed", cause: "unknown" };
+  const input = { ...request(), id: "r2", round: 2, message: { id: "t1" }, context: { pages: [] },
+    execution: { mode: "recovery", recovery, results: [{ outcome: "uncertain" }], tools: [{ name: "recover-control" }] } };
+  assert.deepEqual(normalizeAgentRequest(input).execution, input.execution);
+  for (const mutate of [v => v.recoveryId = "bad", v => v.expiresAt = -1,
+    v => v.expiresAt = Infinity, v => v.reason = "canceled_by_user", v => v.cause = "proven",
+    v => v.extra = "private"]) {
+    const bad = structuredClone(input); mutate(bad.execution.recovery);
+    assert.throws(() => normalizeAgentRequest(bad), /Invalid recovery request/);
+  }
+  assert.throws(() => normalizeAgentRequest({ ...input, execution: { ...input.execution, mode: "reading" } }));
+  assert.throws(() => normalizeAgentRequest({ ...input, round: 1 }));
+});
 test("steering preserves ordered owner messages without changing the task or routing", () => {
   const update = {
     message: { ...request().message, id: "u1" },

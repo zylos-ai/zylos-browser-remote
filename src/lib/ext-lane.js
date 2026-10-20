@@ -29,6 +29,7 @@ import { INTERRUPT_CAPABILITY } from "./agent-interrupt.js";
 import {
   AGENT_MESSAGE_CAPABILITY,
   STEER_CAPABILITY,
+  RECOVERY_CAPABILITY,
   normalizeAgentRequest,
   normalizeAgentInput,
   messageText,
@@ -372,6 +373,7 @@ class ExtLane extends EventEmitter {
             "agent-loop-v1",
             INSTANCE_CAPABILITY,
             RESUME_CAPABILITY,
+            RECOVERY_CAPABILITY,
             ATTACHMENT_CAPABILITY,
             AGENT_MESSAGE_CAPABILITY,
             INTERRUPT_CAPABILITY,
@@ -634,6 +636,10 @@ class ExtLane extends EventEmitter {
     try {
       if (!conn.ready) throw new Error("Not ready");
       request = normalizeAgentRequest(msg);
+      if (request.execution.mode === "recovery" &&
+          (!conn.capabilities.includes(RECOVERY_CAPABILITY) ||
+           !conn.capabilities.includes(RESUME_CAPABILITY) || !conn.browserId))
+        throw new Error("Recovery capability was not negotiated");
     } catch {
       return reportStatus({ state: "failed", code: "BAD_AGENT_REQUEST" });
     }

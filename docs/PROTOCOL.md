@@ -19,6 +19,26 @@ schemas, execution rules and final-answer semantics are supplied by the extensio
 
 ## Connections
 
+### Agent-Control Recovery Negotiation
+
+Instance peers advertise `recovery-judgment-v1` in hello and ready. Recovery
+requests additionally require `task-resume-v1`. The extension may send a normal
+next-round request with `execution.mode: "recovery"` and
+`execution.recovery: {recoveryId, expiresAt, reason: "target_closed", cause: "unknown"}`.
+The recovery ID is a UUID; expiry is a positive safe-integer millisecond value
+on the extension clock. Remote validates the metadata without inferring clock
+alignment or changing action results. Context and message remain continuation
+references. Wire resume phase remains `waiting`, not a new recovery phase.
+
+The extension owns eligibility, one attempt, the absolute 120-second deadline,
+and its bounded attach/observation operation. Only its recovery-only contract
+is actionable. Neither prior input nor a new ordinary action is replayed.
+Expiry and refusal use existing terminal delivery, releasing any exchange
+waiter. A late response to a terminal recovery request returns `RECOVERY_CLOSED`
+without forwarding a new action. Prior action receipt behavior remains unchanged.
+Normal task execution remains unbounded by Remote; 10-second decision RPC
+acknowledgement and 120-second socket resume windows are separate limits.
+
 One Node.js process binds two loopback listeners:
 
 - `127.0.0.1:3802/ext`: authenticated WebSocket, exposed through the deployment's
@@ -144,6 +164,10 @@ different contents return `DECISION_CONFLICT`. Validation RPCs are not action
 replays. The relay stores no additional decision signature or browser policy.
 Old extensions may omit the field; old relays ignore it and still terminate.
 This additive field does not require a new mandatory handshake capability.
+These are terminal receipts. A negotiated recovery judgment is a preceding
+nonterminal request, not revival after an `agent-turn-end`. Once its terminal
+event arrives, a late response to the recovery request returns `RECOVERY_CLOSED`
+without forwarding an RPC.
 
 ### Opt-in diagnostic pulls
 

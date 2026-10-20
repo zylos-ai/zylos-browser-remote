@@ -92,3 +92,22 @@ test("control-loss receipt schema bounds counts and syntax, without a browser me
   }
   assert.equal(controlLossReceipt({ ...receipt, results: [{ method: "future-browser-method", outcome: "completed" }] }).results[0].method, "future-browser-method");
 });
+
+test("recovery terminal outcomes survive actual transport and unknown metadata never leaks", async t => {
+  assert.deepEqual(controlLossReceipt(receipt), receipt);
+  for (const recoveryOutcome of ["expired", "failed", "revoked"]) {
+    await t.test(recoveryOutcome, async t => {
+      const expected = { ...receipt, recoveryOutcome };
+      const { client, endpoint } = await setup(t, expected);
+      const result = (await client.decision({ endpoint, id: "r1", decision: { kind: "actions" } })).body;
+      assert.equal(result.finished, true);
+      assert.equal(result.status, "interrupted");
+      assert.deepEqual(result.interruption, expected);
+    });
+  }
+  for (const value of [{ ...receipt, recoveryOutcome: "SECRET" },
+    { ...receipt, recoveryOutcome: { raw: "SECRET" } },
+    { ...receipt, recoveryOutcome: "expired", extra: "SECRET" }]) {
+    assert.equal(controlLossReceipt(value), undefined);
+  }
+});

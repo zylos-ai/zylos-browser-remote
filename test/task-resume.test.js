@@ -89,6 +89,35 @@ const request = (id = "first", round = 1) => ({ type: "agent-request", id, round
   taskId: "task", deliveryId: `delivery-${id}`, runtimeEpoch, text: "Owner message", context: "{}", payload: {} });
 const resume = { taskId: "task", requestId: "first", round: 1, phase: "waiting" };
 
+test("negotiated recovery request resumes as waiting and duplicate identity cannot enqueue twice", async t => {
+  const { ext, delivered, dial } = await setup(t);
+  const capabilities = [...caps, "recovery-judgment-v1"];
+  const a = await dial(undefined, runtimeEpoch, capabilities);
+  assert.ok(a.ready.capabilities.includes("recovery-judgment-v1"));
+  a.send(request()); await until(() => delivered.length === 1);
+  const recovery = { type: "agent-request", version: 2, id: "recover", taskId: "task", round: 2, runtimeEpoch, deliveryId: "recovery-delivery",
+    message: { id: "task" }, context: { pages: [] }, execution: { mode: "recovery", recovery: {
+      recoveryId: runtimeEpoch, expiresAt: Date.now() + 120000, reason: "target_closed", cause: "unknown" } } };
+  a.send(recovery); await until(() => delivered.length === 2);
+  a.ws.terminate(); await until(() => ext.conns.get(endpoint)?.recoveryTimer);
+  const b = await dial({ ...resume, requestId: "recover", round: 2 }, runtimeEpoch, capabilities);
+  assert.equal(b.ready.resume.status, "resumed");
+  b.send({ ...recovery, deliveryId: "recovery-delivery-duplicate" });
+  await until(() => b.frames.some(f => f.code === "DUPLICATE_REQUEST"));
+  assert.equal(delivered.length, 2);
+  assert.equal(delivered[1].request.execution.recovery.expiresAt, recovery.execution.recovery.expiresAt);
+});
+
+test("unnegotiated recovery continuation is rejected before delivery", async t => {
+  const { delivered, dial } = await setup(t);
+  const a = await dial(); a.send(request()); await until(() => delivered.length === 1);
+  a.send({ type: "agent-request", version: 2, id: "recover", taskId: "task", round: 2, runtimeEpoch, deliveryId: "recovery-delivery",
+    message: { id: "task" }, context: { pages: [] }, execution: { mode: "recovery", recovery: {
+      recoveryId: runtimeEpoch, expiresAt: Date.now() + 120000, reason: "target_closed", cause: "unknown" } } });
+  await until(() => a.frames.some(f => f.requestId === "recover" && f.code === "BAD_AGENT_REQUEST"));
+  assert.equal(delivered.length, 1);
+});
+
 test("same runtime reconnect retains pending decision and prevents duplicate first delivery", async t => {
   const { ext, exchange, delivered, dial } = await setup(t);
   const a = await dial();

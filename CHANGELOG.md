@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Negotiate bounded Agent control-recovery judgments, validate recovery request
+  metadata, and reject late terminal recovery decisions without forwarding.
+
 - Preserve scoped evidence across verified task resumes; retain valid shared
   preview bytes when optional companion metadata fails validation. Report
   bounded task-scoped rejection counts, clock gaps and merged trigger timing.

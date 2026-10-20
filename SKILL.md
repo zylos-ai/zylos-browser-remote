@@ -154,6 +154,28 @@ to another decision. An identical accepted decision can be resubmitted after an
 ambiguous transport failure while its connection receipt remains available.
 Never retry uncertain browser input using a newly invented request ID.
 
+### Recovery Judgment
+
+When `execution.mode` is `recovery`, read the preserved action results before
+deciding. Completed actions must not be repeated; uncertain actions must not be
+replayed merely because control was lost. The cause remains unknown.
+
+The extension supplies `execution.recovery` with `recoveryId`, `expiresAt`,
+`reason: "target_closed"` and `cause: "unknown"`. Respond to the current request
+using its recovery-only tool contract: either a single `recover-control` action
+with the exact `recoveryId`, or a terminal `done`/`blocked` response. Do not send
+ordinary fill, click, navigation or other actions while recovery is pending.
+Recovery reacquires the same authorized page and obtains fresh observation; it
+does not retry prior input. Use fresh refs in the returned normal request.
+
+The extension limits this judgment to 120 seconds and one recovery attempt.
+Reconnect and repeated decisions do not renew that deadline. Stop, timeout,
+changed scope or failed recovery ends the task. `RECOVERY_CLOSED` is terminal:
+do not retry or start a replacement action. The extension enforces the deadline
+on its own clock; the Agent host must not infer clock alignment from `expiresAt`.
+Older peers without `recovery-judgment-v1` retain terminal control-loss behavior.
+This does not add an execution timeout to ordinary tasks.
+
 Only the first incoming request enters C4, using `--no-reply` to suppress its
 fixed reply suffix. Subsequent observations return directly from the waiting
 decision command. Final outgoing answers use `c4-send`, with the current ID. Stop, disconnect and worker

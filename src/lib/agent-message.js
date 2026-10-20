@@ -1,6 +1,7 @@
 
 const AGENT_MESSAGE_CAPABILITY = "agent-message-v2";
 const STEER_CAPABILITY = "agent-input-v1";
+export const RECOVERY_CAPABILITY = "recovery-judgment-v1";
 const record = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const validId = (v) =>
   typeof v === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(v);
@@ -79,6 +80,15 @@ function normalizeAgentRequest(input) {
     !record(msg.execution)
   )
     throw new Error("Invalid message envelope");
+  if (msg.execution.mode === "recovery" || msg.execution.recovery !== undefined) {
+    const recovery = msg.execution.recovery;
+    if (msg.round <= 1 || msg.execution.mode !== "recovery" || !record(recovery) ||
+        Object.keys(recovery).some(key => !["recoveryId", "expiresAt", "reason", "cause"].includes(key)) ||
+        typeof recovery.recoveryId !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(recovery.recoveryId) ||
+        !Number.isSafeInteger(recovery.expiresAt) || recovery.expiresAt <= 0 ||
+        recovery.reason !== "target_closed" || recovery.cause !== "unknown")
+      throw new Error("Invalid recovery request");
+  }
   if (msg.round === 1) {
     const message = msg.message;
     if (
