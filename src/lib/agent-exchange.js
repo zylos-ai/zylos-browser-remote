@@ -1,5 +1,6 @@
 import { AttachmentScope } from "../../scripts/attachments.js";
 import { replyCommands } from "../../scripts/reply-route.js";
+import { controlLossReceipt } from "./control-loss.js";
 
 // Generic request/response exchange. No action names, page rules or decisions
 // are interpreted here. One response can carry the client's next request.
@@ -49,7 +50,8 @@ class AgentExchange {
     let response;
     try {
       response = state.terminal
-        ? { ok: true, accepted: true, finished: true, status: state.terminal }
+        ? { ok: true, accepted: true, finished: true, status: state.terminal,
+            ...(state.interruption ? { interruption: state.interruption } : {}) }
         : {
             ok: true,
             accepted: true,
@@ -108,7 +110,7 @@ class AgentExchange {
         params: { id, decision, ...(inputId ? { inputId } : {}) },
         timeoutMs: 10000,
       });
-      if (previous && !state.terminal && state.waiter?.id === id) {
+      if (previous && (!state.terminal || previous.finished) && state.waiter?.id === id) {
         const waiter = state.waiter;
         state.waiter = null;
         waiter.resolve({ ...previous, replayed: true });
@@ -128,10 +130,11 @@ class AgentExchange {
     }
     return next;
   }
-  ended({ endpointId, taskId, status }) {
+  ended({ endpointId, taskId, status, interruption }) {
     const state = this.states.get(endpointId);
     if (!state || state.taskId !== taskId) return;
     state.terminal = status;
+    state.interruption = status === "interrupted" ? controlLossReceipt(interruption) : undefined;
     state.attachments.close();
     if (state.waiter) this.deliver(state);
   }
