@@ -29,6 +29,8 @@ const bundle = () => ({ schemaVersion: 2, kind: "browser-incident-bundle", captu
   previewRuntime: runtime(),
   correlations: [{ taskId: browserId, actionId: `${browserId}:fill`, task: 1, operation: 2, method: "fill", startedAt: 31000, outcome: "running" }],
   incidents: [{ incidentId: browserId, taskId: browserId, actionId: `${browserId}:fill`, trigger: "debugger-detach", reason: "target_closed", triggeredAt: 32000,
+    triggerFacts: [{ trigger: "debugger-detach", reason: "target_closed", triggeredAt: 32000, runtimeAtTrigger: runtime() }],
+    pageBeforeTiming: { actionStartedAt: 31000, relation: "unknown" },
     window: { from: 2000, to: 34000, through: 32000, complete: false, gaps: ["post-window-pending"] }, recordSequences: [],
     runtimeAtTrigger: runtime(), pageBefore: { status: "unavailable", observedAt: 31000 },
     pageState: { status: "unavailable", observedAt: 32000 } }], limitations: ["partial capture"] });
@@ -42,12 +44,17 @@ test("v2 preserves immutable bytes and rejects malformed incident boundaries", (
     b => b.correlations[0].params = { text: "secret" }, b => b.incidents[0].pageState.url = "secret",
     b => b.previewRuntime.scope = "secret", b => b.incidents[0].runtimeAtTrigger.groupReference = "secret",
     b => b.incidents[0].pageBefore.status = "captured", b => b.incidents[0].pageState.state = {},
-    b => b.incidents[0].pageBefore.observedAt = -1]) {
+    b => b.incidents[0].pageBefore.observedAt = -1,
+    b => b.incidents[0].triggerFacts[0].trigger = "operation-error",
+    b => b.incidents[0].triggerFacts.push(b.incidents[0].triggerFacts[0]),
+    b => b.incidents[0].pageBeforeTiming.relation = "before-action",
+    b => b.incidents[0].pageBeforeTiming.actionStartedAt = 30000]) {
     const bad = bundle(); mutate(bad);
     assert.throws(() => detailResult(encode(JSON.stringify(bad))));
   }
   assert.equal(incidentReport({ ok: true, ...valid }).report.cause, "undetermined");
   const operation = bundle(); operation.incidents[0].trigger = "operation-error";
+  operation.incidents[0].triggerFacts[0].trigger = "operation-error";
   assert.doesNotThrow(() => detailResult(encode(JSON.stringify(operation))));
 });
 
@@ -89,7 +96,7 @@ test("v2 CLI validates companion joins and never re-fetches", async () => {
   assert.equal(accepted.text, valid.text);
   assert.deepEqual(accepted.remoteEvidence, remoteEvidence);
   remoteEvidence.endpointId = "other";
-  assert.equal((await fetchDetail({ endpoint }, transport)).code, "BAD_DETAIL_RESPONSE");
+  assert.equal((await fetchDetail({ endpoint }, transport)).text, valid.text);
   assert.equal(calls, 2);
   remoteEvidence.endpointId = endpoint;
   for (const mutate of [e => e.clockAligned = true, e => e.connection.secret = "secret",
@@ -97,8 +104,17 @@ test("v2 CLI validates companion joins and never re-fetches", async () => {
     e => e.records[0].params = "secret", e => delete e.records[0].outcome,
     e => e.records[0].receivedAt = e.capturedAt + 1, e => e.raw = "secret"]) {
     const copy = structuredClone(remoteEvidence); mutate(copy); response.remoteEvidence = copy;
-    assert.equal((await fetchDetail({ endpoint }, transport)).code, "BAD_DETAIL_RESPONSE");
+    const result = await fetchDetail({ endpoint }, transport);
+    assert.equal(result.ok, true);
+    assert.equal(result.text, valid.text);
+    assert.equal(result.sha256, valid.sha256);
+    assert.equal(result.remoteEvidence, undefined);
+    assert.match(result.remoteEvidenceGap, /failed validation/);
+    assert.ok(incidentReport(result).report.gaps.includes(result.remoteEvidenceGap));
   }
+  response.remoteEvidence = null;
+  assert.equal((await fetchDetail({ endpoint }, transport)).text, valid.text);
+  assert.equal(calls, 11);
 });
 
 async function setup(t, handler, caps = [DETAIL_CAPABILITY]) {
@@ -106,7 +122,7 @@ async function setup(t, handler, caps = [DETAIL_CAPABILITY]) {
   const ext = new ExtLane({ loadKeys: () => ({ [keyIdOf(key)]: { sha256: digest(key) } }), log: value => logs.push(value) });
   await ext.listen(0, "127.0.0.1");
   const incidentEvidence = new IncidentEvidence();
-  ext.on("connected", endpoint => incidentEvidence.connection(endpoint, true));
+  ext.on("connected", (endpoint, connection) => incidentEvidence.connection(endpoint, true, connection.evidenceResumeTaskId));
   ext.on("disconnected", endpoint => incidentEvidence.connection(endpoint, false));
   const agent = new AgentLane({ extLane: ext, incidentEvidence, port: 0, log: value => logs.push(value) });
   await agent.listen();

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Preserve scoped evidence across verified task resumes; retain valid shared
+  preview bytes when optional companion metadata fails validation. Report
+  bounded task-scoped rejection counts, clock gaps and merged trigger timing.
+
 - Validate version 2 incident bundles without changing their preview bytes or
   hash. Attach bounded, sanitized Remote receipt evidence by exact endpoint and
   task/action IDs, and provide `incident-report.js` with explicit evidence gaps.

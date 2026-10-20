@@ -124,8 +124,11 @@ remain supported without a Remote companion.
 For version 2 only, Remote adds `remoteEvidence` outside the hashed text. This
 contains receipt metadata, never parameters, page text, input values, raw errors,
 connection keys or raw Monitor history. In-memory retention is two minutes,
-2,000 records, 32 connected endpoints and 512 KiB globally. Socket replacement
-clears old endpoint evidence. Export requires a successful consented fetch and
+2,000 records, 32 connected endpoints and 512 KiB globally. A verified resume of
+the same runtime and task retains matching task records within those limits;
+fresh connections, different runtimes and new tasks clear old endpoint evidence.
+Resume status comes from the transport's authenticated state checks, not the
+extension's claimed resume flag. Export requires a successful consented fetch and
 matches the exact endpoint plus bundle task IDs, and action IDs for actions.
 The companion cannot recover metadata collected before this process started.
 It preserves its process epoch, current connection generation, retention limits,
@@ -135,11 +138,24 @@ inferred from action IDs. Action method names use the extension tool catalog;
 unknown names become `other`. Collector failures cannot interrupt transport or
 discard an already fetched valid share. If the companion is unavailable, the
 incident report records that gap.
+The CLI also omits an invalid optional companion while retaining independently
+validated preview bytes and hash. It emits a fixed gap without copying the
+invalid metadata and never fetches again. Invalid primary preview data still
+fails validation.
+
+Rejected `agent-event` frames contribute only fixed reason categories, scoped
+to the connection's trusted active task rather than the rejected payload's
+claimed task. They share record, byte and TTL limits. The report counts only
+retained matching-task rejections; events with no trusted task cannot be
+attributed and are not exported. A zero count cannot prove nothing was rejected.
 
 The bundle distinguishes `previewRuntime` from each incident's
 `runtimeAtTrigger`, and `pageBefore` from `pageState`. Pending or stale observations
 are not evidence of a before/after transition. Non-CDP `operation-error` triggers
 are supported without claiming that they establish a debugger detach.
+Merged `triggerFacts` preserve distinct trigger receipts, and `pageBeforeTiming`
+states the observation's relation to action start. The report includes clock and
+companion gaps rather than implying cross-clock ordering.
 
 Remote receipt time and extension time are separate clocks. Neither simultaneous
 timestamps nor queue acceptance prove execution order. Reports preserve partial

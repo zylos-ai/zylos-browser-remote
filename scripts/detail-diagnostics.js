@@ -25,10 +25,13 @@ export async function fetchDetail(body, transport = client) {
     if (value.endpointId !== body.endpoint || Object.keys(value).some(k => !["ok", "endpointId", "schemaVersion", "text", "sha256", "remoteEvidence"].includes(k))) return failed("BAD_DETAIL_RESPONSE");
     const { schemaVersion, text, sha256 } = value;
     const validated = detailResult({ schemaVersion, text, sha256 });
+    const base = { ok: true, endpointId: body.endpoint, ...validated };
     if (value.remoteEvidence !== undefined) {
       const bundle = JSON.parse(text);
-      if (bundle.schemaVersion !== 2 || value.remoteEvidence.endpointId !== body.endpoint) return failed("BAD_DETAIL_RESPONSE");
-      if (!validateIncidentEvidence(value.remoteEvidence, body.endpoint, bundle)) return failed("BAD_DETAIL_RESPONSE");
+      const unavailable = () => ({ ...base, remoteEvidenceGap: "Remote companion failed validation and was omitted; preview text and hash remain valid." });
+      try {
+        if (bundle.schemaVersion !== 2 || !validateIncidentEvidence(value.remoteEvidence, body.endpoint, bundle)) return unavailable();
+      } catch { return unavailable(); }
       const remoteEvidence = value.remoteEvidence;
       return { ok: true, endpointId: body.endpoint, ...validated, remoteEvidence };
     }

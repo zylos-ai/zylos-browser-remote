@@ -84,7 +84,7 @@ function validateIncidentBundle(bundle, invalid) {
         ["task", "operation"].some(key => item[key] !== undefined && !natural(item[key]))) invalid();
   }
   for (const item of bundle.incidents) {
-    if (!keys(item, ["incidentId", "taskId", "actionId", "task", "operation", "trigger", "reason", "triggeredAt", "window", "recordSequences", "runtimeAtTrigger", "pageBefore", "pageState"]) ||
+    if (!keys(item, ["incidentId", "taskId", "actionId", "task", "operation", "trigger", "reason", "triggeredAt", "window", "recordSequences", "runtimeAtTrigger", "triggerFacts", "pageBeforeTiming", "pageBefore", "pageState"]) ||
         !uuid(item.incidentId) || (item.taskId !== undefined && !uuid(item.taskId)) || (item.actionId !== undefined && !action(item.actionId)) ||
         ((item.taskId === undefined) !== (item.actionId === undefined)) ||
         ["task", "operation"].some(key => item[key] !== undefined && !natural(item[key])) ||
@@ -98,7 +98,22 @@ function validateIncidentBundle(bundle, invalid) {
         !strings(item.window.gaps, 32, 1024) || !Array.isArray(item.recordSequences) || item.recordSequences.length > 1000 ||
         !item.recordSequences.every(sequence => natural(sequence) && bundle.capture?.records?.some(record => record.sequence === sequence &&
           record.at >= item.window.from && record.at <= item.window.to && (item.task === undefined || record.task === item.task)))) invalid();
+    if (!Array.isArray(item.triggerFacts) || item.triggerFacts.length < 1 || item.triggerFacts.length > 3 ||
+        new Set(item.triggerFacts.map(fact => fact?.trigger)).size !== item.triggerFacts.length ||
+        !item.triggerFacts.every(fact => keys(fact, ["trigger", "reason", "triggeredAt", "runtimeAtTrigger"]) &&
+          ["debugger-detach", "control-lost", "operation-error"].includes(fact.trigger) &&
+          ["target_closed", "canceled_by_user", "other"].includes(fact.reason) && finite(fact.triggeredAt) && runtime(fact.runtimeAtTrigger)) ||
+        !item.triggerFacts.some(fact => fact.trigger === item.trigger && fact.reason === item.reason && fact.triggeredAt === item.triggeredAt &&
+          Object.keys(item.runtimeAtTrigger).every(key => item.runtimeAtTrigger[key] === fact.runtimeAtTrigger[key]))) invalid();
+    const timing = item.pageBeforeTiming;
+    if (!keys(timing, ["actionStartedAt", "relation"]) ||
+        (timing.actionStartedAt !== undefined && !finite(timing.actionStartedAt))) invalid();
+    const relation = item.pageBefore.status !== "captured" || timing.actionStartedAt === undefined ? "unknown" :
+      item.pageBefore.observedAt < timing.actionStartedAt ? "before-action" :
+        item.pageBefore.observedAt === timing.actionStartedAt ? "same-millisecond" : "after-action-start";
+    if (timing.relation !== relation) invalid();
     const correlation = bundle.correlations.find(c => c.taskId === item.taskId && c.actionId === item.actionId);
     if (correlation && ["task", "operation"].some(key => item[key] !== undefined && correlation[key] !== item[key])) invalid();
+    if (correlation && timing.actionStartedAt !== correlation.startedAt) invalid();
   }
 }

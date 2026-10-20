@@ -232,10 +232,11 @@ function start({
     };
   const exchange = new AgentExchange(ext);
   const incidentEvidence = new IncidentEvidence();
-  ext.on("connected", endpoint => bestEffortEvidence(() => incidentEvidence.connection(endpoint, true)));
+  ext.on("connected", (endpoint, connection) => bestEffortEvidence(() => incidentEvidence.connection(endpoint, true, connection?.evidenceResumeTaskId)));
   ext.on("disconnected", endpoint => bestEffortEvidence(() => incidentEvidence.connection(endpoint, false)));
   ext.on("agent-request", msg => bestEffortEvidence(() => incidentEvidence.record(msg.endpointId, "request", msg.request)));
   ext.on("agent-event", event => bestEffortEvidence(() => incidentEvidence.record(event.endpointId, "action", event)));
+  ext.on("agent-event-rejected", event => bestEffortEvidence(() => incidentEvidence.record(event.endpointId, "rejected", event)));
   ext.on("agent-turn-end", event => bestEffortEvidence(() => incidentEvidence.record(event.endpointId, "terminal", event)));
   const agent = new AgentLane({
     extLane: ext,
