@@ -30,10 +30,63 @@ is immutable for the lifetime of a socket. Client-supplied routing metadata in
 later events is ignored; Remote uses the authenticated socket's identity.
 
 Up to 32 instances may share a Key. Different IDs coexist. Reconnecting the same
-ID replaces only that instance and discards its in-flight exchange and receipts.
+ID replaces only that instance. Without negotiated `task-resume-v1`, it discards
+the in-flight exchange and receipts.
 Code 4001 means this same instance was replaced, 4002 an incompatible handshake,
 and 4003 the per-Key connection limit. Hello must arrive within 10 seconds.
-Reconnection never resumes an unfinished turn automatically.
+Negotiated recovery is limited to the same live extension runtime and live
+Remote process, as described below.
+
+### Bounded transport recovery
+
+Both peers advertise `task-resume-v1`. Hello includes a `runtimeEpoch` generated
+once per extension background lifetime. Reconnecting hello includes
+`resume:{taskId,requestId?,round?,phase:"waiting"|"executing"|"terminal"}`. Ready returns
+top-level `runtimeEpoch`, `recoveryWindowMs:120000`, and
+`resume:{status:"fresh"|"resumed"|"rejected",reason?}`. An unknown or conflicting
+runtime/task rejects recovery. A retained runtime that has not yet accepted its
+first request can accept that request after recovery. Process restarts cannot
+recover tasks. Older peers retain the existing disconnect behavior.
+A runtime with a completed prior task may similarly reconcile a previously
+unseen task's first round; an active task is never replaced by this path.
+Waiting/executing descriptors must match the last accepted request and round;
+waiting may instead name exactly the next round, whose request frame can still
+be in the client's outbox. Terminal descriptors need no request ID or round.
+The descriptor establishes transport continuity, not proof of browser results.
+An advertised next round does not advance Remote's round or replace the current
+decision: only the validated outbox request does. Any pending older decision is
+still retransmitted unchanged for the extension's signature/receipt check.
+
+Transport loss retains the logical endpoint, exchange, attachments, HTTP waiter,
+request/steering watermarks and decision RPCs for at most 120 seconds. Normal
+Agent thinking and browser execution have no recovery timer. Same-runtime socket
+replacement transfers this state and fences the old socket before accepting
+frames. Recovery sends pending decision RPCs with identical decision/request
+contents; the extension must validate its retained signature and return its
+receipt without repeating an already claimed action. Diagnostics RPCs are not
+replayed. Agent decisions submitted while offline wait inside the same recovery
+window. `/status` exposes `recovery:{state:"reconnecting",expiresAt}`.
+
+Recoverable `agent-request`, `agent-input` and `agent-turn-end` frames carry
+`deliveryId` and `runtimeEpoch`. Remote sends
+`{type:"task-ack",deliveryId,runtimeEpoch}` after handling the frame. Request and
+input intake status is sent before that ACK and retained for same-ID replay. The client
+retains unacknowledged frames in a bounded outbox. Remote keeps up to 256 hashed
+delivery receipts, rejects changed contents under one ID, and never repeats
+first C4 delivery or steering intake on same-ID replay. Acknowledged receipts
+can be evicted; task rounds, input sequence and active task checks still reject
+stale replay. Exhaustion of unacknowledged receipts fails closed.
+An additional bounded set of 1024 admitted task IDs prevents an older completed
+task from becoming a new intake after receipt eviction; exhaustion fails closed
+with `TASK_HISTORY_FULL`, requiring a fresh connection before a new task.
+Attachments stay scoped to the existing exchange until terminal completion or recovery loss.
+
+User stop, a new task, credential revocation, configuration changes and actual
+browser control loss remain terminal. Offline terminal frames can be delivered
+after reconnect; a previously accepted terminal frame is acknowledged without
+repeating terminal effects. Recovery expiry or mismatch releases the exchange
+and waiter with an offline failure; the client surfaces its own bounded recovery
+failure even when no Agent waiter exists. Recovery never grants browser control.
 
 Upgrade Remote before the plugin. The server also accepts v2 clients in the
 separate bare-keyId route during rollout; they cannot replace v3 instances.
