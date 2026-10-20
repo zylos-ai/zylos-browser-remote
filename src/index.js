@@ -8,6 +8,7 @@ import { ExtLane } from "./lib/ext-lane.js";
 import { AgentLane } from "./lib/agent-lane.js";
 import { loadKeys, keysFile } from "./lib/keys.js";
 import { Monitor } from "./lib/monitor.js";
+import { IncidentEvidence, bestEffortEvidence } from "./lib/incident-evidence.js";
 import { AgentTrace } from "./lib/agent-trace.js";
 import { AgentActivity } from "./lib/agent-activity.js";
 import { materializeAttachments } from "../scripts/attachments.js";
@@ -230,12 +231,19 @@ function start({
       return binding ? trace.agentRun(binding.endpointId, at) : null;
     };
   const exchange = new AgentExchange(ext);
+  const incidentEvidence = new IncidentEvidence();
+  ext.on("connected", endpoint => bestEffortEvidence(() => incidentEvidence.connection(endpoint, true)));
+  ext.on("disconnected", endpoint => bestEffortEvidence(() => incidentEvidence.connection(endpoint, false)));
+  ext.on("agent-request", msg => bestEffortEvidence(() => incidentEvidence.record(msg.endpointId, "request", msg.request)));
+  ext.on("agent-event", event => bestEffortEvidence(() => incidentEvidence.record(event.endpointId, "action", event)));
+  ext.on("agent-turn-end", event => bestEffortEvidence(() => incidentEvidence.record(event.endpointId, "terminal", event)));
   const agent = new AgentLane({
     extLane: ext,
     port: agentPort,
     log,
     monitor: trace,
     exchange,
+    incidentEvidence,
   });
   if (trace) {
     ext.on("connected", (endpointId) => trace.connection(endpointId, true));
@@ -261,6 +269,7 @@ function start({
         }),
       )
       .then((result) => {
+        if (msg.request) bestEffortEvidence(() => incidentEvidence.record(msg.endpointId, "delivery", { ...msg.request, state: result?.ok === true ? "queued" : "unknown" }));
         trace?.intake(ticket, result);
         if (result?.ok === true) return reportStatus({ state: "queued" });
         const code =
@@ -283,6 +292,7 @@ function start({
         });
       })
       .catch((err) => {
+        if (msg.request) bestEffortEvidence(() => incidentEvidence.record(msg.endpointId, "delivery", { ...msg.request, state: "unknown" }));
         trace?.intake(ticket, { ok: false, code: "C4_DELIVERY_UNCONFIRMED" });
         log(`chat: unexpected delivery error: ${err.message}`);
         reportStatus({

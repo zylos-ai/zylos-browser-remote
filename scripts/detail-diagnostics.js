@@ -2,6 +2,7 @@
 import { fileURLToPath } from "node:url";
 import client from "./relay-client.js";
 import { detailParams, detailResult } from "../src/lib/detail-diagnostics.js";
+import { validateIncidentEvidence } from "../src/lib/incident-evidence.js";
 
 export function parseDetailArgs(args) {
   if (args.length !== 1) throw new Error("Usage: detail-diagnostics.js <exact-endpointId>");
@@ -21,9 +22,17 @@ export async function fetchDetail(body, transport = client) {
         "BAD_ENDPOINT", "UNKNOWN_ENDPOINT", "BAD_DETAIL_RESPONSE", "DETAIL_SHARE_ERROR", "RELAY_DOWN"];
       return failed(known.includes(value?.code) ? value.code : "DETAIL_SHARE_ERROR");
     }
-    if (value.endpointId !== body.endpoint || Object.keys(value).some(k => !["ok", "endpointId", "schemaVersion", "text", "sha256"].includes(k))) return failed("BAD_DETAIL_RESPONSE");
+    if (value.endpointId !== body.endpoint || Object.keys(value).some(k => !["ok", "endpointId", "schemaVersion", "text", "sha256", "remoteEvidence"].includes(k))) return failed("BAD_DETAIL_RESPONSE");
     const { schemaVersion, text, sha256 } = value;
-    return { ok: true, endpointId: body.endpoint, ...detailResult({ schemaVersion, text, sha256 }) };
+    const validated = detailResult({ schemaVersion, text, sha256 });
+    if (value.remoteEvidence !== undefined) {
+      const bundle = JSON.parse(text);
+      if (bundle.schemaVersion !== 2 || value.remoteEvidence.endpointId !== body.endpoint) return failed("BAD_DETAIL_RESPONSE");
+      if (!validateIncidentEvidence(value.remoteEvidence, body.endpoint, bundle)) return failed("BAD_DETAIL_RESPONSE");
+      const remoteEvidence = value.remoteEvidence;
+      return { ok: true, endpointId: body.endpoint, ...validated, remoteEvidence };
+    }
+    return { ok: true, endpointId: body.endpoint, ...validated };
   } catch { return failed("DETAIL_SHARE_ERROR"); }
 }
 

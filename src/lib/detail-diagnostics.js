@@ -26,6 +26,10 @@ export function detailResult(value) {
       createHash("sha256").update(value.text, "utf8").digest("hex") !== value.sha256) invalid();
   let snapshot;
   try { snapshot = JSON.parse(value.text); } catch { invalid(); }
+  if (snapshot?.schemaVersion === 2) {
+    validateIncidentBundle(snapshot, invalid);
+    snapshot = snapshot.capture;
+  }
   if (!keys(snapshot, ["schemaVersion", "enabled", "expiresAt", "count", "bytes", "dropped", "truncated",
     "runtimeEpoch", "captureId", "extensionVersion", "build", "exportedAt", "partial", "limits", "limitations", "records"]) ||
       snapshot.schemaVersion !== 1 || snapshot.enabled !== true || snapshot.partial !== true ||
@@ -48,4 +52,53 @@ export function detailResult(value) {
     previous = record.sequence;
   }
   return { schemaVersion: 1, text: value.text, sha256: value.sha256 };
+}
+
+function validateIncidentBundle(bundle, invalid) {
+  const action = value => bounded(value, 200) && /^[0-9a-f-]{36}(?::[a-zA-Z0-9_-]{1,32}){0,5}$/.test(value);
+  const finite = value => Number.isFinite(value) && value >= 0;
+  const strings = (value, count, length) => Array.isArray(value) && value.length <= count && value.every(item => bounded(item, length));
+  const runtime = value => keys(value, ["connected", "control", "granted", "scope", "groupReference"]) &&
+    ["connected", "control", "granted"].every(key => typeof value[key] === "boolean") &&
+    ["none", "borrowed", "owned"].includes(value.scope) && ["none", "assigned"].includes(value.groupReference);
+  const page = value => keys(value, ["status", "observedAt", "state"]) && finite(value.observedAt) &&
+    ["captured", "unavailable", "stale", "pending"].includes(value.status) &&
+    (value.status === "captured" ? validState(value.state) : value.state === undefined);
+  const validState = state => keys(state, ["visibility", "readyState", "scheme", "iframeCount", "iframeCountCapped", "focusedElement", "inputFocused", "inputDisabled", "inputReadOnly"]) &&
+    ["visible", "hidden", "other"].includes(state.visibility) && ["loading", "interactive", "complete"].includes(state.readyState) &&
+    ["http", "https"].includes(state.scheme) && ["input", "textarea", "select", "button", "other", "none"].includes(state.focusedElement) &&
+    natural(state.iframeCount) && state.iframeCount <= 512 &&
+    ["iframeCountCapped", "inputFocused", "inputDisabled", "inputReadOnly"].every(key => typeof state[key] === "boolean");
+  if (!keys(bundle, ["schemaVersion", "kind", "capture", "clock", "previewRuntime", "correlations", "incidents", "limitations"]) ||
+      bundle.kind !== "browser-incident-bundle" ||
+      !keys(bundle.clock, ["epoch", "source", "remoteComparable"]) || bundle.clock.epoch !== "unix-ms" ||
+      bundle.clock.source !== "extension-Date.now" || bundle.clock.remoteComparable !== false ||
+      !runtime(bundle.previewRuntime) ||
+      !strings(bundle.limitations, 32, 4096) || !Array.isArray(bundle.correlations) || bundle.correlations.length > 256 ||
+      !Array.isArray(bundle.incidents) || bundle.incidents.length > 8) invalid();
+  for (const item of bundle.correlations) {
+    if (!keys(item, ["taskId", "actionId", "task", "operation", "method", "startedAt", "endedAt", "outcome"]) ||
+        !uuid(item.taskId) || !action(item.actionId) || !bounded(item.method, 40) || !/^[a-z-]+$/.test(item.method) ||
+        !finite(item.startedAt) || (item.endedAt !== undefined && (!finite(item.endedAt) || item.endedAt < item.startedAt)) ||
+        !["running", "completed", "error"].includes(item.outcome) ||
+        ["task", "operation"].some(key => item[key] !== undefined && !natural(item[key]))) invalid();
+  }
+  for (const item of bundle.incidents) {
+    if (!keys(item, ["incidentId", "taskId", "actionId", "task", "operation", "trigger", "reason", "triggeredAt", "window", "recordSequences", "runtimeAtTrigger", "pageBefore", "pageState"]) ||
+        !uuid(item.incidentId) || (item.taskId !== undefined && !uuid(item.taskId)) || (item.actionId !== undefined && !action(item.actionId)) ||
+        ((item.taskId === undefined) !== (item.actionId === undefined)) ||
+        ["task", "operation"].some(key => item[key] !== undefined && !natural(item[key])) ||
+        !runtime(item.runtimeAtTrigger) || !page(item.pageBefore) || !page(item.pageState) ||
+        !["debugger-detach", "control-lost", "operation-error"].includes(item.trigger) || !["target_closed", "canceled_by_user", "other"].includes(item.reason) ||
+        !finite(item.triggeredAt) || !keys(item.window, ["from", "to", "through", "complete", "gaps"]) ||
+        !["from", "to", "through"].every(key => finite(item.window[key])) ||
+        item.window.from > item.triggeredAt || item.window.to < item.triggeredAt ||
+        item.triggeredAt - item.window.from > 30000 || item.window.to - item.triggeredAt > 2000 ||
+        item.window.through < item.window.from || item.window.through > item.window.to || item.window.complete !== false ||
+        !strings(item.window.gaps, 32, 1024) || !Array.isArray(item.recordSequences) || item.recordSequences.length > 1000 ||
+        !item.recordSequences.every(sequence => natural(sequence) && bundle.capture?.records?.some(record => record.sequence === sequence &&
+          record.at >= item.window.from && record.at <= item.window.to && (item.task === undefined || record.task === item.task)))) invalid();
+    const correlation = bundle.correlations.find(c => c.taskId === item.taskId && c.actionId === item.actionId);
+    if (correlation && ["task", "operation"].some(key => item[key] !== undefined && correlation[key] !== item[key])) invalid();
+  }
 }

@@ -22,12 +22,14 @@ class AgentLane {
     log = () => {},
     monitor = null,
     exchange = null,
+    incidentEvidence = null,
   }) {
     this.ext = extLane;
     this.port = port;
     this.log = log;
     this.monitor = monitor;
     this.exchange = exchange;
+    this.incidentEvidence = incidentEvidence;
     this.server = http.createServer((req, res) => this._onHttp(req, res));
   }
 
@@ -72,7 +74,14 @@ class AgentLane {
           try { result = detailResult(raw); }
           catch { return fail(502, "BAD_DETAIL_RESPONSE", "Invalid detailed diagnostics response"); }
           res.setHeader("cache-control", "no-store");
-          return reply(200, { ok: true, endpointId: target.endpointId, ...result });
+          const bundle = JSON.parse(result.text);
+          let remoteEvidence;
+          // Companion collection must not discard the already consumed, valid grant.
+          try {
+            remoteEvidence = bundle.schemaVersion === 2 && this.incidentEvidence
+              ? this.incidentEvidence.snapshot(target.endpointId, bundle) : undefined;
+          } catch { /* An absent companion is an explicit gap in the incident report. */ }
+          return reply(200, { ok: true, endpointId: target.endpointId, ...result, ...(remoteEvidence ? { remoteEvidence } : {}) });
         } catch (err) {
           const code = ["EXT_OFFLINE", "EXT_TIMEOUT", "DETAIL_SHARE_UNAVAILABLE"].includes(err.code) ? err.code : "DETAIL_SHARE_ERROR";
           return fail(RELAY_ERROR_STATUS[code] || (code === "DETAIL_SHARE_UNAVAILABLE" ? 409 : 502), code, "Detailed diagnostic retrieval failed; do not retry automatically");

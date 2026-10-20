@@ -111,3 +111,39 @@ snapshot or include it in status, structured diagnostics, monitor or trace outpu
 It cannot control Agent conversation/model-provider retention or retract copies
 after retrieval. Do not persist, forward or publish raw output without separate
 owner authorization. Revocation only prevents future use of an unused grant.
+
+### Incident bundles
+
+`node scripts/incident-report.js <exact-endpointId>` uses that same one-shot
+consented fetch. It does not replay actions or enable capture. The envelope
+remains version 1; its immutable `text` may contain a version 2
+`browser-incident-bundle` with the original version 1 capture, action mappings,
+bounded incident windows and limited non-value page state. Legacy snapshots
+remain supported without a Remote companion.
+
+For version 2 only, Remote adds `remoteEvidence` outside the hashed text. This
+contains receipt metadata, never parameters, page text, input values, raw errors,
+connection keys or raw Monitor history. In-memory retention is two minutes,
+2,000 records, 32 connected endpoints and 512 KiB globally. Socket replacement
+clears old endpoint evidence. Export requires a successful consented fetch and
+matches the exact endpoint plus bundle task IDs, and action IDs for actions.
+The companion cannot recover metadata collected before this process started.
+It preserves its process epoch, current connection generation, retention limits,
+and explicit reconnect gaps. Drop counts cover global retention eviction, not all
+connection discards. Request IDs come from request envelopes; they are never
+inferred from action IDs. Action method names use the extension tool catalog;
+unknown names become `other`. Collector failures cannot interrupt transport or
+discard an already fetched valid share. If the companion is unavailable, the
+incident report records that gap.
+
+The bundle distinguishes `previewRuntime` from each incident's
+`runtimeAtTrigger`, and `pageBefore` from `pageState`. Pending or stale observations
+are not evidence of a before/after transition. Non-CDP `operation-error` triggers
+are supported without claiming that they establish a debugger detach.
+
+Remote receipt time and extension time are separate clocks. Neither simultaneous
+timestamps nor queue acceptance prove execution order. Reports preserve partial
+capture gaps and mark cause undetermined. Existing Monitor capture is neither
+enabled nor read by this feature; raw history is explicitly absent. The CLI
+output includes the original sensitive preview, so its existing sharing and
+retention consent still applies.
