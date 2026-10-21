@@ -168,7 +168,33 @@ ordinary fill, click, navigation or other actions while recovery is pending.
 Recovery reacquires the same authorized page and obtains fresh observation; it
 does not retry prior input. Use fresh refs in the returned normal request.
 
-The extension limits this judgment to 120 seconds and one recovery attempt.
+When `recovery-frame-selection-v1` is negotiated, `recovery.frameSelection` is
+true, and the request advertises
+`inspect-recovery-frames`, the Agent can first call that tool with the exact
+`recoveryId`. The next recovery request carries `recovery.inspection` with at
+most 16 candidates, each containing only an opaque `id` and `extensionOrigin`,
+plus `truncated` and `coverage: "root-document-open-shadow"`. Inspection covers
+the top document and its open shadow roots;
+an empty list is not proof that no extension frame exists elsewhere. It does
+not read frame contents. Repeated inspection returns the same cached result
+and does not renew the deadline.
+
+The Agent may explicitly select candidate IDs by passing `selectedCandidateIds`
+to `recover-control`. This removes only the selected, revalidated elements
+before the one attach attempt. Removal can disrupt an extension's UI and is
+not proof that the extension caused the disconnect. Without explicit selection,
+recovery removes nothing. Never invent candidate IDs or request arbitrary
+selectors, scripts, frame contents, or removal of all iframes. Older peers
+retain recovery without frame inspection or removal.
+
+A terminal `interruption.recoveryRemoval` reports `{requested, outcome: "unknown"}`
+when selected removal was requested. The selected frames may already have been
+removed even when reattachment failed or the task stopped. Do not claim the page
+was unchanged, assume rollback, or repeat removal from this receipt.
+
+The extension limits each judgment to 120 seconds and one recovery attempt.
+Later independent control losses may receive new judgments, subject to the
+extension's task and rolling-window limits; never reuse an old recovery token.
 Reconnect and repeated decisions do not renew that deadline. Stop, timeout,
 changed scope or failed recovery ends the task. `RECOVERY_CLOSED` is terminal:
 do not retry or start a replacement action. The extension enforces the deadline

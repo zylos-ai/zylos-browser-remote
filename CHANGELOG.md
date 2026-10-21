@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Negotiate optional recovery frame inspection and explicit candidate selection;
+  validate bounded opaque candidate IDs and extension origins without receiving
+  frame contents or interpreting removal decisions in Remote.
+
 - Negotiate bounded Agent control-recovery judgments, validate recovery request
   metadata, and reject late terminal recovery decisions without forwarding.
 

@@ -12,7 +12,7 @@ import { controlLossReceipt } from "../src/lib/control-loss.js";
 const receipt = { reason: "CONTROL_LOST", results: [{ method: "fill", outcome: "completed" },
   { method: "click", outcome: "uncertain" }], observation: "unavailable", resume: "new-user-message-required" };
 
-async function setup(t, interruption) {
+async function setup(t, interruption, capabilities = [], terminalStatus = "interrupted") {
   const key = "ab".repeat(32);
   const browser = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
   const endpoint = `${keyIdOf(key)}.${browser}`;
@@ -40,10 +40,10 @@ async function setup(t, interruption) {
     if (signature !== undefined) return;
     signature = current;
     executions++;
-    ws.send(JSON.stringify({ type: "agent-turn-end", taskId: "task", status: "interrupted", interruption }));
+    ws.send(JSON.stringify({ type: "agent-turn-end", taskId: "task", status: terminalStatus, interruption }));
   });
   const connected = once(ext, "connected");
-  ws.send(JSON.stringify({ type: "hello", browserId: browser, capabilities: ["agent-loop-v1", "browser-instance-v1"] }));
+  ws.send(JSON.stringify({ type: "hello", browserId: browser, capabilities: ["agent-loop-v1", "browser-instance-v1", ...capabilities] }));
   await connected;
   ext.conns.get(endpoint).agentTurn = "task";
   exchange.ingest({ endpointId: endpoint, chatId: "task", request: { id: "r1", taskId: "task", round: 1 } });
@@ -91,6 +91,33 @@ test("control-loss receipt schema bounds counts and syntax, without a browser me
     assert.equal(controlLossReceipt(value), undefined);
   }
   assert.equal(controlLossReceipt({ ...receipt, results: [{ method: "future-browser-method", outcome: "completed" }] }).results[0].method, "future-browser-method");
+});
+
+test("selected removal uncertainty survives terminal transport only for negotiated peers", async t => {
+  const expected = { ...receipt, recoveryOutcome: "failed", recoveryRemoval: { requested: 2, outcome: "unknown" } };
+  assert.deepEqual(controlLossReceipt(expected), expected);
+  for (const negotiated of [false, true]) {
+    await t.test(String(negotiated), async t => {
+      const { client, endpoint } = await setup(t, expected, negotiated ? ["recovery-frame-selection-v1"] : []);
+      const result = (await client.decision({ endpoint, id: "r1", decision: { kind: "actions" } })).body;
+      assert.equal(result.finished, true);
+      assert.equal(result.status, "interrupted");
+      assert.deepEqual(result.interruption, negotiated ? expected : undefined);
+    });
+  }
+  await t.test("explicit Stop retains uncertain removal", async t => {
+    const stopped = { ...expected, recoveryOutcome: "revoked" };
+    const { client, endpoint } = await setup(t, stopped, ["recovery-frame-selection-v1"], "stopped");
+    const result = (await client.decision({ endpoint, id: "r1", decision: { kind: "actions" } })).body;
+    assert.equal(result.finished, true);
+    assert.equal(result.status, "stopped");
+    assert.deepEqual(result.interruption, stopped);
+  });
+  for (const recoveryRemoval of [null, [], { requested: 0, outcome: "unknown" },
+    { requested: 17, outcome: "unknown" }, { requested: 1.5, outcome: "unknown" },
+    { requested: 1, outcome: "completed" }, { requested: 1, outcome: "unknown", src: "SECRET" }]) {
+    assert.equal(controlLossReceipt({ ...receipt, recoveryRemoval }), undefined);
+  }
 });
 
 test("recovery terminal outcomes survive actual transport and unknown metadata never leaks", async t => {

@@ -30,6 +30,8 @@ import {
   AGENT_MESSAGE_CAPABILITY,
   STEER_CAPABILITY,
   RECOVERY_CAPABILITY,
+  RECOVERY_FRAME_CAPABILITY,
+  usesRecoveryFrameSelection,
   normalizeAgentRequest,
   normalizeAgentInput,
   messageText,
@@ -374,6 +376,7 @@ class ExtLane extends EventEmitter {
             INSTANCE_CAPABILITY,
             RESUME_CAPABILITY,
             RECOVERY_CAPABILITY,
+            RECOVERY_FRAME_CAPABILITY,
             ATTACHMENT_CAPABILITY,
             AGENT_MESSAGE_CAPABILITY,
             INTERRUPT_CAPABILITY,
@@ -519,6 +522,10 @@ class ExtLane extends EventEmitter {
               conn.agentRequests.delete(entry);
         const interrupt = msg.status === "stopped" && msg.interrupt === true;
         conn.agentStopping = interrupt;
+        const interruption = (msg.status === "interrupted" ||
+          (msg.status === "stopped" && msg.interruption?.recoveryRemoval !== undefined)) &&
+          (msg.interruption?.recoveryRemoval === undefined || conn.capabilities.includes(RECOVERY_FRAME_CAPABILITY))
+          ? controlLossReceipt(msg.interruption) : undefined;
         let reported = false;
         this.emit(
           "agent-turn-end",
@@ -528,8 +535,7 @@ class ExtLane extends EventEmitter {
             browserId: conn.browserId,
             taskId: msg.taskId,
             interrupt,
-            ...(msg.status === "interrupted" && controlLossReceipt(msg.interruption)
-              ? { interruption: controlLossReceipt(msg.interruption) } : {}),
+            ...(interruption ? { interruption } : {}),
             status: ["done", "blocked", "interrupted", "stopped"].includes(
               msg.status,
             )
@@ -640,6 +646,8 @@ class ExtLane extends EventEmitter {
           (!conn.capabilities.includes(RECOVERY_CAPABILITY) ||
            !conn.capabilities.includes(RESUME_CAPABILITY) || !conn.browserId))
         throw new Error("Recovery capability was not negotiated");
+      if (usesRecoveryFrameSelection(request.execution) && !conn.capabilities.includes(RECOVERY_FRAME_CAPABILITY))
+        throw new Error("Recovery frame selection capability was not negotiated");
     } catch {
       return reportStatus({ state: "failed", code: "BAD_AGENT_REQUEST" });
     }

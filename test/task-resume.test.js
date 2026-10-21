@@ -89,6 +89,38 @@ const request = (id = "first", round = 1) => ({ type: "agent-request", id, round
   taskId: "task", deliveryId: `delivery-${id}`, runtimeEpoch, text: "Owner message", context: "{}", payload: {} });
 const resume = { taskId: "task", requestId: "first", round: 1, phase: "waiting" };
 
+test("frame inspection requires its capability and preserves bounded metadata when negotiated", async t => {
+  for (const negotiated of [false, true]) {
+    await t.test(String(negotiated), async t => {
+      const { delivered, dial } = await setup(t);
+      const capabilities = [...caps, "recovery-judgment-v1", ...(negotiated ? ["recovery-frame-selection-v1"] : [])];
+      const a = await dial(undefined, runtimeEpoch, capabilities);
+      assert.ok(a.ready.capabilities.includes("recovery-frame-selection-v1"));
+      a.send(request()); await until(() => delivered.length === 1);
+      const recovery = { type: "agent-request", version: 2, id: "inspect", taskId: "task", round: 2,
+        runtimeEpoch, deliveryId: "inspect-delivery", message: { id: "task" }, context: { pages: [] },
+        execution: { mode: "recovery", recovery: { recoveryId: runtimeEpoch, expiresAt: Date.now() + 120000,
+          reason: "target_closed", cause: "unknown", frameSelection: true }, tools: [{ name: "inspect-recovery-frames" }] } };
+      a.send(recovery);
+      const status = await until(() => a.frames.find(f => f.type === "agent-status" && f.requestId === "inspect"));
+      assert.equal(status.state, negotiated ? "queued" : "failed");
+      if (!negotiated) {
+        assert.equal(status.code, "BAD_AGENT_REQUEST");
+        assert.equal(delivered.length, 1);
+      }
+      const inspection = { candidates: [{ id: runtimeEpoch, extensionOrigin: `chrome-extension://${"b".repeat(32)}` }],
+        truncated: false, coverage: "root-document-open-shadow" };
+      const result = { ...recovery, id: "inspected", round: negotiated ? 3 : 2, deliveryId: "inspected-delivery",
+        execution: { mode: "recovery", recovery: { ...recovery.execution.recovery, inspection } } };
+      a.send(result);
+      const resultStatus = await until(() => a.frames.find(f => f.type === "agent-status" && f.requestId === "inspected"));
+      assert.equal(resultStatus.state, negotiated ? "queued" : "failed");
+      if (negotiated) assert.deepEqual(delivered.at(-1).request.execution.recovery.inspection, inspection);
+      else assert.equal(delivered.length, 1);
+    });
+  }
+});
+
 test("negotiated recovery request resumes as waiting and duplicate identity cannot enqueue twice", async t => {
   const { ext, delivered, dial } = await setup(t);
   const capabilities = [...caps, "recovery-judgment-v1"];

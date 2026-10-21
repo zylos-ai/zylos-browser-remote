@@ -140,7 +140,8 @@ class AgentExchange {
     const state = this.states.get(endpointId);
     if (!state || state.taskId !== taskId) return;
     state.terminal = status;
-    state.interruption = status === "interrupted" ? controlLossReceipt(interruption) : undefined;
+    state.interruption = status === "interrupted" || (status === "stopped" && interruption?.recoveryRemoval !== undefined)
+      ? controlLossReceipt(interruption) : undefined;
     state.attachments.close();
     if (state.waiter) this.deliver(state);
   }
