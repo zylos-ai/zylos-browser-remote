@@ -7,11 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-10-21
+
 ### Added
 
 - Negotiate optional recovery frame inspection and explicit candidate selection;
   validate bounded opaque candidate IDs and extension origins without receiving
   frame contents or interpreting removal decisions in Remote.
+  Preserve uncertain removal receipts on failed recovery and explicit Stop.
 
 - Negotiate bounded Agent control-recovery judgments, validate recovery request
   metadata, and reject late terminal recovery decisions without forwarding.
@@ -33,7 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   socket replacement. Retain exchanges, attachments and waiters; acknowledge and
   deduplicate client delivery frames; replay pending decisions only through the
   extension's existing signature validation. Runtime changes, revocation and
-  recovery expiry terminate retained state.
+  recovery expiry terminate retained state. Close the previous live socket on
+  resume identity mismatch and route late Stop completion to the recovered
+  connection.
 
 - Restore extension-owned terminal retry validation, reject inconsistent
   diagnostic pagination, and preserve partial-capture metadata. Relay validation
