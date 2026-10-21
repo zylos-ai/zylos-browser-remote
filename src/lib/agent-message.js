@@ -1,7 +1,24 @@
 
 const AGENT_MESSAGE_CAPABILITY = "agent-message-v2";
 const STEER_CAPABILITY = "agent-input-v1";
+export const RECOVERY_CAPABILITY = "recovery-judgment-v1";
+export const RECOVERY_FRAME_CAPABILITY = "recovery-frame-selection-v1";
 const record = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+const uuid = v => typeof v === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(v);
+function validRecoveryInspection(value) {
+  return record(value) && Object.keys(value).every(key => ["candidates", "truncated", "coverage"].includes(key)) &&
+    value.coverage === "root-document-open-shadow" &&
+    typeof value.truncated === "boolean" && Array.isArray(value.candidates) && value.candidates.length <= 16 &&
+    value.candidates.every(candidate => record(candidate) &&
+      Object.keys(candidate).every(key => ["id", "extensionOrigin"].includes(key)) && uuid(candidate.id) &&
+      typeof candidate.extensionOrigin === "string" && /^chrome-extension:\/\/[a-p]{32}$/.test(candidate.extensionOrigin)) &&
+    new Set(value.candidates.map(candidate => candidate.id)).size === value.candidates.length;
+}
+
+export function usesRecoveryFrameSelection(execution) {
+  return execution.mode === "recovery" && (execution.recovery?.frameSelection === true || execution.recovery?.inspection !== undefined ||
+    (Array.isArray(execution.tools) && execution.tools.some(tool => tool?.name === "inspect-recovery-frames")));
+}
 const validId = (v) =>
   typeof v === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(v);
 function messageText(message) {
@@ -79,6 +96,17 @@ function normalizeAgentRequest(input) {
     !record(msg.execution)
   )
     throw new Error("Invalid message envelope");
+  if (msg.execution.mode === "recovery" || msg.execution.recovery !== undefined) {
+    const recovery = msg.execution.recovery;
+    if (msg.round <= 1 || msg.execution.mode !== "recovery" || !record(recovery) ||
+        Object.keys(recovery).some(key => !["recoveryId", "expiresAt", "reason", "cause", "frameSelection", "inspection"].includes(key)) ||
+        typeof recovery.recoveryId !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(recovery.recoveryId) ||
+        !Number.isSafeInteger(recovery.expiresAt) || recovery.expiresAt <= 0 ||
+        recovery.reason !== "target_closed" || recovery.cause !== "unknown" ||
+        (recovery.frameSelection !== undefined && recovery.frameSelection !== true) ||
+        (recovery.inspection !== undefined && (recovery.frameSelection !== true || !validRecoveryInspection(recovery.inspection))))
+      throw new Error("Invalid recovery request");
+  }
   if (msg.round === 1) {
     const message = msg.message;
     if (

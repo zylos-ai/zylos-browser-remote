@@ -154,6 +154,54 @@ to another decision. An identical accepted decision can be resubmitted after an
 ambiguous transport failure while its connection receipt remains available.
 Never retry uncertain browser input using a newly invented request ID.
 
+### Recovery Judgment
+
+When `execution.mode` is `recovery`, read the preserved action results before
+deciding. Completed actions must not be repeated; uncertain actions must not be
+replayed merely because control was lost. The cause remains unknown.
+
+The extension supplies `execution.recovery` with `recoveryId`, `expiresAt`,
+`reason: "target_closed"` and `cause: "unknown"`. Respond to the current request
+using its recovery-only tool contract: either a single `recover-control` action
+with the exact `recoveryId`, or a terminal `done`/`blocked` response. Do not send
+ordinary fill, click, navigation or other actions while recovery is pending.
+Recovery reacquires the same authorized page and obtains fresh observation; it
+does not retry prior input. Use fresh refs in the returned normal request.
+
+When `recovery-frame-selection-v1` is negotiated, `recovery.frameSelection` is
+true, and the request advertises
+`inspect-recovery-frames`, the Agent can first call that tool with the exact
+`recoveryId`. The next recovery request carries `recovery.inspection` with at
+most 16 candidates, each containing only an opaque `id` and `extensionOrigin`,
+plus `truncated` and `coverage: "root-document-open-shadow"`. Inspection covers
+the top document and its open shadow roots;
+an empty list is not proof that no extension frame exists elsewhere. It does
+not read frame contents. Repeated inspection returns the same cached result
+and does not renew the deadline.
+
+The Agent may explicitly select candidate IDs by passing `selectedCandidateIds`
+to `recover-control`. This removes only the selected, revalidated elements
+before the one attach attempt. Removal can disrupt an extension's UI and is
+not proof that the extension caused the disconnect. Without explicit selection,
+recovery removes nothing. Never invent candidate IDs or request arbitrary
+selectors, scripts, frame contents, or removal of all iframes. Older peers
+retain recovery without frame inspection or removal.
+
+A terminal `interruption.recoveryRemoval` reports `{requested, outcome: "unknown"}`
+when selected removal was requested. The selected frames may already have been
+removed even when reattachment failed or the task stopped. Do not claim the page
+was unchanged, assume rollback, or repeat removal from this receipt.
+
+The extension limits each judgment to 120 seconds and one recovery attempt.
+Later independent control losses may receive new judgments, subject to the
+extension's task and rolling-window limits; never reuse an old recovery token.
+Reconnect and repeated decisions do not renew that deadline. Stop, timeout,
+changed scope or failed recovery ends the task. `RECOVERY_CLOSED` is terminal:
+do not retry or start a replacement action. The extension enforces the deadline
+on its own clock; the Agent host must not infer clock alignment from `expiresAt`.
+Older peers without `recovery-judgment-v1` retain terminal control-loss behavior.
+This does not add an execution timeout to ordinary tasks.
+
 Only the first incoming request enters C4, using `--no-reply` to suppress its
 fixed reply suffix. Subsequent observations return directly from the waiting
 decision command. Final outgoing answers use `c4-send`, with the current ID. Stop, disconnect and worker

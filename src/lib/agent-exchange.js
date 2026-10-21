@@ -86,6 +86,12 @@ class AgentExchange {
         code: "STALE_DECISION",
         message: "Request does not belong to the current exchange",
       };
+    // A recovery judgment that arrived after terminal expiry must never send
+    // another attach attempt. Prior action receipts keep their existing path.
+    if (state.terminal && state.next?.id === id && state.next.execution?.mode === "recovery")
+      return { ok: false, code: "RECOVERY_CLOSED", finished: true, status: state.terminal,
+        ...(state.interruption ? { interruption: state.interruption } : {}),
+        message: "Recovery judgment expired or ended; no action was sent" };
     if (state.waiter)
       return {
         ok: false,
@@ -134,7 +140,8 @@ class AgentExchange {
     const state = this.states.get(endpointId);
     if (!state || state.taskId !== taskId) return;
     state.terminal = status;
-    state.interruption = status === "interrupted" ? controlLossReceipt(interruption) : undefined;
+    state.interruption = status === "interrupted" || (status === "stopped" && interruption?.recoveryRemoval !== undefined)
+      ? controlLossReceipt(interruption) : undefined;
     state.attachments.close();
     if (state.waiter) this.deliver(state);
   }
