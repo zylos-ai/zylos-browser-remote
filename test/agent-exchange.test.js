@@ -45,6 +45,48 @@ function setup(t) {
   return { ext, exchange };
 }
 
+test("one task carries three distinct recovery judgments separated by ordinary requests", async t => {
+  const { ext, exchange } = setup(t);
+  let current = "r1";
+  let round = 1;
+  const forwarded = [];
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const recovery = message(`recovery-${attempt}`, ++round);
+    recovery.request.execution = { mode: "recovery", recovery: {
+      recoveryId: `00000000-0000-4000-8000-${String(attempt).padStart(12, "0")}`,
+      expiresAt: 123456 + attempt, reason: "target_closed", cause: "unknown",
+    }, tools: [{ name: "recover-control" }] };
+    ext.request = async (_endpoint, request) => {
+      forwarded.push(request.params.id);
+      exchange.ingest(recovery);
+      return { accepted: true };
+    };
+    const pending = await exchange.respond("aaaaaaaaaaaa", current, { kind: "actions", actions: [] });
+    assert.equal(pending.next.taskId, "task");
+    assert.equal(pending.next.id, recovery.request.id);
+    assert.deepEqual(pending.next.execution, recovery.request.execution);
+    const normal = message(`after-${attempt}`, ++round);
+    ext.request = async (_endpoint, request) => {
+      forwarded.push(request.params.id);
+      exchange.ingest(normal);
+      return { accepted: true };
+    };
+    const resumed = await exchange.respond("aaaaaaaaaaaa", recovery.request.id, {
+      kind: "actions", actions: [{ tool: "recover-control", args: { recoveryId: recovery.request.execution.recovery.recoveryId } }],
+    });
+    assert.equal(resumed.finished, undefined);
+    assert.equal(resumed.next.id, normal.request.id);
+    current = normal.request.id;
+  }
+  assert.deepEqual(forwarded, ["r1", "recovery-1", "after-1", "recovery-2", "after-2", "recovery-3"]);
+  ext.request = async () => {
+    ext.emit("agent-turn-end", { endpointId: "aaaaaaaaaaaa", taskId: "task", status: "completed" });
+    return { accepted: true };
+  };
+  const terminal = await exchange.respond("aaaaaaaaaaaa", current, { kind: "done" });
+  assert.equal(terminal.finished, true);
+});
+
 test("recovery terminal expiry releases the waiter and late or stale judgment never forwards", async t => {
   const { ext, exchange } = setup(t);
   const recovery = message("recovery", 2);
