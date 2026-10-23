@@ -3,11 +3,13 @@ const AGENT_MESSAGE_CAPABILITY = "agent-message-v2";
 const STEER_CAPABILITY = "agent-input-v1";
 export const RECOVERY_CAPABILITY = "recovery-judgment-v1";
 export const RECOVERY_FRAME_CAPABILITY = "recovery-frame-selection-v1";
+export const RECOVERY_CLOSED_SHADOW_CAPABILITY = "recovery-closed-shadow-v1";
+export const RECOVERY_CHILD_FRAMES_CAPABILITY = "recovery-child-frames-v1";
 const record = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const uuid = v => typeof v === "string" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(v);
 function validRecoveryInspection(value) {
   return record(value) && Object.keys(value).every(key => ["candidates", "truncated", "coverage"].includes(key)) &&
-    value.coverage === "root-document-open-shadow" &&
+    ["root-document-open-shadow", "root-document-open-and-closed-shadow", "documents-open-and-closed-shadow"].includes(value.coverage) &&
     typeof value.truncated === "boolean" && Array.isArray(value.candidates) && value.candidates.length <= 16 &&
     value.candidates.every(candidate => record(candidate) &&
       Object.keys(candidate).every(key => ["id", "extensionOrigin"].includes(key)) && uuid(candidate.id) &&

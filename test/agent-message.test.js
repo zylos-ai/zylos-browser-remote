@@ -71,6 +71,13 @@ test("recovery frame candidates contain only bounded unique IDs and extension or
   }
   input.execution.recovery.inspection = { candidates: [], truncated: true, coverage: "root-document-open-shadow" };
   assert.deepEqual(normalizeAgentRequest(input).execution, input.execution);
+  input.execution.recovery.inspection.coverage = "root-document-open-and-closed-shadow";
+  assert.deepEqual(normalizeAgentRequest(input).execution, input.execution);
+  input.execution.recovery.inspection.coverage = "documents-open-and-closed-shadow";
+  assert.deepEqual(normalizeAgentRequest(input).execution, input.execution);
+  input.execution.recovery.inspection.coverage = "all-frames";
+  assert.throws(() => normalizeAgentRequest(input), /Invalid recovery request/);
+  input.execution.recovery.inspection.coverage = "root-document-open-and-closed-shadow";
   input.execution.recovery.frameSelection = false;
   assert.throws(() => normalizeAgentRequest(input), /Invalid recovery request/);
   delete input.execution.recovery.frameSelection;

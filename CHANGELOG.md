@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Negotiate closed-shadow and child-document recovery inspection coverage with
+  capable extensions while retaining existing coverage for older peers.
+- Add an exact-browser, capability-gated agent task start route and CLI. Validate
+  explicit HTTP(S) URLs, request IDs, prompt bounds and response correlation.
+  Permission and request deduplication remain extension-owned; timeouts never retry.
+
 ## [0.10.2] - 2026-10-21
 
 ### Added

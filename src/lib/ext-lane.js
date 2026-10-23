@@ -31,6 +31,8 @@ import {
   STEER_CAPABILITY,
   RECOVERY_CAPABILITY,
   RECOVERY_FRAME_CAPABILITY,
+  RECOVERY_CLOSED_SHADOW_CAPABILITY,
+  RECOVERY_CHILD_FRAMES_CAPABILITY,
   usesRecoveryFrameSelection,
   normalizeAgentRequest,
   normalizeAgentInput,
@@ -373,10 +375,13 @@ class ExtLane extends EventEmitter {
       capabilities: instanceProtocol
         ? [
             "agent-loop-v1",
+            "agent-task-start-v1",
             INSTANCE_CAPABILITY,
             RESUME_CAPABILITY,
             RECOVERY_CAPABILITY,
             RECOVERY_FRAME_CAPABILITY,
+            ...(caps.includes(RECOVERY_CLOSED_SHADOW_CAPABILITY) ? [RECOVERY_CLOSED_SHADOW_CAPABILITY] : []),
+            ...(caps.includes(RECOVERY_CHILD_FRAMES_CAPABILITY) ? [RECOVERY_CHILD_FRAMES_CAPABILITY] : []),
             ATTACHMENT_CAPABILITY,
             AGENT_MESSAGE_CAPABILITY,
             INTERRUPT_CAPABILITY,
@@ -385,6 +390,8 @@ class ExtLane extends EventEmitter {
           ]
         : [
             "agent-loop-v1",
+            ...(caps.includes(RECOVERY_CLOSED_SHADOW_CAPABILITY) ? [RECOVERY_CLOSED_SHADOW_CAPABILITY] : []),
+            ...(caps.includes(RECOVERY_CHILD_FRAMES_CAPABILITY) ? [RECOVERY_CHILD_FRAMES_CAPABILITY] : []),
             ATTACHMENT_CAPABILITY,
             AGENT_MESSAGE_CAPABILITY,
             STEER_CAPABILITY,
