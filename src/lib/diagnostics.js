@@ -8,6 +8,13 @@ const LEVELS = new Set(["debug", "info", "warn", "error"]);
 export const diagnosticIdentifier = value => typeof value === "string" && /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/.test(value);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const integer = value => Number.isSafeInteger(value) && value >= 0;
+const TIMING_FIELDS = ["generation", "scheduledAt", "firedAt", "delayMs", "inboundAgeMs", "outboundAgeMs", "workerUptimeMs"];
+const LIFECYCLE_FIELDS = {
+  timer: ["freshness", "connect", "reconnect", "handshake", "recovery"],
+  phase: ["disconnected", "reconnecting", "restored", "failed", "cleared", "scheduled"],
+  visibility: ["visible", "hidden"],
+  resumeCategory: ["state_missing", "capability_missing", "runtime_changed", "task_mismatch", "invalid_resume", "request_mismatch", "state_expired"],
+};
 
 export function diagnosticParams(body) {
   if (!body || typeof body !== "object" || Array.isArray(body) ||
@@ -56,12 +63,14 @@ export function diagnosticResult(value, limit) {
         (event.argCount !== undefined && (!integer(event.argCount) || event.argCount > 50)) ||
         (event.count !== undefined && (!integer(event.count) || event.count < 1 || event.count > 1000000)) ||
         (event.closeCode !== undefined && (!integer(event.closeCode) || event.closeCode < 1000 || event.closeCode > 4999)) ||
+        TIMING_FIELDS.some(name => event[name] !== undefined && !integer(event[name])) ||
+        Object.entries(LIFECYCLE_FIELDS).some(([name, values]) => event[name] !== undefined && !values.includes(event[name])) ||
         ["errorKind", "method", "code", "status", "reason"].some(name => event[name] !== undefined && !diagnosticIdentifier(event[name]))) {
       throw new Error("Invalid diagnostics event");
     }
     previous = event.seq;
     const projected = { seq: event.seq, at: event.at, event: event.event, source: event.source, level: event.level };
-    for (const name of ["reason", "task", "op", "argCount", "closeCode", "errorKind", "method", "code", "status", "count"]) {
+    for (const name of ["reason", "task", "op", "argCount", "closeCode", "errorKind", "method", "code", "status", "count", ...TIMING_FIELDS, ...Object.keys(LIFECYCLE_FIELDS)]) {
       if (event[name] !== undefined) projected[name] = event[name];
     }
     return projected;

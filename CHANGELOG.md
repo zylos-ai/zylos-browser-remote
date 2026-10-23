@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Record heartbeat scheduling delay and inbound/outbound age, recovery retention
+  expiry, and bounded resume rejection categories. Preserve extension lifecycle
+  timing metadata in diagnostic exports without recording page or input content.
 - Negotiate closed-shadow and child-document recovery inspection coverage with
   capable extensions while retaining existing coverage for older peers.
 - Add an exact-browser, capability-gated agent task start route and CLI. Validate

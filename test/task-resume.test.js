@@ -22,7 +22,8 @@ async function until(predicate) {
   throw new Error("transport event missing");
 }
 async function setup(t, recoveryMs = 5000) {
-  const ext = new ExtLane({ recoveryMs, loadKeys: () => ({ [keyIdOf(key)]: { sha256: digest(key) } }) });
+  const logs = [];
+  const ext = new ExtLane({ log: line => logs.push(line), recoveryMs, loadKeys: () => ({ [keyIdOf(key)]: { sha256: digest(key) } }) });
   const exchange = new AgentExchange(ext);
   const evidence = new IncidentEvidence();
   ext.on("connected", (endpoint, connection) => evidence.connection(endpoint, true, connection.evidenceResumeTaskId));
@@ -45,8 +46,45 @@ async function setup(t, recoveryMs = 5000) {
     const ready = await until(() => frames.find(f => f.type === "ready"));
     return { ws, frames, ready, send: frame => ws.send(JSON.stringify(frame)) };
   };
-  return { ext, exchange, delivered, dial, evidence };
+  return { ext, exchange, delivered, dial, evidence, logs };
 }
+
+test("resume rejection categories distinguish missing, expired and mismatched state without contents", async t => {
+  for (const [category, change] of [
+    ["state_missing", null],
+    ["runtime_changed", conn => { conn.runtimeEpoch = "different"; }],
+    ["capability_missing", conn => { conn.capabilities = []; }],
+    ["task_mismatch", conn => { conn.agentTurn = "PRIVATE-TASK"; }],
+    ["state_expired", conn => { conn.recoveryExpiresAt = Date.now() - 1; }],
+    ["request_mismatch", conn => { conn.currentRequestId = "PRIVATE-REQUEST"; }],
+  ]) await t.test(category, async t => {
+    const { ext, delivered, dial, logs } = await setup(t);
+    if (change) {
+      const a = await dial(); a.send(request()); await until(() => delivered.length);
+      change(ext.conns.get(endpoint));
+    }
+    const b = await dial(resume);
+    assert.equal(b.ready.resume.category, category);
+    assert.equal(b.ready.resume.reason, "RESUME_STATE_MISMATCH");
+    assert.ok(logs.some(line => line.includes(`resume rejected category=${category}`)));
+    assert.doesNotMatch(logs.join("\n"), /PRIVATE-TASK|PRIVATE-REQUEST|Owner message/);
+  });
+});
+
+test("heartbeat and retention expiry record timer delay and frame ages", async t => {
+  const { ext, dial, logs } = await setup(t, 20);
+  await dial();
+  const conn = ext.conns.get(endpoint);
+  conn.alive = false;
+  conn.lastSeen = Date.now() - 5000;
+  conn.lastSent = Date.now() - 4000;
+  ext.nextHeartbeatAt = Date.now() - 3000;
+  ext._beat();
+  await until(() => logs.some(line => line.includes("recovery expired")));
+  assert.match(logs.find(line => line.includes("heartbeat missed")), /scheduledAt=\d+ firedAt=\d+ delayMs=3\d{3} inboundAgeMs=5\d{3} outboundAgeMs=4\d{3}/);
+  assert.match(logs.find(line => line.includes("recovery expired")), /scheduledAt=\d+ firedAt=\d+ delayMs=\d+/);
+  assert.equal(ext.conns.size, 0);
+});
 
 test("verified same-task resume retains incident evidence, fresh connection clears it", async t => {
   const { ext, delivered, dial, evidence } = await setup(t);

@@ -110,6 +110,7 @@ class ExtLane extends EventEmitter {
       this._onUpgrade(req, socket, head),
     );
 
+    this.nextHeartbeatAt = Date.now() + HEARTBEAT_MS;
     this.heartbeat = setInterval(() => this._beat(), HEARTBEAT_MS);
     if (this.heartbeat.unref) this.heartbeat.unref();
   }
@@ -308,12 +309,20 @@ class ExtLane extends EventEmitter {
       requestMatches &&
       (!prev.recoveryExpiresAt || prev.recoveryExpiresAt > Date.now()));
     if (msg.resume && !resumed) {
+      const category = !prev ? "state_missing" :
+        !resumable || !prev.capabilities.includes(RESUME_CAPABILITY) ? "capability_missing" :
+        prev.runtimeEpoch !== msg.runtimeEpoch ? "runtime_changed" :
+        typeof msg.resume.taskId !== "string" || !msg.resume.taskId.length || msg.resume.taskId.length > 160 ||
+          !["waiting", "executing", "terminal"].includes(msg.resume.phase) ? "invalid_resume" :
+        !newTask && (prev.agentTurn || prev.lastTaskId) && (prev.agentTurn || prev.lastTaskId) !== msg.resume.taskId ? "task_mismatch" :
+        prev.recoveryExpiresAt && prev.recoveryExpiresAt <= Date.now() ? "state_expired" : "request_mismatch";
+      this.log(`ext[${endpointId}]: resume rejected category=${category}`);
       if (prev) {
         this._terminate(prev, 4005, "resume identity mismatch");
         safeClose(prev.ws, 4005, "resume identity mismatch");
       }
       this._send(conn, { type: "ready", endpointId, capabilities: [RESUME_CAPABILITY],
-        runtimeEpoch: msg.runtimeEpoch, resume: { status: "rejected", reason: "RESUME_STATE_MISMATCH" } });
+        runtimeEpoch: msg.runtimeEpoch, resume: { status: "rejected", reason: "RESUME_STATE_MISMATCH", category } });
       safeClose(conn.ws, 4005, "resume rejected");
       return;
     }
@@ -409,6 +418,7 @@ class ExtLane extends EventEmitter {
         !conn.capabilities.includes(RESUME_CAPABILITY)) return false;
     if (conn.recoveryTimer) return true;
     conn.recoveryExpiresAt = Date.now() + this.recoveryMs;
+    this.log(`ext[${conn.endpointId}]: recovery suspended expiresAt=${conn.recoveryExpiresAt} windowMs=${this.recoveryMs}`);
     for (const [id, pending] of conn.pending) {
       clearTimeout(pending.timer);
       if (pending.method !== "agent-decision") {
@@ -417,8 +427,10 @@ class ExtLane extends EventEmitter {
       }
     }
     conn.recoveryTimer = setTimeout(() => {
-      if (this.conns.get(conn.endpointId) === conn)
+      if (this.conns.get(conn.endpointId) === conn) {
+        this.log(`ext[${conn.endpointId}]: recovery expired scheduledAt=${conn.recoveryExpiresAt} firedAt=${Date.now()} delayMs=${Math.max(0, Date.now() - conn.recoveryExpiresAt)}`);
         this._terminate(conn, 4005, "recovery window expired");
+      }
     }, this.recoveryMs);
     conn.recoveryTimer.unref?.();
     this.emit("suspended", conn.endpointId, { expiresAt: conn.recoveryExpiresAt });
@@ -800,6 +812,7 @@ class ExtLane extends EventEmitter {
     if (conn.ws.readyState !== conn.ws.OPEN) return false;
     try {
       conn.ws.send(JSON.stringify(frame));
+      conn.lastSent = Date.now();
       return true;
     } catch {
       return false;
@@ -820,6 +833,10 @@ class ExtLane extends EventEmitter {
   // timer on WebSocket activity, so this traffic is what keeps the extension
   // from being torn down at ~30s.
   _beat() {
+    const firedAt = Date.now();
+    const scheduledAt = this.nextHeartbeatAt;
+    const delayMs = Math.max(0, firedAt - scheduledAt);
+    this.nextHeartbeatAt = firedAt + HEARTBEAT_MS;
     // The key is only verified at upgrade, so without this a revoked credential
     // would keep working for as long as the socket stays open. Re-read once per
     // beat and drop connections whose keyId is gone. If the registry is
@@ -840,7 +857,7 @@ class ExtLane extends EventEmitter {
       }
       if (conn.ws.readyState !== conn.ws.OPEN) continue;
       if (!conn.alive) {
-        this.log(`ext[${conn.endpointId}]: heartbeat missed, terminating`);
+        this.log(`ext[${conn.endpointId}]: heartbeat missed, terminating scheduledAt=${scheduledAt} firedAt=${firedAt} delayMs=${delayMs} inboundAgeMs=${Math.max(0, firedAt - conn.lastSeen)} outboundAgeMs=${conn.lastSent === undefined ? "unknown" : Math.max(0, firedAt - conn.lastSent)}`);
         try {
           conn.ws.terminate();
         } catch {
@@ -849,6 +866,8 @@ class ExtLane extends EventEmitter {
         continue;
       }
       conn.alive = false;
+      if (delayMs >= 1000)
+        this.log(`ext[${conn.endpointId}]: heartbeat delayed scheduledAt=${scheduledAt} firedAt=${firedAt} delayMs=${delayMs} inboundAgeMs=${Math.max(0, firedAt - conn.lastSeen)}`);
       this._send(conn, { type: "ping", ts: Date.now() });
     }
   }

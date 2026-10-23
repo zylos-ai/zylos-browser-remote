@@ -40,6 +40,20 @@ async function setup(t) {
 const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
+test("lifecycle diagnostics preserve bounded metadata and reject unsafe fields", () => {
+  const event = { seq: 1, at: 1, event: "transport-timer", source: "background", level: "info",
+    generation: 3, scheduledAt: 100, firedAt: 500, delayMs: 400, inboundAgeMs: 10,
+    outboundAgeMs: 20, workerUptimeMs: 30, timer: "freshness", phase: "failed",
+    visibility: "hidden", resumeCategory: "state_missing" };
+  const response = { ...sample(), events: [event], nextCursor: 1, highWater: 1 };
+  assert.deepEqual(diagnosticResult(response, 1).events, [event]);
+  for (const [field, bad] of [["delayMs", -1], ["generation", Number.MAX_SAFE_INTEGER + 1],
+    ["firedAt", "private"], ["resumeCategory", "PRIVATE"], ["visibility", "PRIVATE"], ["timer", "PRIVATE"], ["phase", "PRIVATE"]]) {
+    assert.throws(() => diagnosticResult({ ...response, events: [{ ...event, [field]: bad }] }, 1));
+  }
+  assert.deepEqual(diagnosticResult({ ...response, events: [{ ...event, page: "PRIVATE" }] }, 1).events, [event]);
+});
+
 test("diagnostics uses exact authenticated browser without control or active task", async t => {
   const { client, browser, agent } = await setup(t);
   assert.equal(agent.server.address().address, "127.0.0.1");
