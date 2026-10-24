@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Accept strictly bounded optional extension build identity in hello and expose
+  it through ordinary status; older or malformed claims appear as null.
+- Record heartbeat scheduling delay and inbound/outbound age, recovery retention
+  expiry, and bounded resume rejection categories. Preserve extension lifecycle
+  timing metadata in diagnostic exports without recording page or input content.
+- Negotiate closed-shadow and child-document recovery inspection coverage with
+  capable extensions while retaining existing coverage for older peers.
+- Add an exact-browser, capability-gated agent task start route and CLI. Validate
+  explicit HTTP(S) URLs, request IDs, prompt bounds and response correlation.
+  Permission and request deduplication remain extension-owned; timeouts never retry.
+
 ## [0.10.2] - 2026-10-21
 
 ### Added

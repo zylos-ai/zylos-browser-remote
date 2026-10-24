@@ -131,6 +131,7 @@ function createClient(deps = {}) {
   return {
     BASE: base,
     status: () => call("GET", "/status"),
+    taskStart: (body) => call("POST", "/task/start", body),
     diagnostics: (body) => call("POST", "/diagnostics", body),
     detailDiagnostics: (body) => call("POST", "/diagnostics/detail", body),
     decision: (body) => call("POST", "/decision", body),

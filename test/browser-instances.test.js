@@ -50,6 +50,7 @@ async function setup(t) {
       protocol = SUBPROTOCOL,
       hello = true,
       capabilities = caps,
+      build,
     } = {},
   ) {
     const ws = new WebSocket(
@@ -85,6 +86,7 @@ async function setup(t) {
         version: "fixture",
         browserId,
         capabilities,
+        ...(build !== undefined ? { build } : {}),
       });
       const ready = await waitFor(() => frames.find((f) => f.type === "ready"));
       assert.equal(ready.endpointId, client.endpoint);
@@ -126,6 +128,21 @@ async function setup(t) {
     client.send({ type: "agent-turn-end", taskId, status });
   return { relay, requests, dial, post, request, end };
 }
+
+test("ordinary status preserves bounded hello build claims and older clients", async t => {
+  const { relay, dial } = await setup(t);
+  const build = { id: A, commit: "a".repeat(40), dirty: false, builtAt: "2026-10-24T00:00:00.000Z" };
+  const a = await dial(A, { build });
+  const status = await fetch(`http://127.0.0.1:${relay.agent.server.address().port}/status`).then(r => r.json());
+  assert.deepEqual(status.extensions[a.endpoint].build, build);
+  assert.equal(status.extensions[a.endpoint].agentTurn, null);
+  for (const invalid of [undefined, { ...build, commit: "PRIVATE" }, { ...build, extra: "PRIVATE" },
+    { ...build, dirty: "false" }, { ...build, id: "PRIVATE" },
+    { ...build, builtAt: "2026-02-31T00:00:00.000Z" }, { ...build, builtAt: "PRIVATE" }]) {
+    const b = await dial(B, { build: invalid });
+    assert.equal(relay.ext.status()[b.endpoint].build, null);
+  }
+});
 
 test("one key supports independent decisions, continuations, stop and monitor runs even with identical task/request IDs", async (t) => {
   const { relay, requests, dial, post, request, end } = await setup(t);

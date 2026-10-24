@@ -1,5 +1,27 @@
 # Zylos Browser Remote
 
+## Agent-Initiated Tasks
+
+An owner can enable agent task starts in a supporting extension. The private
+loopback route `POST /task/start` requires `{endpoint, requestId, prompt, url}`.
+`endpoint` must be the exact key/browser composite address; `requestId` must be
+a lowercase UUID v4. `prompt` must be nonblank and at most 8000 characters.
+`url` is required, at most 4096 characters, and must be an explicit HTTP(S) URL
+without credentials or whitespace. Unknown fields are rejected.
+
+Use `node scripts/task-start.js <endpoint> <requestId> < request.json`, where
+the JSON contains only `prompt` and `url`. Generate the request ID once and retain
+it with the exact payload. The extension must advertise `agent-task-start-v1`,
+check owner permission and start an ordinary task in its own task tab. A successful
+response contains `requestId`, `taskId`, and `status` (`started` or `existing`).
+Task acceptance does not mean task completion; the ordinary C4 decision flow follows.
+
+Do not automatically retry timeouts or malformed responses: task creation may
+already have happened. An explicit retry must reuse the identical request ID and
+payload. A changed payload conflicts; stopped/completed IDs must not create another
+task. Revoking the extension permission prevents future starts. This route does
+not grant permission, recover a disconnected browser, or bypass the extension.
+
 连接远端 Zylos Agent 与用户 Chrome 插件的轻量转发服务。
 
 **插件提供工具、执行动作、读取页面；Agent 返回决策；Remote 负责连接和传递。**

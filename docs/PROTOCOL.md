@@ -73,11 +73,27 @@ Remote process, as described below.
 
 ### Bounded transport recovery
 
+Hello may include optional `build:{id,commit?,dirty?,builtAt?}`. `id` is a UUID,
+`commit` is a 40- or 64-digit hexadecimal revision, `dirty` is boolean, and
+`builtAt` is a valid canonical UTC ISO timestamp with milliseconds. Unknown
+fields or malformed values discard the entire build claim without rejecting
+the connection. Ordinary `/status` exposes `build` or `null` when unavailable;
+this needs no detailed diagnostics grant. These are client-reported artifact
+identifiers, not a cryptographic attestation. Older clients remain supported.
+
 Both peers advertise `task-resume-v1`. Hello includes a `runtimeEpoch` generated
 once per extension background lifetime. Reconnecting hello includes
 `resume:{taskId,requestId?,round?,phase:"waiting"|"executing"|"terminal"}`. Ready returns
 top-level `runtimeEpoch`, `recoveryWindowMs:120000`, and
-`resume:{status:"fresh"|"resumed"|"rejected",reason?}`. An unknown or conflicting
+`resume:{status:"fresh"|"resumed"|"rejected",reason?,category?}`. Rejection keeps
+`reason:"RESUME_STATE_MISMATCH"` for older peers. Optional `category` is one of
+`state_missing`, `capability_missing`, `runtime_changed`, `invalid_resume`,
+`task_mismatch`, `state_expired`, or `request_mismatch`. It is diagnostic only
+and does not alter recovery eligibility. Missing state may reflect prior expiry
+or a Remote restart; the server records actual retention expiry separately.
+Heartbeat logs include scheduled/actual firing times and frame ages when a beat
+is delayed or missed. These wall-clock observations do not prove OS sleep.
+An unknown or conflicting
 runtime/task rejects recovery. A retained runtime that has not yet accepted its
 first request can accept that request after recovery. Process restarts cannot
 recover tasks. Older peers retain the existing disconnect behavior.

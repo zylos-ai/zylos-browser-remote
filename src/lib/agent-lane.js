@@ -1,5 +1,6 @@
 // Agent-host HTTP entry: decisions and read-only diagnostics.
 import http from "http";
+import { taskStartParams, taskStartResult, TASK_START_CAPABILITY, TASK_START_TIMEOUT_MS } from "./task-start.js";
 import { detailParams, detailResult, DETAIL_CAPABILITY } from "./detail-diagnostics.js";
 import { diagnosticParams, diagnosticResult, DIAGNOSTICS_CAPABILITY, DIAGNOSTICS_TIMEOUT_MS } from "./diagnostics.js";
 
@@ -54,6 +55,28 @@ class AgentLane {
       if (this.monitor?.handle(req, res, url, this.ext.status())) return;
       if (req.method === "GET" && url.pathname === "/status") {
         return reply(200, { ok: true, extensions: this.ext.status() });
+      }
+
+      if (req.method === "POST" && url.pathname === "/task/start") {
+        res.setHeader("cache-control", "no-store");
+        let body, params;
+        try { body = await readJson(req, 128 * 1024); params = taskStartParams(body); }
+        catch { return fail(400, "BAD_REQUEST", "Invalid task start request"); }
+        const target = this.ext.resolve(body.endpoint);
+        if (target.error) return fail(RELAY_ERROR_STATUS[target.error] || 503, target.error, "Browser unavailable");
+        if (!this.ext.status()[target.endpointId]?.capabilities.includes(TASK_START_CAPABILITY)) {
+          return fail(409, "TASK_START_UNSUPPORTED", "This browser does not support agent task start");
+        }
+        let raw;
+        try {
+          raw = await this.ext.request(target.endpointId, { method: "task.start", params, timeoutMs: TASK_START_TIMEOUT_MS });
+        } catch (err) {
+          const code = ["EXT_OFFLINE", "EXT_TIMEOUT", "TASK_START_DISABLED", "TASK_START_CONFLICT", "TASK_START_REVOKED", "TASK_START_UNSUPPORTED", "BAD_PARAMS"].includes(err.code) ? err.code : "TASK_START_ERROR";
+          return fail(RELAY_ERROR_STATUS[code] || (code === "BAD_PARAMS" ? 400 : code === "TASK_START_ERROR" ? 502 : 409), code,
+            "Task start failed or outcome is unknown; do not retry automatically");
+        }
+        try { return reply(200, { ok: true, endpointId: target.endpointId, ...taskStartResult(raw, params.requestId) }); }
+        catch { return fail(502, "BAD_TASK_START_RESPONSE", "Invalid task start response; outcome is unknown"); }
       }
 
       if (req.method === "POST" && url.pathname === "/diagnostics/detail") {

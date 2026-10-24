@@ -59,6 +59,22 @@ dependencies:
 
 # Browser Remote
 
+## Start an Authorized Task
+
+When the owner has enabled agent task starts in the extension, use
+`node scripts/task-start.js <exact-endpoint> <requestId> < request.json`.
+The JSON must contain only `prompt` (nonblank, at most 8000 characters) and
+`url` (required HTTP(S), at most 4096 characters, no credentials or whitespace).
+Use the exact composite endpoint from status and a fresh lowercase UUID v4
+request ID. This requires the browser capability `agent-task-start-v1`.
+The extension checks permission and opens its own task tab, then follows the
+ordinary C4 decision flow. Acceptance (`started` or `existing`) is not completion.
+
+Never automatically retry a failed or timed-out start. Its outcome can be unknown.
+For an explicit retry, reuse the identical request ID and payload. Do not mint a
+new ID to work around a conflict or completed/stopped request. Do not enable or
+alter the owner's permission on their behalf. The route is loopback-only.
+
 The extension supplies the user's request, captured page context, operation
 schemas and decision rules. Remote authenticates the browser and correlates
 requests and responses. Browser behavior belongs entirely to the extension.
@@ -173,9 +189,12 @@ true, and the request advertises
 `inspect-recovery-frames`, the Agent can first call that tool with the exact
 `recoveryId`. The next recovery request carries `recovery.inspection` with at
 most 16 candidates, each containing only an opaque `id` and `extensionOrigin`,
-plus `truncated` and `coverage: "root-document-open-shadow"`. Inspection covers
-the top document and its open shadow roots;
-an empty list is not proof that no extension frame exists elsewhere. It does
+plus `truncated` and `coverage`. `"root-document-open-shadow"` covers the top
+document and its open shadow roots. With `recovery-closed-shadow-v1`,
+`"root-document-open-and-closed-shadow"` adds closed shadow roots. With
+`recovery-child-frames-v1`, `"documents-open-and-closed-shadow"` also covers
+same-tab web child documents (up to 24); an unreadable child sets `truncated`.
+An empty list is not proof that no extension frame exists elsewhere. It does
 not read frame contents. Repeated inspection returns the same cached result
 and does not renew the deadline.
 
