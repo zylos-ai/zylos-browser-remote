@@ -19,6 +19,7 @@
  */
 
 import http from "http";
+import { buildIdentity } from "./build-identity.js";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "events";
 import { controlLossReceipt } from "./control-loss.js";
@@ -170,6 +171,7 @@ class ExtLane extends EventEmitter {
         label: c.label,
         since: c.since,
         version: c.version || null,
+        build: c.build || null,
         capabilities: c.capabilities || [],
         lastSeenMsAgo: Date.now() - c.lastSeen,
         pending: c.pending.size,
@@ -358,6 +360,7 @@ class ExtLane extends EventEmitter {
     conn.endpointId = endpointId;
     conn.version =
       typeof msg.version === "string" ? msg.version.slice(0, 80) : null;
+    conn.build = buildIdentity(msg.build);
     conn.capabilities = caps;
     conn.runtimeEpoch = resumable ? msg.runtimeEpoch : null;
     conn.deliveries ||= new Map();

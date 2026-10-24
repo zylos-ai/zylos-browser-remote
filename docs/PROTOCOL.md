@@ -73,6 +73,14 @@ Remote process, as described below.
 
 ### Bounded transport recovery
 
+Hello may include optional `build:{id,commit?,dirty?,builtAt?}`. `id` is a UUID,
+`commit` is a 40- or 64-digit hexadecimal revision, `dirty` is boolean, and
+`builtAt` is a valid canonical UTC ISO timestamp with milliseconds. Unknown
+fields or malformed values discard the entire build claim without rejecting
+the connection. Ordinary `/status` exposes `build` or `null` when unavailable;
+this needs no detailed diagnostics grant. These are client-reported artifact
+identifiers, not a cryptographic attestation. Older clients remain supported.
+
 Both peers advertise `task-resume-v1`. Hello includes a `runtimeEpoch` generated
 once per extension background lifetime. Reconnecting hello includes
 `resume:{taskId,requestId?,round?,phase:"waiting"|"executing"|"terminal"}`. Ready returns

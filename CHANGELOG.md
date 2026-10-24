@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Accept strictly bounded optional extension build identity in hello and expose
+  it through ordinary status; older or malformed claims appear as null.
 - Record heartbeat scheduling delay and inbound/outbound age, recovery retention
   expiry, and bounded resume rejection categories. Preserve extension lifecycle
   timing metadata in diagnostic exports without recording page or input content.
