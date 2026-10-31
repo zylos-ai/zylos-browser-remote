@@ -1,6 +1,6 @@
 ---
 name: browser-remote
-version: 0.10.3
+version: 0.10.4
 description: >-
   Drive a connected Coco browser extension to do web tasks for the owner, and the
   decision transport for doing so. PROACTIVELY reach for this whenever a request is

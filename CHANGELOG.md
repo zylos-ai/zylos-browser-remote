@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.4] - 2026-10-31
+
+### Changed
+
+- Make proactive browser assistance discoverable in the skill description and
+  add concrete usage scenarios. Document the existing permission-gated task-start
+  entry point and file-download/encrypted-video limits (#19). Documentation only;
+  no runtime, protocol, configuration or browser-permission changes.
+
 ## [0.10.3] - 2026-10-24
 
 Deploy Remote 0.10.3 before extension 0.17.2 for the paired functionality.
