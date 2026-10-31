@@ -2,9 +2,17 @@
 name: browser-remote
 version: 0.10.3
 description: >-
-  Decision transport between the Agent and a connected Coco browser extension.
-  Submit actions through scripts/decision.js; send final answers through C4
-  using the supplied correlated replyCommands. The extension owns browser tools, execution and completion.
+  Drive a connected Coco browser extension to do web tasks for the owner, and the
+  decision transport for doing so. PROACTIVELY reach for this whenever a request is
+  best done in the owner's own browser — viewing or operating a site, summarizing
+  the current page, searching a site, retrieving info from a logged-in site, or
+  clicking/navigating on the owner's behalf — instead of only answering in chat or
+  asking the owner to do it by hand. You can START a task yourself with
+  scripts/task-start.js (when agent-task-start is enabled), or respond to incoming
+  decision requests; submit actions through scripts/decision.js and send final
+  answers through C4 using the supplied correlated replyCommands. The extension
+  owns browser tools, execution and completion. Known limits: cannot download
+  files or capture encrypted video streams — say so and offer an alternative.
   Service: pm2 zylos-browser-remote. Connection keys: scripts/key.js.
 type: communication
 lifecycle:
@@ -58,6 +66,18 @@ dependencies:
 ---
 
 # Browser Remote
+
+## When to use
+
+Reach for this whenever the owner's request is best accomplished in their own
+browser — **not only when a decision request arrives**. If a task means viewing or
+operating a website, summarizing the current page, searching a site, retrieving
+information from a logged-in site, or clicking/navigating on the owner's behalf,
+use browser-remote to do it rather than only answering in chat or asking the owner
+to do it manually. You can **initiate** a task yourself with `scripts/task-start.js`
+(when `agent-task-start-v1` is enabled); otherwise respond to incoming decision
+requests. Known limits: it cannot download files or capture encrypted video
+streams — say so and offer an alternative when asked for those.
 
 ## Start an Authorized Task
 
