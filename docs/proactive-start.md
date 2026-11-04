@@ -20,11 +20,22 @@ EOF_STATUS
 ```
 
 Read `extensions`, keyed by composite `endpointId` (`keyId.browserId`). Select a
-connected endpoint mapped to the requester and authorized for this task. Browser
-labels and online status alone do not establish that mapping. If several mapped
-browsers are possible and the task does not select one, ask which browser. Do not
-use a bare keyId, another user's browser or the first available connection.
-Keep status metadata private to the requesting context.
+connected endpoint mapped to the requester and authorized for this task. Accept
+only an explicit owner confirmation of the exact endpoint/browser in a trusted
+owner conversation, or an existing owner-confirmed mapping in memory that records
+the requester, exact endpoint and allowed scope. A trusted owner can identify
+their own browser or explicitly authorize a named requester to use it; being the
+owner alone does not identify which of several endpoints is theirs. Honor later
+revocations. Never persist connection-key plaintext in that mapping.
+
+Status has no owner or requester-mapping field. Labels, capability support and a
+browser's session-permission switch do not establish identity or delegation. If
+no trusted mapping exists, do not start: ask the owner privately to establish it.
+For a non-owner's request, seek owner authorization rather than asking that person
+to connect a browser or assuming the owner's connected browser is available.
+If several authorized mapped browsers are possible, resolve the selection in a
+private owner context. Do not expose endpoint IDs, labels or other users' browser
+metadata in a group. Do not use a bare keyId or the first available connection.
 
 Require `connected: true` and capability `agent-task-start-v1`. The capability
 means implementation support, not that the session permission is enabled;
@@ -33,8 +44,11 @@ If `agentTurn` indicates an active exchange, preserve it and its evidence;
 do not launch a competing task. An absent agentTurn does not guarantee idle:
 the extension can still reject a start with TASK_START_CONFLICT.
 
-If no authorized browser is connected, ask the user to connect their Coco
-extension. If the capability is missing, explain the compatibility requirement.
+If a trusted mapping exists but its browser is offline, ask its owner privately
+to connect that Coco extension. If browsers are online but none is authorized
+for this requester, report missing authorization and seek the owner privately;
+do not suggest merely connecting another extension. If the capability is missing,
+explain the compatibility requirement.
 Do not alter services, keys or permissions as a workaround.
 
 ## Resolve The URL And Start Once
@@ -70,10 +84,25 @@ Handle outcomes without guessing whether work ran:
   session" in the extension if they want this workflow. Do not enable it yourself.
 - TASK_START_UNSUPPORTED, EXT_OFFLINE or UNKNOWN_ENDPOINT: explain the specific
   missing connection/capability; do not silently choose another endpoint.
-- TASK_START_CONFLICT or TASK_START_REVOKED: respect the active task or revoked
-  permission. Do not mint another request ID or force a replacement task.
+- TASK_START_CONFLICT: the browser cannot accept this start. Causes include an
+  active task, an incognito/missing active tab, a changed payload under the same
+  request ID or a full start-record cache. Do not assume only an active task.
+- TASK_START_REVOKED: permission or context changed during startup, including a
+  cleared conversation or a closed/moved task tab. Do not assume only a permission
+  switch changed; check known outcomes before doing more work.
+- RELAY_DOWN (connection refused): the start was not delivered to the relay;
+  report service unavailability, not an unknown browser execution result.
 - A timeout, transport error or invalid response can have an unknown outcome.
   Report uncertainty; do not resend as if the first request never happened.
+
+Do not automatically retry any refusal. Failed starts can be cached by request ID,
+so the same ID can return its previous refusal after the cause is resolved. Once
+the refusal and any partial effects are understood, the cause has been resolved,
+no conflicting task remains, and the user explicitly requests a new start, use a
+fresh request ID for that new logical start. Recheck the same owner mapping and
+permission requirements. Never use a new ID to evade a refusal, revocation,
+completed/stopped task, or unknown outcome. For an explicit retry of the same
+logical start (especially an uncertain one), retain the identical ID and payload.
 
 ## Continue To Verified Completion
 

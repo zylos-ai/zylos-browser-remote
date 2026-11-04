@@ -81,7 +81,10 @@ not by itself permission to change page state.
 
 An online browser or an advertised capability is not proof of identity or task
 permission. Preserve the requesting channel's scope, use only a browser mapped
-to that requester, and let the extension enforce its session permission. Ask
+to that requester by explicit owner confirmation in a trusted owner context or
+an existing owner-confirmed mapping in memory, and let the extension enforce its
+session permission. Status and labels cannot supply that evidence. Without a
+trusted mapping, do not start; ask the owner privately to confirm it. Ask
 only for a missing target, URL or permission; never choose an unrelated browser,
 change its permission, or mint a connection key to bypass a refusal.
 
@@ -96,9 +99,12 @@ request ID. This requires the browser capability `agent-task-start-v1`.
 The extension checks permission and opens its own task tab, then follows the
 ordinary C4 decision flow. Acceptance (`started` or `existing`) is not completion.
 
-Never automatically retry a failed or timed-out start. Its outcome can be unknown.
-For an explicit retry, reuse the identical request ID and payload. Do not mint a
-new ID to work around a conflict or completed/stopped request. Do not enable or
+Never automatically retry a failed or timed-out start. For an explicit retry of
+the same logical start, reuse the identical request ID and payload, including
+when the outcome is unknown. After a confirmed refusal and resolution of its
+cause, a user-authorized new start uses a fresh ID; it must not bypass a refusal,
+revocation, active task or unknown outcome. Do not revive completed/stopped
+requests or silently create replacement tasks. Do not enable or
 alter the owner's permission on their behalf. The route is loopback-only.
 
 The extension supplies the user's request, captured page context, operation
