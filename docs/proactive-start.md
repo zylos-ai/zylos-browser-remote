@@ -5,6 +5,11 @@ as "search this site for me" or "fill this form using my logged-in browser".
 Reuse an incoming extension decision's replyCommands instead when one exists.
 Do not start another task to replace an active, stopped or uncertain task.
 
+Distinguish the Zylos owner (who establishes trusted requester/endpoint mappings)
+from the browser owner (the person controlling permission and Stop in that
+browser). They can be the same person, but a requester or Zylos owner cannot
+override a different browser owner's refusal.
+
 ## Discover And Select
 
 Run from the installed browser-remote skill directory. Use the bundled client
@@ -27,6 +32,11 @@ the requester, exact endpoint and allowed scope. A trusted owner can identify
 their own browser or explicitly authorize a named requester to use it; being the
 owner alone does not identify which of several endpoints is theirs. Honor later
 revocations. Never persist connection-key plaintext in that mapping.
+Keep a confirmed mapping in the host's private per-user memory/reference record,
+including who confirmed it and the source conversation/message. A missing record
+is not evidence of authorization. When asking the owner privately, send only the
+requester's identity, the permission decision needed and minimal target context;
+do not forward group history, private page contents or credentials.
 
 Status has no owner or requester-mapping field. Labels, capability support and a
 browser's session-permission switch do not establish identity or delegation. If
@@ -80,16 +90,23 @@ request ID and payload for any explicit retry; never retry automatically.
 
 Handle outcomes without guessing whether work ran:
 
-- TASK_START_DISABLED: ask the user to enable "Allow Agent to start tasks this
+- TASK_START_DISABLED: ask the browser owner to enable "Allow Agent to start tasks this
   session" in the extension if they want this workflow. Do not enable it yourself.
-- TASK_START_UNSUPPORTED, EXT_OFFLINE or UNKNOWN_ENDPOINT: explain the specific
+- TASK_START_UNSUPPORTED or UNKNOWN_ENDPOINT: explain the specific
   missing connection/capability; do not silently choose another endpoint.
+- EXT_OFFLINE: the browser is unavailable, possibly after the request was sent.
+  Unless delivery is positively known not to have occurred, treat the outcome
+  as unknown and do not resend or start another task.
 - TASK_START_CONFLICT: the browser cannot accept this start. Causes include an
   active task, an incognito/missing active tab, a changed payload under the same
   request ID or a full start-record cache. Do not assume only an active task.
-- TASK_START_REVOKED: permission or context changed during startup, including a
-  cleared conversation or a closed/moved task tab. Do not assume only a permission
-  switch changed; check known outcomes before doing more work.
+- TASK_START_REVOKED: treat this as a refusal from the browser side. Causes include
+  the browser owner pressing Stop, disabling permission, changing connection
+  settings, or the startup task tab being closed, moved or lost. Do not infer an
+  accidental context change.
+  Check known outcomes and partial effects. A new start requires that browser
+  owner's renewed explicit request or consent; the original requester's request
+  alone is insufficient, even when an earlier mapping remains recorded.
 - RELAY_DOWN (connection refused): the start was not delivered to the relay;
   report service unavailability, not an unknown browser execution result.
 - A timeout, transport error or invalid response can have an unknown outcome.
@@ -100,8 +117,10 @@ so the same ID can return its previous refusal after the cause is resolved. Once
 the refusal and any partial effects are understood, the cause has been resolved,
 no conflicting task remains, and the user explicitly requests a new start, use a
 fresh request ID for that new logical start. Recheck the same owner mapping and
-permission requirements. Never use a new ID to evade a refusal, revocation,
-completed/stopped task, or unknown outcome. For an explicit retry of the same
+permission requirements. After REVOKED or browser Stop, also obtain the browser
+owner's renewed explicit consent; resolving a technical cause or getting another
+request from the requester does not replace it. Never use a new ID to evade a
+refusal, revocation, completed/stopped task, or unknown outcome. For an explicit retry of the same
 logical start (especially an uncertain one), retain the identical ID and payload.
 
 ## Continue To Verified Completion

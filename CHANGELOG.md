@@ -12,7 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Document browser discovery and proactive task starts from other chat channels,
   including requester-to-browser selection, session permission, URL/current-tab
   boundaries, failure handling and continuation to verified completion. Clarify
-  that advertised task-start support is not a permission grant. No runtime,
+  that advertised task-start support is not a permission grant. Distinguish same-ID
+  retries from explicitly authorized new starts after a resolved refusal; browser
+  Stop/revocation requires the browser owner's renewed consent. No runtime,
   protocol, configuration or version change.
 
 ## [0.10.4] - 2026-10-31

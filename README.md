@@ -24,7 +24,9 @@ already have happened. An explicit retry must reuse the identical request ID and
 payload. A changed payload conflicts; stopped/completed IDs must not create another
 task. After a confirmed refusal and resolution of its cause, an explicitly
 requested new start uses a fresh ID; do not use that path to evade a refusal or
-unknown outcome. See the workflow for browser ownership evidence and partial
+unknown outcome. REVOKED or browser Stop requires the browser owner's renewed
+explicit consent, not only another request from the original requester.
+See the workflow for browser ownership evidence and partial
 startup effects. Revoking the extension permission prevents future starts. This route does
 not grant permission, recover a disconnected browser, or bypass the extension.
 

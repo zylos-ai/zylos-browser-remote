@@ -104,7 +104,9 @@ the same logical start, reuse the identical request ID and payload, including
 when the outcome is unknown. After a confirmed refusal and resolution of its
 cause, a user-authorized new start uses a fresh ID; it must not bypass a refusal,
 revocation, active task or unknown outcome. Do not revive completed/stopped
-requests or silently create replacement tasks. Do not enable or
+requests or silently create replacement tasks. REVOKED can mean the browser owner
+pressed Stop: require that browser owner's renewed explicit request or consent,
+not only another request from the original requester. Do not enable or
 alter the owner's permission on their behalf. The route is loopback-only.
 
 The extension supplies the user's request, captured page context, operation
