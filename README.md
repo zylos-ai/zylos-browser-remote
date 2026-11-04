@@ -2,6 +2,9 @@
 
 ## Agent-Initiated Tasks
 
+For discovery, browser selection, permission handling and continuation from a
+chat request, follow the [proactive-start workflow](docs/proactive-start.md).
+
 An owner can enable agent task starts in a supporting extension. The private
 loopback route `POST /task/start` requires `{endpoint, requestId, prompt, url}`.
 `endpoint` must be the exact key/browser composite address; `requestId` must be
