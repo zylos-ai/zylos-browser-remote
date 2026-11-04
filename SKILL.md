@@ -2,17 +2,16 @@
 name: browser-remote
 version: 0.10.4
 description: >-
-  Drive a connected Coco browser extension to do web tasks for the owner, and the
-  decision transport for doing so. PROACTIVELY reach for this whenever a request is
-  best done in the owner's own browser — viewing or operating a site, summarizing
-  the current page, searching a site, retrieving info from a logged-in site, or
-  clicking/navigating on the owner's behalf — instead of only answering in chat or
-  asking the owner to do it by hand. You can START a task yourself with
-  scripts/task-start.js (when agent-task-start is enabled), or respond to incoming
-  decision requests; submit actions through scripts/decision.js and send final
-  answers through C4 using the supplied correlated replyCommands. The extension
-  owns browser tools, execution and completion. Known limits: cannot download
-  files or capture encrypted video streams — say so and offer an alternative.
+  Use the owner's connected Coco browser for authorized web tasks, including
+  requests from Lark, Telegram or other chat channels, not only incoming extension
+  decisions. Use for website searches, logged-in information, page summaries,
+  form filling, clicks and navigation. Discover online browsers and proactively
+  start an authorized task with scripts/task-start.js when the target URL is known
+  and the owner enables session permission. Use the supplied decision/reply commands
+  to continue and verify outcomes. For how-to questions, answer and offer browser
+  assistance without assuming permission to change the page. The extension owns
+  tools, execution and completion. Cannot download files or capture encrypted video
+  streams; state the limit and offer an alternative.
   Service: pm2 zylos-browser-remote. Connection keys: scripts/key.js.
 type: communication
 lifecycle:
@@ -67,17 +66,27 @@ dependencies:
 
 # Browser Remote
 
-## When to use
+## Choose the Entry
 
-Reach for this whenever the owner's request is best accomplished in their own
-browser — **not only when a decision request arrives**. If a task means viewing or
-operating a website, summarizing the current page, searching a site, retrieving
-information from a logged-in site, or clicking/navigating on the owner's behalf,
-use browser-remote to do it rather than only answering in chat or asking the owner
-to do it manually. You can **initiate** a task yourself with `scripts/task-start.js`
-(when `agent-task-start-v1` is enabled); otherwise respond to incoming decision
-requests. Known limits: it cannot download files or capture encrypted video
-streams — say so and offer an alternative when asked for those.
+For an incoming extension decision, use its exact endpoint and replyCommands
+under "Respond to a request" below. Do not start a second task for that request.
+
+For a web task received through another chat channel, use the
+[proactive-start workflow](docs/proactive-start.md): discover connected browsers,
+resolve the authorized endpoint and URL, then call the existing task-start CLI.
+When the user has already requested the action and its scope is clear, perform
+it rather than only giving manual steps or asking again whether to begin.
+For a how-to question, answer and offer browser assistance when useful; it is
+not by itself permission to change page state.
+
+An online browser or an advertised capability is not proof of identity or task
+permission. Preserve the requesting channel's scope, use only a browser mapped
+to that requester by explicit owner confirmation in a trusted owner context or
+an existing owner-confirmed mapping in memory, and let the extension enforce its
+session permission. Status and labels cannot supply that evidence. Without a
+trusted mapping, do not start; ask the owner privately to confirm it. Ask
+only for a missing target, URL or permission; never choose an unrelated browser,
+change its permission, or mint a connection key to bypass a refusal.
 
 ## Start an Authorized Task
 
@@ -90,9 +99,14 @@ request ID. This requires the browser capability `agent-task-start-v1`.
 The extension checks permission and opens its own task tab, then follows the
 ordinary C4 decision flow. Acceptance (`started` or `existing`) is not completion.
 
-Never automatically retry a failed or timed-out start. Its outcome can be unknown.
-For an explicit retry, reuse the identical request ID and payload. Do not mint a
-new ID to work around a conflict or completed/stopped request. Do not enable or
+Never automatically retry a failed or timed-out start. For an explicit retry of
+the same logical start, reuse the identical request ID and payload, including
+when the outcome is unknown. After a confirmed refusal and resolution of its
+cause, a user-authorized new start uses a fresh ID; it must not bypass a refusal,
+revocation, active task or unknown outcome. Do not revive completed/stopped
+requests or silently create replacement tasks. REVOKED can mean the browser owner
+pressed Stop: require that browser owner's renewed explicit request or consent,
+not only another request from the original requester. Do not enable or
 alter the owner's permission on their behalf. The route is loopback-only.
 
 The extension supplies the user's request, captured page context, operation

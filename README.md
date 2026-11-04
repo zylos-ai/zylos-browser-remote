@@ -2,6 +2,9 @@
 
 ## Agent-Initiated Tasks
 
+For discovery, browser selection, permission handling and continuation from a
+chat request, follow the [proactive-start workflow](docs/proactive-start.md).
+
 An owner can enable agent task starts in a supporting extension. The private
 loopback route `POST /task/start` requires `{endpoint, requestId, prompt, url}`.
 `endpoint` must be the exact key/browser composite address; `requestId` must be
@@ -19,7 +22,12 @@ Task acceptance does not mean task completion; the ordinary C4 decision flow fol
 Do not automatically retry timeouts or malformed responses: task creation may
 already have happened. An explicit retry must reuse the identical request ID and
 payload. A changed payload conflicts; stopped/completed IDs must not create another
-task. Revoking the extension permission prevents future starts. This route does
+task. After a confirmed refusal and resolution of its cause, an explicitly
+requested new start uses a fresh ID; do not use that path to evade a refusal or
+unknown outcome. REVOKED or browser Stop requires the browser owner's renewed
+explicit consent, not only another request from the original requester.
+See the workflow for browser ownership evidence and partial
+startup effects. Revoking the extension permission prevents future starts. This route does
 not grant permission, recover a disconnected browser, or bypass the extension.
 
 连接远端 Zylos Agent 与用户 Chrome 插件的轻量转发服务。
