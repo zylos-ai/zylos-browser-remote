@@ -1,6 +1,6 @@
 ---
 name: browser-remote
-version: 0.10.4
+version: 0.10.5
 description: >-
   Use the owner's connected Coco browser for authorized web tasks, including
   requests from Lark, Telegram or other chat channels, not only incoming extension

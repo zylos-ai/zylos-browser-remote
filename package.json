@@ -1,6 +1,6 @@
 {
   "name": "zylos-browser-remote",
-  "version": "0.10.4",
+  "version": "0.10.5",
   "private": true,
   "description": "Decision transport between a Zylos Agent and the Coco browser extension.",
   "main": "src/index.js",

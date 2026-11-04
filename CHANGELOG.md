@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.5] - 2026-11-04
+
 ### Changed
 
 - Document browser discovery and proactive task starts from other chat channels,
@@ -15,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that advertised task-start support is not a permission grant. Distinguish same-ID
   retries from explicitly authorized new starts after a resolved refusal; browser
   Stop/revocation requires the browser owner's renewed consent. No runtime,
-  protocol, configuration or version change.
+  protocol or configuration change.
 
 ## [0.10.4] - 2026-10-31
 
