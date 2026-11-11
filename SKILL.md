@@ -1,6 +1,6 @@
 ---
 name: browser-remote
-version: 0.10.5
+version: 0.10.6
 description: >-
   Use the owner's connected Coco browser for authorized web tasks from any chat
   channel or extension request: search, logged-in information, summaries, forms,
