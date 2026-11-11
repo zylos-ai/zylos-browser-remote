@@ -5,6 +5,38 @@ as "search this site for me" or "fill this form using my logged-in browser".
 Reuse an incoming extension decision's replyCommands instead when one exists.
 Do not start another task to replace an active, stopped or uncertain task.
 
+## Consider A Blocked Webpage Step
+
+Use discovery when a webpage step in an existing task cannot be completed with
+the current browser or tools, even when the user did not explicitly request the
+extension. Typical triggers are unavailable browser automation, incompatible
+page interaction, missing login or account role, or a proposed manual step.
+Before recommending borrowed credentials, elevated roles, manual work or giving
+up, check whether an authorized connected browser offers a workable path.
+
+Examples:
+
+- A test-environment template review needs an administrator session. Before
+  proposing promotion of a test account or asking the administrator to click
+  through it, discover connected browsers and check the existing trusted mapping
+  and task scope. If the administrator has authorized that browser for this
+  review, use its existing session through the workflow below. Do not infer the
+  signed-in account or its role from a label or online status; verify only the
+  relevant page state after authorization. A final approval still needs whatever
+  confirmation the task's side effects require.
+- A local browser cannot operate a page. Consider the connected browser as an
+  alternative execution path before asking the user to perform the step. First
+  reconcile any partial or uncertain effects in the original attempt; do not
+  blindly replay a submit or launch a competing task. If the failure was a site denial,
+  browser-owner Stop or revocation, do not change browser or tool to evade it.
+
+Prefer the browser path when identity, task authority, compatibility and the
+target are established. Reuse existing explicit authorization; ask only for
+missing information or required consent. The browser owner must enable session
+permission themselves. If no authorized connection is usable, explain that
+specific limitation and offer other permitted options. Discovery is not a login,
+account-role check or permission grant, and does not itself start browser work.
+
 Distinguish the Zylos owner (who establishes trusted requester/endpoint mappings)
 from the browser owner (the person controlling permission and Stop in that
 browser). They can be the same person, but a requester or Zylos owner cannot
@@ -21,6 +53,7 @@ node --input-type=module <<'EOF_STATUS'
 import client from './scripts/relay-client.js';
 const response = await client.status();
 console.log(JSON.stringify(response.body, null, 2));
+if (response.status !== 200 || response.body?.ok !== true) process.exitCode = 1;
 EOF_STATUS
 ```
 
