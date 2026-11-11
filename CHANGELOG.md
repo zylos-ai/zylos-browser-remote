@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Add blocked-webpage discovery triggers and examples to the skill and proactive
+  workflow, including unavailable local tools, incompatible interaction and
+  missing login or account role. Preserve browser identity, task authorization,
+  session permission and denial/Stop/revocation boundaries.
+- Correct deployment guidance for Core-managed PM2 registration, use the
+  environment-aware client for status checks, and align key-revocation and
+  temporary transport suspension/attachment retention guidance with the existing
+  implementation. Documentation only; no runtime or protocol changes.
+
 ## [0.10.5] - 2026-11-04
 
 ### Changed

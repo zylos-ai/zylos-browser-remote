@@ -4,6 +4,10 @@
 
 For discovery, browser selection, permission handling and continuation from a
 chat request, follow the [proactive-start workflow](docs/proactive-start.md).
+Also consider this path when a webpage step is blocked by local tools, login,
+account role or incompatible interaction, before proposing manual work or account
+changes. Use only an authorized mapped browser; never bypass denial, Stop or
+revocation by changing execution paths. The workflow includes blocked-step examples.
 
 An owner can enable agent task starts in a supporting extension. The private
 loopback route `POST /task/start` requires `{endpoint, requestId, prompt, url}`.
@@ -72,7 +76,13 @@ zylos upgrade browser-remote
 
 ```sh
 pm2 status zylos-browser-remote
-curl --fail --silent --show-error http://127.0.0.1:3803/status
+# Run from the installed browser-remote skill directory.
+node --input-type=module <<'EOF_STATUS'
+import client from './scripts/relay-client.js';
+const response = await client.status();
+console.log(JSON.stringify(response.body, null, 2));
+if (response.status !== 200 || response.body?.ok !== true) process.exitCode = 1;
+EOF_STATUS
 ```
 
 ### 部署路径注意事项
@@ -82,8 +92,12 @@ Core 的机器本地文件 `~/zylos/pm2/ecosystem.config.cjs` 把启动脚本路
 且当下 `pm2 status` 看不出异常（运行中的进程早已把旧文件载入内存），要到下一次容器重启才
 发作，没有报错也没有崩溃日志。
 
-因此**升级一份手工安装的部署时，同步文件和更新那份机器本地 PM2 配置必须同批完成，并以一次
-真实重启验证**——`pm2 status` 显示 online 不能作为验证依据。
+For Core-managed deployments, use the Zylos component install/upgrade lifecycle
+to maintain registration; do not hand-edit Core's generated PM2 configuration.
+For a genuinely independent deployment, update its separately maintained PM2
+configuration together with any script-path change. Verify the resolved entry
+path and a real service restart through the appropriate lifecycle; `online`
+alone does not prove that registration will survive the next restart.
 
 ### 从源码本地运行
 
@@ -153,8 +167,15 @@ node scripts/key.js revoke <keyId>
 Agent 的上下文仍然共用，这项能力只隔离浏览器路由。
 
 默认密钥文件是 `~/zylos/components/browser-remote/keys.json`，可以通过
-`BROWSER_REMOTE_KEYS_FILE` 指定。每次握手重新读取。撤销阻止后续握手，
-不会主动关闭已建立的连接。`BROWSER_REMOTE_KEY` 是开发测试用的单密钥配置，设置时覆盖文件认证。
+`BROWSER_REMOTE_KEYS_FILE` 指定。
+Keys are re-read at handshake and on heartbeat. Revocation rejects later
+handshakes and terminates existing connections using that key on a subsequent
+successful heartbeat registry check, interrupting their tasks. All browser
+instances sharing the key are affected, not just one endpoint. The default
+heartbeat interval is 17 seconds; scheduling delays or registry read failures
+can delay detection, so revocation is not an immediate or strict 17-second
+guarantee. `BROWSER_REMOTE_KEY` is a development/test override of file-based
+authentication; revoking a file entry does not revoke an environment-provided key.
 不要把真实 Key 写入仓库或日志。
 
 ## 决策协议
@@ -187,12 +208,21 @@ C4 记录每次发送尝试，包含失败与重试；数据库记录不等于�
 图片通过连接传输，在 Agent 主机保存为私有文件，然后返回路径供图像工具读取。
 PNG/JPEG/WebP/GIF 按 MIME 与文件头校验；标准输出不携带截图 Base64。
 默认临时目录是 `~/zylos/components/browser-remote/observations`，
-可用 `BROWSER_REMOTE_OBS_DIR` 调整目录。附件与截图只在当前任务期间保留，
-任务完成、停止、断线或服务正常关闭时删除；新任务需要原图时应重新附上。
+可用 `BROWSER_REMOTE_OBS_DIR` 调整目录。
+Attachments and screenshots are scoped to the current task. Completion, Stop,
+task replacement, terminal disconnection or normal service shutdown deletes
+them. A negotiated, eligible `task-resume-v1` transport suspension retains the
+task and files for recovery (120 seconds by default), requiring the same retained
+runtime and matching task state. Recovery expiry or mismatch terminates the
+task and cleans up; legacy peers without resume support disconnect terminally.
+A later task needing the original image must upload it again.
 只按任务生命周期删除文件，不进行启动、定时或按文件年龄清理。
 存储上限为 128 MiB，达到上限时拒绝新写入，不删除其他活动任务的图片。
 
-断线、停止或插件重载会中断当前任务；Remote 不自动重放动作。
+Stop, plugin worker reload and terminal disconnect interrupt the task; an
+eligible temporary transport suspension can resume that same task. Keep waiting
+on its existing decision command; do not create a replacement task merely because
+the socket is temporarily offline. Remote does not automatically replay actions.
 请求重试必须沿用原请求 ID 和相同决策，不能因为超时就重新点击或提交。
 
 ## 插件当前活动
@@ -290,9 +320,12 @@ Agent 日志采集为只读诊断，不触发模型调用或浏览器操作。�
 
 ```sh
 npm test
-curl --fail --silent --show-error http://127.0.0.1:3803/status
 pm2 logs zylos-browser-remote --lines 50 --nostream
 ```
+
+For status, use the bundled-client command under installation checks above,
+from the installed skill directory. It honors `BROWSER_REMOTE_AGENT_URL` and
+`BROWSER_REMOTE_AGENT_PORT`; do not assume the default port in custom deployments.
 
 测试使用临时目录、独立端口、模拟插件和 C4 接收脚本，不向实际 Agent 发送任务。
 若相邻目录存在 zylos-core，还运行真实 c4-send 和临时 SQLite 数据库验证；

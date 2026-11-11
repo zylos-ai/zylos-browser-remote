@@ -2,17 +2,18 @@
 name: browser-remote
 version: 0.10.5
 description: >-
-  Use the owner's connected Coco browser for authorized web tasks, including
-  requests from Lark, Telegram or other chat channels, not only incoming extension
-  decisions. Use for website searches, logged-in information, page summaries,
-  form filling, clicks and navigation. Discover online browsers and proactively
-  start an authorized task with scripts/task-start.js when the target URL is known
-  and the owner enables session permission. Use the supplied decision/reply commands
-  to continue and verify outcomes. For how-to questions, answer and offer browser
-  assistance without assuming permission to change the page. The extension owns
-  tools, execution and completion. Cannot download files or capture encrypted video
-  streams; state the limit and offer an alternative.
-  Service: pm2 zylos-browser-remote. Connection keys: scripts/key.js.
+  Use the owner's connected Coco browser for authorized web tasks from any chat
+  channel or extension request: search, logged-in information, summaries, forms,
+  clicks and navigation. Also use when a webpage step is blocked by unavailable
+  local browser/tools, incompatible interaction, missing login/role or a manual
+  step: check authorized browser connections before proposing borrowed accounts,
+  elevated access, manual work or abandonment. Online is not identity or consent;
+  never bypass site denial, Stop or revocation. Discover first; start with
+  scripts/task-start.js only with a confirmed browser mapping, task authority,
+  target URL and browser-owner session permission. Follow supplied decision/reply
+  commands and verify outcomes. For how-to questions, answer and offer help without
+  assuming permission to change the page. The extension executes browser tools.
+  Cannot download files or capture encrypted video streams; offer alternatives.
 type: communication
 lifecycle:
   npm: true
@@ -67,6 +68,16 @@ dependencies:
 # Browser Remote
 
 ## Choose the Entry
+
+When a webpage step in an existing task is blocked, consider this capability
+even if the user did not mention the extension. Check connected browsers before
+proposing account borrowing, role elevation, manual work or abandoning the step.
+Prefer an authorized browser when it can complete the requested step. Before
+switching tools, reconcile completed or uncertain effects; never blindly replay
+a submit or other non-idempotent input.
+Follow the [blocked-step examples and selection workflow](docs/proactive-start.md).
+Discovery is not permission to read a page or operate an account. Never switch
+browsers to bypass a site denial, browser-owner Stop or revoked authorization.
 
 For an incoming extension decision, use its exact endpoint and replyCommands
 under "Respond to a request" below. Do not start a second task for that request.
@@ -257,8 +268,13 @@ This does not add an execution timeout to ordinary tasks.
 
 Only the first incoming request enters C4, using `--no-reply` to suppress its
 fixed reply suffix. Subsequent observations return directly from the waiting
-decision command. Final outgoing answers use `c4-send`, with the current ID. Stop, disconnect and worker
-reload interrupt unfinished turns; actions are not automatically replayed.
+decision command. Final outgoing answers use `c4-send`, with the current ID.
+Stop, worker reload and terminal disconnection interrupt unfinished turns.
+A negotiated `task-resume-v1` transport interruption can instead suspend the
+same task temporarily; keep waiting on its existing decision command rather than
+starting another task or replaying input. Resume requires the same retained
+runtime and matching task state within the recovery window (120 seconds by
+default); expiry or a mismatch terminates it. See [transport resume](docs/PROTOCOL.md).
 
 ## Attachments
 
@@ -270,7 +286,11 @@ WebP and GIF use image blocks; other formats (including SVG/HEIC) use file block
 Uploaded files retain safe filename suffixes for format-specific readers. Separate
 Agent containers need shared filesystem access. `BROWSER_REMOTE_OBS_DIR` selects
 the temporary directory. Files remain available across the current task's rounds
-and are deleted when the task ends, stops, disconnects, or the service shuts down.
+and are deleted when the task ends, stops, is replaced, terminally disconnects,
+or the service shuts down normally. Eligible transport suspension retains the
+same task's files across suspension and successful resume until terminal cleanup;
+a temporary socket loss alone does not mean the files were deleted. Legacy peers
+without resume support retain terminal disconnect behavior.
 Read needed resources before ending the task; a later task needs a new upload.
 There is no startup, scheduled or age-based cleanup. The 128 MiB store limit rejects new writes
 instead of deleting active-task files.
@@ -314,7 +334,13 @@ node ~/zylos/.claude/skills/browser-remote/scripts/key.js new --label owner-brow
 node ~/zylos/.claude/skills/browser-remote/scripts/key.js list
 node ~/zylos/.claude/skills/browser-remote/scripts/key.js revoke <keyId>
 pm2 status zylos-browser-remote
-curl --fail --silent --show-error http://127.0.0.1:3803/status
+# Run from this skill directory; honor the configured Agent URL/port.
+node --input-type=module <<'EOF_STATUS'
+import client from './scripts/relay-client.js';
+const response = await client.status();
+console.log(JSON.stringify(response.body, null, 2));
+if (response.status !== 200 || response.body?.ok !== true) process.exitCode = 1;
+EOF_STATUS
 ```
 
 The extension connects using a relay URL and full Key. Proxy
