@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-24
+
+Upgrade together with zylos-browser-extension 0.18.1 (end reasons, browser name and the execution deadline need both sides).
+
 ### Upgrade notes
 - Installs already running a multi-session Core move from the shared
   `browser-remote` group to one group per browser connection
