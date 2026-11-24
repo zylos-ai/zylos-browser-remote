@@ -95,6 +95,7 @@ function verifyKey(presented, keys = loadKeys()) {
     keyId,
     label: entry.label || '',
     singleBrowser: entry.singleBrowser === true,
+    connectionId: typeof entry.connectionId === 'string' ? entry.connectionId : null,
     boundBrowserId: entry.boundBrowserId || null,
   };
 }

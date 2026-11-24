@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Browser names in connection status (extension issue #34): `/status` entries
+  gain `browserName`, `connectionId` and `displayName` (`<name> · <first 8 of
+  connection ID>`, falling back to the key label). The extension may send an
+  optional `browserName` in `hello` and a `{type:"browser-name",browserName}`
+  frame after a rename; older relays ignore both, and older extensions keep the
+  previous label-only status.
 - Execution deadline fallback (OPENM-1425): each executing decision now has a
   wall-clock deadline (declared `timeoutMs`/action budgets + 60s, floor 60s, cap
   15min, default 180s). On expiry the relay frees the waiter, sends

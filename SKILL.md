@@ -94,7 +94,12 @@ An online browser or an advertised capability is not proof of identity or task
 permission. Preserve the requesting channel's scope, use only a browser mapped
 to that requester by explicit owner confirmation in a trusted owner context or
 an existing owner-confirmed mapping in memory, and let the extension enforce its
-session permission. Status and labels cannot supply that evidence. Without a
+session permission. Status and labels cannot supply that evidence.
+When listing connections to people, show each one's `displayName` (for a
+Workspace connection: the browser name the owner chose in OpenMax Workspace and
+the first 8 characters of its connection ID, e.g. `Work Laptop · c0ffee12`;
+renames update it live). `browserName` is reported by the extension and is
+display-only. Without a
 trusted mapping, do not start; ask the owner privately to confirm it. Ask
 only for a missing target, URL or permission; never choose an unrelated browser,
 change its permission, or mint a connection key to bypass a refusal.
