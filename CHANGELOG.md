@@ -16,8 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `error.persisted` and never resent to the overall group.
 - Tasks started with `scripts/task-start.js` record the starting session
   (`ZYLOS_SESSION_GROUP`). On a multi-session Core their requests reach that
-  session as targeted controls, and their final replies use `send.js --stdin`
-  because Core refuses `c4-send` from a session that does not own the address.
+  session as targeted controls. Their final replies use `scripts/handoff-final.js`,
+  which sends Core's internal message asking the owning browser thread to run the
+  exact `c4-send` (Core refuses `c4-send` from a thread that does not own the address).
 
 ### Fixed
 - Stop reaches the session that owns the task on a Core with `session_mode` (#32):

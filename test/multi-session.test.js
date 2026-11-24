@@ -291,16 +291,38 @@ test("progress attribution accepts only the owning session's transcript in multi
   activity.close();
 });
 
-test("agent-routed tasks get final-reply commands that bypass c4-send; others are unchanged", async () => {
+test("agent-routed tasks get final-reply commands that hand off to the owning thread; others are unchanged", async () => {
   const { replyCommands } = await import("../scripts/reply-route.js");
   const plain = replyCommands(endpointId, "r1");
   assert.match(plain.done, /comm-bridge\/scripts\/c4-send\.js browser-remote '.*\|req:r1\|status:done'$/);
   const direct = replyCommands(endpointId, "r1", "i1", { direct: true });
-  assert.match(direct.done, /browser-remote\/scripts\/send\.js --stdin '.*\|req:r1\|status:done\|input:i1'$/);
+  assert.match(direct.done, /browser-remote\/scripts\/handoff-final\.js '.*\|req:r1\|status:done\|input:i1'$/);
   assert.equal(direct.actions, replyCommands(endpointId, "r1", "i1").actions);
   const ext = new EventEmitter();
   const exchange = new AgentExchange(ext, { direct: (_e, task) => task === "task" });
   exchange.ingest(message("r1", 1));
-  assert.match(exchange.states.get("aaaaaaaaaaaa").next.replyCommands.blocked, /send\.js --stdin/);
+  assert.match(exchange.states.get("aaaaaaaaaaaa").next.replyCommands.blocked, /handoff-final\.js/);
   exchange.close();
+});
+
+test("the handoff asks the owning browser thread to run the exact c4-send, with request, status and text", async () => {
+  const { handoffMessage, owningGroup } = await import("../scripts/handoff-final.js");
+  const target = `${endpointId}|req:r9|status:blocked|input:i3`;
+  const text = "Login needed.\nEOF_FINAL_x appears here";
+  const message = handoffMessage(target, text, { sender: "lark:group-x", delimiter: "EOF_FINAL_x" });
+  assert.match(message, /^Please deliver to browser-remote .*\|req:r9\|status:blocked\|input:i3: the final blocked reply of browser request r9/);
+  assert.match(message, /Why: thread lark:group-x started this browser task .* owner input i3/);
+  // Delimiter never collides with the text; the command is the ordinary c4-send.
+  const command = message.split("\n").find((l) => l.startsWith("cat <<"));
+  const delimiter = /<<'([^']+)'/.exec(command)[1];
+  assert.notEqual(delimiter, "EOF_FINAL_x");
+  assert.equal(command, `cat <<'${delimiter}' | node ~/zylos/.claude/skills/comm-bridge/scripts/c4-send.js browser-remote '${target}'`);
+  const lines = message.split("\n");
+  const at = lines.indexOf(command);
+  assert.deepEqual(lines.slice(at + 1, at + 4), ["Login needed.", "EOF_FINAL_x appears here", delimiter]);
+  assert.throws(() => handoffMessage("bad", "x"));
+  const run = (_node, args) => { assert.deepEqual(args.slice(1), ["session-group", "browser-remote", "--session-group", browserGroup, "--json"]);
+    return JSON.stringify({ ok: true, data: `browser-remote:${browserGroup}` }); };
+  assert.equal(owningGroup(endpointId, run, {}), `browser-remote:${browserGroup}`);
+  assert.throws(() => owningGroup(endpointId, () => JSON.stringify({ ok: true, data: "other:x" }), {}));
 });

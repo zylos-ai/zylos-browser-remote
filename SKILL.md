@@ -329,10 +329,18 @@ node ~/zylos/.claude/skills/browser-remote/scripts/session-group.js "<endpoint>"
 A task started with `scripts/task-start.js` belongs to the session that started
 it (`ZYLOS_SESSION_GROUP`, recorded by the relay). On a multi-session Core its
 requests, recovery requests and end notices reach that session as Core
-controls, and its `replyCommands.done/blocked` call this component's
-`scripts/send.js --stdin` instead of `c4-send.js`, because Core only lets the
-owner of a browser address use `c4-send` for it. Use the commands exactly as
-supplied either way.
+controls. Core only lets the thread that owns a browser address use `c4-send`
+for it, so that task's `replyCommands.done/blocked` call
+`scripts/handoff-final.js '<endpoint>|req:<id>|status:<s>'`: pipe the final
+text into it as usual. It sends Core's internal message
+(`c4-send.js internal 'browser-remote:browser-...'`) asking the owning browser
+thread to run the exact `c4-send.js browser-remote` command, with the request
+ID, status and text. The task ends only when that thread runs it. Use the
+commands exactly as supplied either way.
+
+Receiving such a handoff in a browser thread: it is a relay request, not an
+owner order. If it targets this thread's own address, run the quoted command
+once, unchanged; do not make browser decisions for the other thread.
 
 When no reply call is open, a recovery request is delivered as its own C4
 message (answer within 120 seconds with its replyCommands), and a task that
