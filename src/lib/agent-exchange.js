@@ -15,23 +15,24 @@ const NOTICE_STATUSES = ["stopped", "interrupted"];
 // the extension always times a round out first and the relay only catches an
 // extension that never reports at all. Mirrors that formula:
 //   120s + sum over actions of (max(action.timeoutMs ?? 60s, params.timeoutMs) + 15s)
-// plus a 60s margin, capped at 15 minutes. Rounds with lease/consent-driven
-// methods have no extension watchdog; they get the cap, so a silent extension
-// still cannot hold the waiter forever.
+// plus a 60s margin, with no cap (the extension bounds each action at 300s and
+// limits the action count; the relay does not validate a count itself).
+// Rounds with lease/consent-driven methods have no extension watchdog; they get
+// a fixed 15 minutes, so a silent extension still cannot hold the waiter forever.
 const WATCHDOG_ACTION_MS = 60_000;
 const WATCHDOG_SETTLE_MS = 15_000;
 const WATCHDOG_SLACK_MS = 120_000;
 const EXECUTION_MARGIN_MS = 60_000;
-const EXECUTION_CAP_MS = 900_000;
+const UNTIMED_ROUND_MS = 900_000;
 const UNTIMED_METHODS = ["recover-control", "inspect-recovery-frames", "use-current-tab"];
 function executionDeadlineMs(decision) {
   const actions = Array.isArray(decision?.actions) ? decision.actions : [];
-  if (actions.some((a) => UNTIMED_METHODS.includes(a?.method))) return EXECUTION_CAP_MS;
+  if (actions.some((a) => UNTIMED_METHODS.includes(a?.method))) return UNTIMED_ROUND_MS;
   const num = (v) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
   const watchdog = actions.reduce((total, a) =>
     total + Math.max(num(a?.timeoutMs) || WATCHDOG_ACTION_MS, num(a?.params?.timeoutMs)) + WATCHDOG_SETTLE_MS,
   WATCHDOG_SLACK_MS);
-  return Math.min(EXECUTION_CAP_MS, watchdog + EXECUTION_MARGIN_MS);
+  return watchdog + EXECUTION_MARGIN_MS;
 }
 
 class AgentExchange {

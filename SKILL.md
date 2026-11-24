@@ -221,8 +221,8 @@ The extension performs browser input, observations and completion. Do not execut
 actions yourself or poll for state. Do not impose your own command/task deadline;
 the relay applies a fallback execution deadline per decision, 60s above the
 extension's own round watchdog (120s + per action max(`timeoutMs` or 60s,
-`params.timeoutMs`) + 15s), capped at 15 minutes; rounds with recover-control,
-inspect-recovery-frames or use-current-tab get the 15-minute cap. Allow enough output for the returned
+`params.timeoutMs`) + 15s), uncapped; rounds with recover-control,
+inspect-recovery-frames or use-current-tab get a fixed 15 minutes. Allow enough output for the returned
 schema/state (roughly 12,000 tokens). Prefer an initial wait of at least 10 seconds;
 if the shell yields a running process, wait on that same process until a result
 or explicit stop/disconnect. The initial shell wait is not a task duration limit.

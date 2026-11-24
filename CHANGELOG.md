@@ -21,8 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   previous label-only status.
 - Execution deadline fallback (OPENM-1425): each executing decision now has a
   wall-clock deadline 60s above the extension's round watchdog (120s + per
-  action max(`timeoutMs` ?? 60s, `params.timeoutMs`) + 15s), capped at 15min;
-  recover-control / inspect-recovery-frames / use-current-tab rounds get the cap. On expiry the relay frees the waiter, sends
+  action max(`timeoutMs` ?? 60s, `params.timeoutMs`) + 15s), uncapped so it
+  always stays above the watchdog; recover-control / inspect-recovery-frames /
+  use-current-tab rounds (no extension watchdog) get a fixed 15min. On expiry the relay frees the waiter, sends
   `agent-cancel` with reason `execution-timeout`, logs it and returns
   `EXECUTION_TIMEOUT` to the caller, so a silent extension can no longer make
   every later decision `DECISION_BUSY`.

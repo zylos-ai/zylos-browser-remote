@@ -23,13 +23,13 @@ function setup(t, opts = {}) {
   return { ext, exchange, sent, logs };
 }
 
-test("deadline mirrors the extension round watchdog plus a 60s margin, capped at 15 min", () => {
+test("deadline mirrors the extension round watchdog plus a 60s margin; only untimed rounds get 15 min", () => {
   assert.equal(executionDeadlineMs({ kind: "actions" }), 180_000); // no actions: 120s + 60s
   assert.equal(executionDeadlineMs({ actions: [{ method: "click" }] }), 255_000); // 120+60+15+60
   assert.equal(executionDeadlineMs({ actions: [{ method: "read-page", timeoutMs: 30_000 }] }), 225_000);
   assert.equal(executionDeadlineMs({ actions: [{ method: "wait-for-page", params: { timeoutMs: 8_000 } }] }), 255_000);
   assert.equal(executionDeadlineMs({ actions: [{ method: "open", timeoutMs: 1_000 }, { method: "click", timeoutMs: 300_000 }] }), 511_000);
-  assert.equal(executionDeadlineMs({ actions: Array(5).fill({ method: "x", timeoutMs: 300_000 }) }), 900_000);
+  assert.equal(executionDeadlineMs({ actions: Array(5).fill({ method: "x", timeoutMs: 300_000 }) }), 1_755_000); // no cap: stays above the watchdog
   for (const method of ["recover-control", "inspect-recovery-frames", "use-current-tab"])
     assert.equal(executionDeadlineMs({ actions: [{ method }] }), 900_000);
   assert.equal(executionDeadlineMs({ timeoutMs: 1e9, actions: "x" }), 180_000); // no decision-level budget
