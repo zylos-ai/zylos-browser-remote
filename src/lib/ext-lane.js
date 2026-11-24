@@ -743,7 +743,7 @@ class ExtLane extends EventEmitter {
     // never enqueued twice, but it now always gets a status frame back —
     // returning silently left the extension waiting forever.
     conn.agentRequests ||= new Set();
-    const dedupKey = `${msg.taskId} ${msg.id}`;
+    const dedupKey = `${msg.taskId}\u0000${msg.id}`;
     if (conn.agentRequests.has(dedupKey))
       return reportStatus({ state: "failed", code: "DUPLICATE_REQUEST" });
     if (
