@@ -356,3 +356,22 @@ test("forgetNotice lets a failed notice be sent again", () => {
   tasks.forgetNotice("e", "t", "rec");
   assert.equal(tasks.firstNotice("e", "t", "rec"), true);
 });
+
+test("entry wiring: a recovery push the C4 adapter does not confirm is not marked delivered", async (t) => {
+  const { start } = await import("../src/index.js");
+  const delivered = [];
+  const relay = await start({ extPort: 0, agentPort: 0,
+    onRequest: async (event) => { delivered.push(event.kind); return { ok: false, code: "C4_DELIVERY_FAILED" }; } });
+  t.after(() => relay.close());
+  relay.ext.request = async () => ({ accepted: true });
+  const { exchange } = relay;
+  exchange.ingest(message("r1", 1));
+  const first = exchange.respond("aaaaaaaaaaaa", "r1", { kind: "actions", actions: [] });
+  exchange.ingest(message("r2", 2));
+  assert.equal((await first).next.id, "r2");
+  exchange.ingest(message("rec", 3, { mode: "recovery", recovery: { expiresAt: 1 } }));
+  for (let i = 0; i < 20 && !delivered.includes("recovery"); i++) await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(delivered, ["recovery"]);
+  assert.equal(exchange.states.get("aaaaaaaaaaaa").pushed.has("rec"), false);
+});

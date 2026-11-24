@@ -63,8 +63,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (with reply commands and the 120 s deadline), and tasks ended by Stop or loss of
   control produce one notice with status and reason (#33). A later reply call is
   pointed at the delivered request instead of receiving it twice. A recovery push
-  that is not confirmed delivered is not treated as delivered: the next reply call
-  receives the request itself.
+  that C4 does not confirm is no longer recorded as delivered, so no reply call is
+  pointed at a message that never arrived. This does not yet recover the request:
+  the agent's next call answers the previous request and gets `STALE_DECISION`
+  (as before), so a failed push still loses the recovery request (follow-up).
 - A browser thread that starts a task on its own browser keeps the ordinary
   routing; `handoff-final.js` also sends directly when the caller owns the
   address, instead of a handoff Core rejects as `SELF_TARGET`.

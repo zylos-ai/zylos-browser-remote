@@ -543,6 +543,7 @@ function start({
       return {
         ext,
         agent,
+        exchange,
         monitor: trace,
         activity,
         close() {
