@@ -131,3 +131,13 @@ test("the starting Core session is recorded for the task and not forwarded to th
   assert.equal(taskSessions.get(endpoint, taskId).origin, "agent");
   assert.equal((await client.taskStart({ ...body, sessionGroup: "not valid" })).body.code, "BAD_REQUEST");
 });
+
+test("a browser thread starting a task on its own browser is not recorded as a foreign owner (no SELF_TARGET handoff)", async t => {
+  const { TaskSessions } = await import("../src/lib/task-sessions.js");
+  const { sessionGroupFromEndpoint } = await import("../src/lib/session-group.js");
+  const taskSessions = new TaskSessions();
+  const { client } = await setup(t, () => result, [TASK_START_CAPABILITY], { taskSessions });
+  const own = `browser-remote:${sessionGroupFromEndpoint(endpoint)}`;
+  assert.equal((await startTask({ ...body, sessionGroup: own }, client)).ok, true);
+  assert.equal(taskSessions.get(endpoint, taskId), undefined);
+});
