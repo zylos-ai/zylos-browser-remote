@@ -16,6 +16,18 @@ import { AgentExchange } from "./lib/agent-exchange.js";
 import { replyCommands } from "../scripts/reply-route.js";
 import { interruptAgent } from "./lib/agent-interrupt.js";
 import { setting } from "./lib/config.js";
+import {
+  getC4ReceivePath,
+  c4ReceiveSupportsOption,
+  isMulti,
+  readGroupRun,
+  enqueueControl,
+  classifyRejection,
+  parseJsonResult,
+  C4_CHANNEL,
+} from "./lib/c4.js";
+import { sessionGroupFromEndpoint } from "./lib/session-group.js";
+import { TaskSessions } from "./lib/task-sessions.js";
 
 // Environment-only by design: SKILL.md `http_routes` proxies Caddy to
 // 127.0.0.1:3802 and every CLI client in scripts/ dials the agent lane, so a
@@ -25,6 +37,8 @@ const EXT_PORT = Number(process.env.BROWSER_REMOTE_EXT_PORT || 3802);
 const AGENT_PORT = Number(process.env.BROWSER_REMOTE_AGENT_PORT || 3803);
 const EXT_BIND = "127.0.0.1"; // Caddy reaches it on loopback; nothing else should
 
+// The pre-multi-session default, kept for callers that import it. The live
+// path also honours ZYLOS_DIR (see lib/c4.js getC4ReceivePath).
 const DEFAULT_C4_RECEIVE = path.join(
   os.homedir(),
   "zylos",
@@ -34,9 +48,6 @@ const DEFAULT_C4_RECEIVE = path.join(
   "scripts",
   "c4-receive.js",
 );
-// `browser` is taken by the official zylos-browser capability component and
-// `browser-extension` by zylos-browser-channel; this name must match SKILL.md.
-const C4_CHANNEL = "browser-remote";
 const C4_PRIORITY = "2";
 const C4_CONTENT_PREFIX = "[Browser] ";
 const C4_STDERR_KEEP = 2000; // enough to identify a failure, not enough to flood the log
@@ -44,8 +55,12 @@ const C4_DELIVERY_TIMEOUT_MS = 45_000;
 
 // Resolved per call, not at load: tests point it at a stub mid-run.
 function c4ReceivePath() {
-  return process.env.ZYLOS_C4_RECEIVE || DEFAULT_C4_RECEIVE;
+  return getC4ReceivePath();
 }
+// Controls into another session wait at most this long for that session; a
+// recovery request expires sooner, so its deadline follows the request.
+const CONTROL_DEADLINE_S = 600;
+const RECOVERY_DEADLINE_S = 120;
 
 function log(...args) {
   console.log(new Date().toISOString(), ...args);
@@ -61,12 +76,39 @@ function log(...args) {
  *
  * @returns {Promise<{ok: boolean, code?: string}>}
  */
+function endedNotice({ endpointId, taskId, status, interruption, text }) {
+  const reason =
+    status === "stopped"
+      ? interruption?.reason === "CONTROL_LOST"
+        ? "the browser owner stopped the task while the browser had lost control of the page"
+        : "the browser owner pressed Stop"
+      : interruption?.reason === "CONTROL_LOST"
+        ? `the browser lost control of the task page (CONTROL_LOST${interruption.recoveryOutcome ? `, recovery ${interruption.recoveryOutcome}` : ""})`
+        : "the browser task was interrupted";
+  return (
+    `${C4_CONTENT_PREFIX}[Browser task ended ${endpointId}/${taskId}]\n` +
+    `status: ${status}\nreason: ${reason}\n` +
+    (interruption ? `details: ${JSON.stringify(interruption)}\n` : "") +
+    (text ? `extension note: ${JSON.stringify(text.slice(0, 500))}\n` : "") +
+    "No reply call was open, so this notice is delivered here. The task is over: do not run its decision or reply commands again and do not replay its actions. Treat partly completed actions as uncertain. A new browser task needs a new user request.\n"
+  );
+}
+
+// A task an agent started from its own session runs there (multi-session
+// Core only); that session does not own this browser's C4 address.
+function directReplies(route) {
+  return route?.origin === "agent" && Boolean(route.group) && isMulti();
+}
+
 function deliverRequestToC4(
-  { endpointId, chatId, request, activityId, attachmentScope, kind },
+  { endpointId, chatId, request, activityId, attachmentScope, kind, route, ...rest },
   logFn = log,
   { timeoutMs = C4_DELIVERY_TIMEOUT_MS } = {},
 ) {
-  const script = c4ReceivePath();
+  if (kind === "ended") {
+    const content = endedNotice({ endpointId, taskId: chatId, ...rest });
+    return routeToSession({ endpointId, chatId, route, content, deadline: CONTROL_DEADLINE_S, label: "end notice" }, logFn, timeoutMs);
+  }
   // Generic Agent adapter: operation schemas and browser rules are opaque
   // extension data. Attachments are materialized on THIS Agent host, never Chrome.
   let envelope;
@@ -75,9 +117,17 @@ function deliverRequestToC4(
   } catch {
     return Promise.resolve({ ok: false, code: "ATTACHMENT_FAILED" });
   }
-  const commands = replyCommands(endpointId, request.id);
+  const commands = replyCommands(endpointId, request.id, undefined, { direct: directReplies(route) });
+  const expires = request.execution?.recovery?.expiresAt;
   const content =
-    kind === "input"
+    kind === "recovery"
+      ? (activityId ? `[Browser] [Activity ${activityId}]\n` : "") +
+        C4_CONTENT_PREFIX +
+        `[Extension decision request ${endpointId}/${request.id}] [Recovery]\n` +
+        `The browser lost control of the current task and asks for a recovery decision. No reply call was open, so the request is delivered here. Answer within ${RECOVERY_DEADLINE_S} seconds${expires !== undefined ? ` (extension expiresAt: ${JSON.stringify(expires)})` : ""}; after that the browser ends the task. Use the attached extension contract and these replyCommands exactly as for any extension decision request; never reuse an earlier request's commands.\n` +
+        `replyCommands: ${JSON.stringify(commands)}\n` +
+        `Extension request:\n${envelope}`
+      : kind === "input"
       ? (activityId ? `[Browser] [Activity ${activityId}]\n` : "") +
         `[Browser] [Additional owner input ${endpointId}/${request.taskId}]\n` +
         "This is new user input for the CURRENT browser task, delivered directly through C4. Merge all owner messages in sequence order; later conflicting instructions take precedence. Preserve completed actions and the task's browser tabs. Do not start another browser loop or replay previous actions. If a decision command is running, wait for that same command and use its fresh next request.\n" +
@@ -94,6 +144,57 @@ function deliverRequestToC4(
         `Extension request:\n${envelope}`;
   if (Buffer.byteLength(content) > 100000)
     return Promise.resolve({ ok: false, code: "AGENT_REQUEST_TOO_LARGE" });
+  return routeToSession({ endpointId, chatId, route, content,
+    deadline: kind === "recovery" ? RECOVERY_DEADLINE_S : CONTROL_DEADLINE_S,
+    label: kind === "recovery" ? "recovery request" : kind === "input" ? "owner input" : "request" }, logFn, timeoutMs);
+}
+
+/**
+ * Deliver content to the Core session that owns the task.
+ * - No multi-session Core (no session_mode, or c4-receive without
+ *   --session-group): exactly the pre-multi-session c4-receive call.
+ * - A task an agent started from its own session: a control into that group
+ *   (c4-receive can only address this component's own namespace).
+ * - Every other task: c4-receive with the browser connection's group.
+ */
+function routeToSession({ endpointId, chatId, route, content, deadline, label }, logFn, timeoutMs) {
+  if (directReplies(route))
+    return controlToSession({ endpointId, chatId, group: route.group, content, deadline, label }, logFn);
+  let sessionGroup;
+  if (c4ReceiveSupportsOption("--session-group")) {
+    try {
+      sessionGroup = sessionGroupFromEndpoint(endpointId);
+    } catch (err) {
+      // Never fall back to the overall group: that would mix connections.
+      logFn(`chat: no session group for ${endpointId}: ${err.message} (${label} NOT DELIVERED)`);
+      return Promise.resolve({ ok: false, code: "SESSION_GROUP_UNMAPPED" });
+    }
+  }
+  return receiveViaC4({ endpointId, chatId, content, sessionGroup, label }, logFn, timeoutMs);
+}
+
+async function controlToSession({ endpointId, chatId, group, content, deadline, label }, logFn) {
+  const run = readGroupRun(group);
+  if (!run) {
+    logFn(`chat: session ${group} is not running (no READY identity); ${label} for ${endpointId} task ${chatId || "-"} NOT sent`);
+    return { ok: false, code: "AGENT_SESSION_NOT_RUNNING" };
+  }
+  const result = await enqueueControl({ content, group, targetRun: run.runId, ackDeadline: deadline });
+  if (result.ok) {
+    logFn(`chat: ${label} queued as control ${result.id} for session ${group} (endpoint ${endpointId}, task ${chatId || "-"})`);
+    return { ok: true, sessionGroup: group };
+  }
+  if (["TARGET_NOT_RUNNING", "TARGET_MISMATCH", "TARGET_NOT_READY", "STALE_TARGET"].includes(result.code)) {
+    logFn(`chat: session ${group} is not running (${result.code}); ${label} for ${endpointId} task ${chatId || "-"} NOT sent`);
+    return { ok: false, code: "AGENT_SESSION_NOT_RUNNING" };
+  }
+  logFn(`chat: control into ${group} rejected for ${endpointId} (${result.code}, stored ${result.stored}; ${label})`);
+  if (result.stored === "committed") return { ok: true, sessionGroup: group };
+  return { ok: false, code: result.stored === "not_stored" ? "C4_DELIVERY_FAILED" : "C4_DELIVERY_UNCONFIRMED" };
+}
+
+function receiveViaC4({ endpointId, chatId, content, sessionGroup, label }, logFn, timeoutMs) {
+  const script = c4ReceivePath();
   const args = [
     script,
     "--channel",
@@ -106,7 +207,9 @@ function deliverRequestToC4(
     "--no-reply",
     "--content",
     content,
+    ...(sessionGroup ? ["--session-group", sessionGroup] : []),
   ];
+  const where = sessionGroup ? `, group ${sessionGroup}` : "";
   return new Promise((resolve) => {
     let child;
     let settled = false;
@@ -165,9 +268,10 @@ function deliverRequestToC4(
         }
         if (result?.ok === true && result.action === "queued") {
           logFn(
-            `chat: queued in C4 (endpoint ${endpointId}, chat ${chatId || "-"}, conversation ${result.id})`,
+            `chat: queued in C4 (endpoint ${endpointId}, chat ${chatId || "-"}, conversation ${result.id}${result.sessionGroup ? `, session ${result.sessionGroup}` : ""})`,
           );
-          complete({ ok: true });
+          complete(typeof result.sessionGroup === "string" && result.sessionGroup
+            ? { ok: true, sessionGroup: result.sessionGroup } : { ok: true });
         } else if (
           result?.ok === true &&
           ["delivered", "suppressed"].includes(result.action)
@@ -184,8 +288,20 @@ function deliverRequestToC4(
         }
         return;
       }
+      // Structured Core rejection (--json). Never resend to the overall group
+      // and never show Core's text to the browser user; log code and group.
+      const rejected = parseJsonResult(stdout);
+      if (rejected?.ok === false && rejected.error) {
+        const kind = classifyRejection(rejected.error);
+        logFn(
+          `chat: C4 rejected ${label} for ${endpointId} (${rejected.error.code || "UNKNOWN"}${where}, ${kind})`,
+        );
+        if (kind === "committed") complete({ ok: true });
+        else complete({ ok: false, code: kind === "not_stored" ? "C4_DELIVERY_FAILED" : "C4_DELIVERY_UNCONFIRMED" });
+        return;
+      }
       logFn(
-        `chat: c4-receive exited ${code} for ${endpointId} (MESSAGE NOT DELIVERED): ${stderr.trim().slice(0, 400) || "<no stderr>"}`,
+        `chat: c4-receive exited ${code} for ${endpointId}${where} (MESSAGE NOT DELIVERED): ${stderr.trim().slice(0, 400) || "<no stderr>"}`,
       );
       complete({ ok: false, code: "C4_DELIVERY_FAILED" });
     });
@@ -196,7 +312,7 @@ function start({
   extPort = EXT_PORT,
   agentPort = AGENT_PORT,
   onRequest = deliverRequestToC4,
-  onStop = (event) => interruptAgent(event, log),
+  onStop = (event, context) => interruptAgent(event, log, context),
   // The debug trace stays environment-only: ecosystem.config.cjs pins
   // BROWSER_REMOTE_MONITOR=0 on every deployment, so a config.json switch for
   // it could never take effect there. See MONITOR_IS_ENV_ONLY in lib/config.js.
@@ -211,6 +327,9 @@ function start({
   activityEnabled = setting("activityEnabled"),
 } = {}) {
   const trace = monitor ? new Monitor({ file: monitorFile }) : null;
+  // Which Core session owns each task (multi-session Core; see task-sessions.js).
+  const taskSessions = new TaskSessions();
+  const taskIdOf = (msg) => msg.chatId || msg.request?.taskId;
   const agentTrace =
     trace && agentMonitorDir
       ? new AgentTrace(trace, {
@@ -222,15 +341,43 @@ function start({
   const activity = activityEnabled
     ? new AgentActivity(ext, {
         ...(agentMonitorDir ? { directory: agentMonitorDir } : {}),
+        groupFor: (binding) => taskSessions.get(binding.endpointId, binding.taskId)?.group,
         ...activityOptions,
       }).start()
     : null;
   if (trace)
-    trace.agentActivityRun = (token, at) => {
-      const binding = activity?.agentActivityRun(token, at);
+    trace.agentActivityRun = (token, at, sessionId) => {
+      const binding = activity?.agentActivityRun(token, at, sessionId);
       return binding ? trace.agentRun(binding.endpointId, at) : null;
     };
-  const exchange = new AgentExchange(ext);
+  // #33: with no reply call open, recovery requests and task ends the agent
+  // did not cause are delivered to the task's session as C4 messages, once.
+  const push = ({ kind, endpointId, taskId, request, attachments, known, ...rest }) => {
+    const route = taskSessions.get(endpointId, taskId);
+    if (kind === "ended" && !known && route?.origin !== "agent") return;
+    const noticeId = kind === "ended" ? "\nend" : request.id;
+    if (!taskSessions.firstNotice(endpointId, taskId, noticeId)) return undefined;
+    const event = { endpointId, chatId: taskId, kind, ...(route?.group ? { route } : {}),
+      ...(request ? { request, attachmentScope: attachments } : {}), ...rest };
+    // Resolves true only for a confirmed delivery. On failure the notice is
+    // forgotten so the exchange hands the request to the next reply call.
+    return Promise.resolve()
+      .then(() => onRequest(event))
+      .then((result) => {
+        log(`${kind}[${endpointId}]: task ${taskId} ${result?.ok === true ? "delivered to the agent through C4" : `NOT delivered (${result?.code || "C4_DELIVERY_UNCONFIRMED"})`}`);
+        if (result?.ok !== true) taskSessions.forgetNotice(endpointId, taskId, noticeId);
+        return result?.ok === true;
+      })
+      .catch((err) => {
+        log(`${kind}[${endpointId}]: task ${taskId} delivery error: ${err.message}`);
+        taskSessions.forgetNotice(endpointId, taskId, noticeId);
+        return false;
+      });
+  };
+  const exchange = new AgentExchange(ext, {
+    push,
+    direct: (endpointId, taskId) => directReplies(taskSessions.get(endpointId, taskId)),
+  });
   const incidentEvidence = new IncidentEvidence();
   ext.on("connected", (endpoint, connection) => bestEffortEvidence(() => incidentEvidence.connection(endpoint, true, connection?.evidenceResumeTaskId)));
   ext.on("disconnected", endpoint => bestEffortEvidence(() => incidentEvidence.connection(endpoint, false)));
@@ -245,6 +392,7 @@ function start({
     monitor: trace,
     exchange,
     incidentEvidence,
+    taskSessions,
   });
   if (trace) {
     ext.on("connected", (endpointId) => trace.connection(endpointId, true));
@@ -256,6 +404,8 @@ function start({
   const intake = (msg, reportStatus) => {
     const attachmentScope = exchange.attachmentsFor(msg);
     const activityId = activity?.bind(msg);
+    const taskId = taskIdOf(msg);
+    const route = taskSessions.get(msg.endpointId, taskId);
     const ticket =
       msg.request && msg.request.round > 1
         ? trace?.decisionRequested(msg)
@@ -267,9 +417,13 @@ function start({
           ...msg,
           attachmentScope,
           ...(activityId ? { activityId } : {}),
+          ...(route?.group ? { route } : {}),
         }),
       )
       .then((result) => {
+        // The browser group Core actually used (full name, namespace included).
+        if (result?.ok === true && typeof result.sessionGroup === "string" && route?.origin !== "agent")
+          taskSessions.record(msg.endpointId, taskId, { origin: "extension", group: result.sessionGroup });
         if (msg.request) bestEffortEvidence(() => incidentEvidence.record(msg.endpointId, "delivery", { ...msg.request, state: result?.ok === true ? "queued" : "unknown" }));
         trace?.intake(ticket, result);
         if (result?.ok === true) return reportStatus({ state: "queued" });
@@ -287,7 +441,7 @@ function start({
           code,
           error: uncertain
             ? "Delivery to the Agent queue could not be confirmed. Check the Agent before retrying."
-            : code === "AGENT_UNAVAILABLE"
+            : code === "AGENT_UNAVAILABLE" || code === "AGENT_SESSION_NOT_RUNNING"
               ? "The Agent is unavailable; this message was not queued."
               : "Message could not reach the Agent queue. Check Browser Remote and C4.",
         });
@@ -345,7 +499,7 @@ function start({
     trace?.extensionEnded(event);
     if (event.status === "stopped" && event.interrupt) {
       Promise.resolve()
-        .then(() => onStop(event))
+        .then(() => onStop(event, { route: taskSessions.get(event.endpointId, event.taskId) }))
         .then((result) =>
           reportStop(
             result?.ok === true
@@ -373,6 +527,7 @@ function start({
       return {
         ext,
         agent,
+        exchange,
         monitor: trace,
         activity,
         close() {

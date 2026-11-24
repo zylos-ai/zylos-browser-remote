@@ -1,5 +1,7 @@
 // Agent-host HTTP entry: decisions and read-only diagnostics.
 import http from "http";
+import { sessionGroupFromEndpoint } from "./session-group.js";
+import { C4_CHANNEL } from "./c4.js";
 import { taskStartParams, taskStartResult, TASK_START_CAPABILITY, TASK_START_TIMEOUT_MS } from "./task-start.js";
 import { detailParams, detailResult, DETAIL_CAPABILITY } from "./detail-diagnostics.js";
 import { diagnosticParams, diagnosticResult, DIAGNOSTICS_CAPABILITY, DIAGNOSTICS_TIMEOUT_MS } from "./diagnostics.js";
@@ -25,6 +27,7 @@ class AgentLane {
     exchange = null,
     incidentEvidence = null,
     taskStartTimeoutMs = TASK_START_TIMEOUT_MS,
+    taskSessions = null,
   }) {
     this.ext = extLane;
     this.port = port;
@@ -33,6 +36,7 @@ class AgentLane {
     this.exchange = exchange;
     this.incidentEvidence = incidentEvidence;
     this.taskStartTimeoutMs = taskStartTimeoutMs;
+    this.taskSessions = taskSessions;
     this.server = http.createServer((req, res) => this._onHttp(req, res));
   }
 
@@ -80,8 +84,20 @@ class AgentLane {
               ? "Task did not start: the start page did not load and its tab was closed; do not retry automatically"
               : "Task start failed or outcome is unknown; do not retry automatically");
         }
-        try { return reply(200, { ok: true, endpointId: target.endpointId, ...taskStartResult(raw, params.requestId) }); }
+        let started;
+        try { started = taskStartResult(raw, params.requestId); }
         catch { return fail(502, "BAD_TASK_START_RESPONSE", "Invalid task start response; outcome is unknown"); }
+        // The starting Core session owns this task's Stop and C4 notices.
+        // An `existing` task keeps whichever owner it already has.
+        // A browser thread starting a task on its own browser already owns the
+        // address: record nothing, so requests and final replies take the
+        // ordinary path (a handoff to itself is rejected by Core as SELF_TARGET).
+        if (body.sessionGroup && this.taskSessions && !ownGroup(target.endpointId, body.sessionGroup) &&
+            !(started.status === "existing" && this.taskSessions.get(target.endpointId, started.taskId)?.group)) {
+          const entry = this.taskSessions.record(target.endpointId, started.taskId, { origin: "agent", group: body.sessionGroup });
+          if (entry) this.log(`task-start[${target.endpointId}]: task ${started.taskId} belongs to session ${entry.group}`);
+        }
+        return reply(200, { ok: true, endpointId: target.endpointId, ...started });
       }
 
       if (req.method === "POST" && url.pathname === "/diagnostics/detail") {
@@ -214,6 +230,11 @@ class AgentLane {
   close() {
     this.server.close();
   }
+}
+
+function ownGroup(endpointId, group) {
+  try { return group === `${C4_CHANNEL}:${sessionGroupFromEndpoint(endpointId)}`; }
+  catch { return false; }
 }
 
 function readJson(req, limitBytes) {

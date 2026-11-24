@@ -1,4 +1,5 @@
 import { ENDPOINT_RE, BROWSER_ID_RE } from "./endpoint.js";
+import { validFullGroup } from "./task-sessions.js";
 
 export const TASK_START_CAPABILITY = "agent-task-start-v1";
 // The extension opens the task tab and waits up to 10s for the page before it
@@ -6,7 +7,8 @@ export const TASK_START_CAPABILITY = "agent-task-start-v1";
 export const TASK_START_TIMEOUT_MS = 20000;
 export function taskStartParams(body) {
   if (!body || typeof body !== "object" || Array.isArray(body) ||
-      Object.keys(body).some(key => !["endpoint", "requestId", "prompt", "url"].includes(key)) ||
+      Object.keys(body).some(key => !["endpoint", "requestId", "prompt", "url", "sessionGroup"].includes(key)) ||
+      (body.sessionGroup !== undefined && !validFullGroup(body.sessionGroup)) ||
       typeof body.endpoint !== "string" || !ENDPOINT_RE.test(body.endpoint) || !body.endpoint.includes(".") ||
       typeof body.requestId !== "string" || !BROWSER_ID_RE.test(body.requestId) ||
       typeof body.prompt !== "string" || !body.prompt.trim() || body.prompt.length > 8000 ||
@@ -17,6 +19,8 @@ export function taskStartParams(body) {
   if (!["http:", "https:"].includes(url.protocol) || !url.hostname || url.username || url.password) {
     throw new Error("Invalid task start URL");
   }
+  // sessionGroup is relay-local routing (the starting Core session); it is
+  // never forwarded to the extension.
   return { requestId: body.requestId, prompt: body.prompt, url: body.url };
 }
 

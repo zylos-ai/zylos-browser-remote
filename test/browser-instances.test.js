@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
@@ -10,7 +13,12 @@ import {
   ActivitySession,
   CAPABILITY,
 } from "../src/lib/agent-activity.js";
-const KEY = "ab".repeat(32),
+
+// Hermetic: the host's Zylos config (session_mode) must not change these cases.
+const hermeticZylos = fs.mkdtempSync(path.join(os.tmpdir(), "br-zylos-"));
+process.env.ZYLOS_DIR = hermeticZylos;
+delete process.env.BROWSER_REMOTE_AGENT_DIR;
+process.on("exit", () => fs.rmSync(hermeticZylos, { recursive: true, force: true }));const KEY = "ab".repeat(32),
   OTHER_KEY = "cd".repeat(32);
 const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";

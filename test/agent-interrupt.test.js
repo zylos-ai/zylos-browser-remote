@@ -4,6 +4,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { interruptAgent } from "../src/lib/agent-interrupt.js";
+
+// Hermetic: never read the host's Zylos config (session_mode changes Stop).
+const zylos = fs.mkdtempSync(path.join(os.tmpdir(), "br-interrupt-zylos-"));
+process.env.ZYLOS_DIR = zylos;
+process.on("exit", () => fs.rmSync(zylos, { recursive: true, force: true }));
 import { start } from "../src/index.js";
 import WebSocket from "ws";
 import { once } from "node:events";

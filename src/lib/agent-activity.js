@@ -4,6 +4,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { AgentTrace, RolloutSession } from "./agent-trace.js";
 import { redactText } from "./monitor-input.js";
+import { isMulti, readGroupRun } from "./c4.js";
 const CAPABILITY = "agent-activity-v1";
 const HISTORY_CAPABILITY = "agent-history-v1";
 const HISTORY_BATCH = 100;
@@ -199,9 +200,17 @@ class AgentActivity {
       claudeDirectory = path.join(os.homedir(), ".claude"),
       discover,
       now = Date.now,
+      // Full Core session group that owns a binding's task (multi-session).
+      groupFor = () => undefined,
+      multi,
+      groupRun,
     } = {},
   ) {
     this.ext = ext;
+    this.groupFor = groupFor;
+    // The Zylos install this collector watches, not necessarily ZYLOS_DIR.
+    this.multi = multi || (() => isMulti(directory));
+    this.groupRun = groupRun || ((group) => readGroupRun(group, directory));
     this.directory = directory;
     this.claudeDirectory = claudeDirectory;
     this.now = now;
@@ -227,16 +236,27 @@ class AgentActivity {
   agentRun() {
     return null;
   } // Never attribute by endpoint or by guessing.
-  agentActivityRun(token, at) {
-    return (
+  agentActivityRun(token, at, sessionId) {
+    const binding =
       [...this.bindings.values()].find(
         (b) =>
           b.token === token &&
           at >= b.startedAt &&
           at <= this.now() + 5000 &&
           this.valid(b),
-      ) || null
-    );
+      ) || null;
+    // #14: with multi-session Core, only the session that owns the task may
+    // feed its progress panel, even if another session saw the same token.
+    const allowed = binding && sessionId !== undefined ? this.sessionsFor(binding) : null;
+    return allowed && !allowed.has(sessionId) ? null : binding;
+  }
+  // Runtime session IDs allowed to report for a binding; null = no filter
+  // (no multi-session Core: one shared session, the pre-existing behaviour).
+  sessionsFor(binding) {
+    if (!this.multi()) return null;
+    const group = this.groupFor(binding);
+    const id = group ? this.groupRun(group)?.sessionId : undefined;
+    return new Set(id ? [id] : []);
   }
   valid(binding) {
     const conn = this.ext.conns.get(binding.endpointId);
@@ -381,16 +401,49 @@ class AgentActivity {
       run.historyDropped = 0;
     }
   }
+  // Multi-session Core: exactly the runtime sessions of the groups that own
+  // the bound tasks. null when unfiltered.
+  ownedSessions() {
+    if (!this.multi()) return null;
+    const ids = new Set();
+    for (const binding of this.bindings.values())
+      for (const id of this.sessionsFor(binding) || []) ids.add(id);
+    return ids;
+  }
   async findSessions() {
     const runtime = JSON.parse(
       fs.readFileSync(path.join(this.directory, ".zylos/config.json"), "utf8"),
     ).runtime;
+    const owned = this.ownedSessions();
     if (runtime === "codex")
-      return (await this.trace.findSessions()).map((row) => ({
-        ...row,
-        runtime,
-      }));
+      return (await this.trace.findSessions())
+        .filter((row) => !owned || owned.has(row.id))
+        .map((row) => ({
+          ...row,
+          runtime,
+        }));
     if (!["claude", "claude-code"].includes(runtime)) return [];
+    if (owned) {
+      // Group sessions may run from another project folder; find each
+      // transcript by its session ID instead of the newest files here.
+      const rows = [];
+      let folders = [];
+      try {
+        folders = fs.readdirSync(path.join(this.claudeDirectory, "projects"));
+      } catch { /* none */ }
+      for (const id of owned) {
+        if (!/^[a-f0-9-]{36}$/.test(id)) continue;
+        for (const folder of folders) {
+          const rollout_path = path.join(this.claudeDirectory, "projects", folder, `${id}.jsonl`);
+          try {
+            const stat = fs.statSync(rollout_path);
+            rows.push({ id, rollout_path, runtime: "claude", updatedAt: stat.mtimeMs });
+            break;
+          } catch { /* not here */ }
+        }
+      }
+      return rows.slice(0, 4);
+    }
     const cwd = fs.realpathSync(this.directory);
     const folders = new Set([
       cwd.replace(/\//g, "-"),
