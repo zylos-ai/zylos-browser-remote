@@ -36,6 +36,9 @@ class TaskSessions {
     return entry;
   }
   /** True the first time `id` is marked for this task: dedupes C4 notices. */
+  forgetNotice(endpointId, taskId, id) {
+    this.get(endpointId, taskId)?.notified.delete(id);
+  }
   firstNotice(endpointId, taskId, id) {
     let entry = this.get(endpointId, taskId);
     if (!entry) {

@@ -355,13 +355,24 @@ function start({
   const push = ({ kind, endpointId, taskId, request, attachments, known, ...rest }) => {
     const route = taskSessions.get(endpointId, taskId);
     if (kind === "ended" && !known && route?.origin !== "agent") return;
-    if (!taskSessions.firstNotice(endpointId, taskId, kind === "ended" ? "\nend" : request.id)) return;
+    const noticeId = kind === "ended" ? "\nend" : request.id;
+    if (!taskSessions.firstNotice(endpointId, taskId, noticeId)) return undefined;
     const event = { endpointId, chatId: taskId, kind, ...(route?.group ? { route } : {}),
       ...(request ? { request, attachmentScope: attachments } : {}), ...rest };
-    Promise.resolve()
+    // Resolves true only for a confirmed delivery. On failure the notice is
+    // forgotten so the exchange hands the request to the next reply call.
+    return Promise.resolve()
       .then(() => onRequest(event))
-      .then((result) => log(`${kind}[${endpointId}]: task ${taskId} ${result?.ok === true ? "delivered to the agent through C4" : `NOT delivered (${result?.code || "C4_DELIVERY_UNCONFIRMED"})`}`))
-      .catch((err) => log(`${kind}[${endpointId}]: task ${taskId} delivery error: ${err.message}`));
+      .then((result) => {
+        log(`${kind}[${endpointId}]: task ${taskId} ${result?.ok === true ? "delivered to the agent through C4" : `NOT delivered (${result?.code || "C4_DELIVERY_UNCONFIRMED"})`}`);
+        if (result?.ok !== true) taskSessions.forgetNotice(endpointId, taskId, noticeId);
+        return result?.ok === true;
+      })
+      .catch((err) => {
+        log(`${kind}[${endpointId}]: task ${taskId} delivery error: ${err.message}`);
+        taskSessions.forgetNotice(endpointId, taskId, noticeId);
+        return false;
+      });
   };
   const exchange = new AgentExchange(ext, {
     push,

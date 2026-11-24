@@ -326,3 +326,33 @@ test("the handoff asks the owning browser thread to run the exact c4-send, with 
   assert.equal(owningGroup(endpointId, run, {}), `browser-remote:${browserGroup}`);
   assert.throws(() => owningGroup(endpointId, () => JSON.stringify({ ok: true, data: "other:x" }), {}));
 });
+
+for (const [name, push] of [
+  ["resolves false", async () => false],
+  ["rejects", async () => { throw new Error("c4 down"); }],
+  ["throws", () => { throw new Error("sync"); }],
+])
+  test(`a recovery push that ${name} is not marked delivered; the next reply call receives the request`, async (t) => {
+    const ext = new EventEmitter();
+    let calls = 0;
+    const exchange = new AgentExchange(ext, { push: (e) => { calls++; return push(e); } });
+    t.after(() => exchange.close());
+    exchange.ingest(message("r1", 1));
+    ext.request = async () => ({ accepted: true });
+    const first = exchange.respond("aaaaaaaaaaaa", "r1", { kind: "actions", actions: [] });
+    exchange.ingest(message("r2", 2));
+    assert.equal((await first).next.id, "r2");
+    exchange.ingest(message("rec", 3, { mode: "recovery", recovery: { expiresAt: 1 } }));
+    await new Promise((r) => setImmediate(r));
+    assert.equal(calls, 1);
+    const late = await exchange.respond("aaaaaaaaaaaa", "r1", { kind: "actions", actions: [{ late: true }] });
+    assert.equal(late.deliveredViaC4, undefined);
+    assert.equal(late.next.id, "rec");
+  });
+
+test("forgetNotice lets a failed notice be sent again", () => {
+  const tasks = new TaskSessions();
+  assert.equal(tasks.firstNotice("e", "t", "rec"), true);
+  tasks.forgetNotice("e", "t", "rec");
+  assert.equal(tasks.firstNotice("e", "t", "rec"), true);
+});

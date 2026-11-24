@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade notes
+- Installs already running a multi-session Core move from the shared
+  `browser-remote` group to one group per browser connection
+  (`browser-<keyId>.<browserId>`). Tasks in flight during the upgrade belong to
+  the old group: Core rejects their final replies as cross-session, so finish or
+  stop running browser tasks before upgrading (or let the owner restart them).
+- Known limits, tracked as follow-ups: a session hosted by another group does not
+  get Stop or progress-panel output (the extension still stops the task); the
+  task-to-session map keeps 256 tasks in memory and is lost on relay restart, so an
+  evicted or pre-restart agent-started task falls back to the browser's own group;
+  a first request arriving before the task-start response could reach the
+  browser's own group (unconfirmed, depends on extension ordering).
+
 ### Added
 - Multi-session Core support: each browser connection gets its own session group
   `browser-<keyId>.<browserId>` (`src/lib/session-group.js`,
@@ -30,7 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - With no reply call open, recovery requests are delivered immediately through C4
   (with reply commands and the 120 s deadline), and tasks ended by Stop or loss of
   control produce one notice with status and reason (#33). A later reply call is
-  pointed at the delivered request instead of receiving it twice.
+  pointed at the delivered request instead of receiving it twice. A recovery push
+  that is not confirmed delivered is not treated as delivered: the next reply call
+  receives the request itself.
+- A browser thread that starts a task on its own browser keeps the ordinary
+  routing; `handoff-final.js` also sends directly when the caller owns the
+  address, instead of a handoff Core rejects as `SELF_TARGET`.
 - On a multi-session Core the progress panel only shows output from the runtime
   session of the group that owns the task (#14).
 

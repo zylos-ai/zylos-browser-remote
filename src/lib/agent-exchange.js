@@ -62,10 +62,16 @@ class AgentExchange {
     else if (this.push && request.execution?.mode === "recovery" && !state.pushed.has(request.id)) {
       // Nobody is waiting (for example the agent is waiting on a human), and a
       // recovery request expires: deliver it now instead of holding it.
-      state.pushed.add(request.id);
+      // Marked before the push so a reply call racing it is pointed at the C4
+      // message rather than receiving the request twice; a failed delivery
+      // clears the mark so the next reply call receives the request itself.
+      const id = request.id;
+      state.pushed.add(id);
+      const failed = () => { if (this.states.get(endpointId) === state) state.pushed.delete(id); };
       try {
-        this.push({ kind: "recovery", endpointId, taskId: chatId, request: state.next, attachments: state.attachments });
-      } catch { /* best effort; a later reply call still receives it */ }
+        Promise.resolve(this.push({ kind: "recovery", endpointId, taskId: chatId, request: state.next, attachments: state.attachments }))
+          .then((delivered) => { if (delivered === false) failed(); }, failed);
+      } catch { failed(); }
     }
     return true;
   }

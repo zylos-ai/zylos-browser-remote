@@ -61,6 +61,13 @@ async function main() {
   text = text.replace(/\s+$/, "");
   if (!text.trim() || text.trim().length > 8000) throw new Error("Final reply must contain 1–8000 characters");
   const group = owningGroup(args[0].split("|")[0]);
+  if (process.env.ZYLOS_SESSION_GROUP === group) {
+    // This thread already owns the address; Core would reject a handoff to
+    // itself (SELF_TARGET), so send the final reply directly.
+    process.stdout.write(execFileSync(process.execPath, [path.join(scriptsDir(), "c4-send.js"), C4_CHANNEL, args[0]],
+      { input: text, encoding: "utf8", timeout: 30000 }));
+    return;
+  }
   const message = handoffMessage(args[0], text, { sender: process.env.ZYLOS_SESSION_GROUP });
   const out = execFileSync(process.execPath, [path.join(scriptsDir(), "c4-send.js"), "internal", group],
     { input: message, encoding: "utf8", timeout: 30000 });
