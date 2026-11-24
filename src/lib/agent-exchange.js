@@ -10,13 +10,38 @@ const TERMINAL_KINDS = ["done", "blocked"];
 // own final reply, so they never produce a notice.
 const NOTICE_STATUSES = ["stopped", "interrupted"];
 
+// Fallback deadline for one decision's execution. The extension normally
+// answers (next request, task end) long before this; the deadline only
+// guarantees that an extension which never reports cannot hold the waiter
+// forever and turn every later decision into DECISION_BUSY.
+const EXECUTION_DEFAULT_MS = 180_000;
+const EXECUTION_FLOOR_MS = 60_000;
+const EXECUTION_CAP_MS = 900_000;
+const EXECUTION_SLACK_MS = 60_000;
+// Budget hints the decision itself declares (decision.timeoutMs, or per-action
+// timeoutMs / ms / args.timeoutMs / args.ms). Opaque otherwise: nothing here
+// interprets action names.
+function executionDeadlineMs(decision) {
+  const num = (v) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
+  let budget = num(decision?.timeoutMs);
+  if (!budget && Array.isArray(decision?.actions)) {
+    for (const a of decision.actions) {
+      budget += num(a?.timeoutMs) || num(a?.ms) || num(a?.args?.timeoutMs) || num(a?.args?.ms);
+    }
+  }
+  if (!budget) return EXECUTION_DEFAULT_MS;
+  return Math.min(EXECUTION_CAP_MS, Math.max(EXECUTION_FLOOR_MS, budget + EXECUTION_SLACK_MS));
+}
+
 class AgentExchange {
   // push(event): deliver a recovery request or a task-end notice through C4
   // when no reply call is open. Optional; without it nothing is pushed.
   // direct(endpointId, taskId): final replies must bypass c4-send (see
   // scripts/reply-route.js).
-  constructor(ext, { push, direct = () => false } = {}) {
+  constructor(ext, { push, direct = () => false, log = () => {}, deadlineMs = executionDeadlineMs } = {}) {
     this.ext = ext;
+    this.log = log;
+    this.deadlineMs = deadlineMs;
     this.push = push;
     this.direct = direct;
     // Which decision produced each receipt: only an identical retry replays it.
@@ -31,6 +56,7 @@ class AgentExchange {
     if (!state || state.taskId !== chatId) {
       state?.attachments.close();
       if (state?.waiter) {
+        clearTimeout(state.waiter.timer);
         state.waiter.resolve({
           ok: false,
           code: "STALE_DECISION",
@@ -107,6 +133,7 @@ class AgentExchange {
     waiter.resolve(response);
   }
   release(state) {
+    clearTimeout(state.waiter?.timer);
     state.waiter = null;
   }
   // The caller stopped waiting (its HTTP client closed). Ask the
@@ -119,6 +146,18 @@ class AgentExchange {
     this.ext.request(endpointId, { method: "agent-cancel", params: { id, reason }, timeoutMs: 10000 })
       .catch(() => {}); // Older extensions reject it; the release above still holds.
     return waiter;
+  }
+  // Execution deadline passed without a report: free the waiter, ask the
+  // extension to cancel (agent-cancel, reason execution-timeout), and tell
+  // the caller. A later result for this ID stays receiptable.
+  expire(endpointId, id, waiter, ms) {
+    if (!this.abandon(endpointId, id, "execution-timeout", waiter)) return;
+    this.log(`agent[${endpointId}]: decision ${id} exceeded execution deadline ${ms}ms; sent agent-cancel`);
+    waiter.resolve({
+      ok: false,
+      code: "EXECUTION_TIMEOUT",
+      message: `The browser did not report within ${Math.round(ms / 1000)}s; the relay asked it to cancel. Actions may have partly run: do not replay them blindly. A new decision is accepted once the browser sends its next request.`,
+    });
   }
   async respond(endpointId, id, decision, inputId) {
     const state = this.states.get(endpointId);
@@ -166,10 +205,13 @@ class AgentExchange {
     let mine;
     const next = new Promise((resolve) => {
       // One waiter per endpoint, released by the next request, task end,
-      // replacement, disconnect or the caller leaving. Execution itself has
-      // no wall-clock deadline here.
+      // replacement, disconnect, the caller leaving, or the execution
+      // deadline (an extension that never reports must not block the loop).
       state.orphan = undefined;
       state.waiter = mine = { id, resolve, signature };
+      const ms = this.deadlineMs(decision);
+      mine.timer = setTimeout(() => this.expire(endpointId, id, mine, ms), ms);
+      mine.timer.unref?.();
     });
     const previous = state.receipts.get(id);
     try {
@@ -231,6 +273,7 @@ class AgentExchange {
     this.states.delete(endpointId);
     state?.attachments.close();
     if (state?.waiter) {
+      clearTimeout(state.waiter.timer);
       state.waiter.resolve({
         ok: false,
         code: "EXT_OFFLINE",
@@ -243,4 +286,4 @@ class AgentExchange {
     for (const key of this.states.keys()) this.disconnected(key);
   }
 }
-export { AgentExchange };
+export { AgentExchange, executionDeadlineMs };

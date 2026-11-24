@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Execution deadline fallback (OPENM-1425): each executing decision now has a
+  wall-clock deadline (declared `timeoutMs`/action budgets + 60s, floor 60s, cap
+  15min, default 180s). On expiry the relay frees the waiter, sends
+  `agent-cancel` with reason `execution-timeout`, logs it and returns
+  `EXECUTION_TIMEOUT` to the caller, so a silent extension can no longer make
+  every later decision `DECISION_BUSY`.
 - Multi-session Core support: each browser connection gets its own session group
   `browser-<keyId>.<browserId>` (`src/lib/session-group.js`,
   `scripts/session-group.js`, SKILL.md "Session Groups"). `--session-group` is

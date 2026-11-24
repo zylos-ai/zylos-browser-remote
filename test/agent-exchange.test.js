@@ -234,7 +234,7 @@ test("a stopped task returns its terminal status and cannot leak the next task s
 });
 
 for (const outcome of ["next", "stopped", "disconnect", "replace", "shutdown"])
-  test(`long-running decisions keep waiting and release on ${outcome}`, async (t) => {
+  test(`long-running decisions keep waiting (below the execution deadline) and release on ${outcome}`, async (t) => {
     const { ext, exchange } = setup(t);
     t.mock.timers.enable({ apis: ["setTimeout"] });
     let calls = 0;
@@ -249,7 +249,7 @@ for (const outcome of ["next", "stopped", "disconnect", "replace", "shutdown"])
         settled = true;
         return result;
       });
-    t.mock.timers.tick(24 * 60 * 60 * 1000);
+    t.mock.timers.tick(179_000); // just under the default execution deadline
     await new Promise(setImmediate);
     assert.equal(settled, false);
     assert.equal(calls, 1);

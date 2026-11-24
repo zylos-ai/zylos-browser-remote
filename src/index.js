@@ -365,6 +365,7 @@ function start({
   };
   const exchange = new AgentExchange(ext, {
     push,
+    log,
     direct: (endpointId, taskId) => directReplies(taskSessions.get(endpointId, taskId)),
   });
   const incidentEvidence = new IncidentEvidence();
