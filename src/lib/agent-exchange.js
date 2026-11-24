@@ -248,12 +248,12 @@ class AgentExchange {
     }
     return next;
   }
-  ended({ endpointId, taskId, status, interruption, text }) {
+  ended({ endpointId, taskId, status, interruption, text, reason }) {
     const state = this.states.get(endpointId);
     if (!state || state.taskId !== taskId) {
       // No request of this task reached the exchange; only a task an agent
       // started itself is worth a notice (the push handler decides).
-      this.notifyEnd({ endpointId, taskId, status, interruption: interruption ? controlLossReceipt(interruption) : undefined, text, known: false });
+      this.notifyEnd({ endpointId, taskId, status, interruption: interruption ? controlLossReceipt(interruption) : undefined, text, ...(reason ? { reason } : {}), known: false });
       return;
     }
     state.terminal = status;
@@ -261,7 +261,7 @@ class AgentExchange {
       ? controlLossReceipt(interruption) : undefined;
     state.attachments.close();
     if (state.waiter) this.deliver(state);
-    else this.notifyEnd({ endpointId, taskId, status, interruption: state.interruption, text, known: true });
+    else this.notifyEnd({ endpointId, taskId, status, interruption: state.interruption, text, ...(reason ? { reason } : {}), known: true });
   }
   notifyEnd(event) {
     if (!this.push || !NOTICE_STATUSES.includes(event.status)) return;

@@ -76,7 +76,20 @@ function log(...args) {
  *
  * @returns {Promise<{ok: boolean, code?: string}>}
  */
-function endedNotice({ endpointId, taskId, status, interruption, text }) {
+// Plain words for the extension's agent-turn-end.reason.
+const END_REASON_WORDS = {
+  user_stop: "the browser owner pressed Stop",
+  target_closed: "the page the task was controlling was closed",
+  canceled_by_user: "the browser owner cancelled the task",
+  recovery_expired: "control of the page was lost and recovery timed out",
+  recovery_failed: "control of the page was lost and recovery failed",
+  foreign_frame: "the page moved into a frame the extension may not control",
+  tab_closed: "the task's tab was closed",
+  tab_moved: "the task's tab was moved out of the task window",
+  other: "an unspecified browser-side reason",
+};
+
+function endedNotice({ endpointId, taskId, status, interruption, text, reason: cause }) {
   const reason =
     status === "stopped"
       ? interruption?.reason === "CONTROL_LOST"
@@ -88,6 +101,7 @@ function endedNotice({ endpointId, taskId, status, interruption, text }) {
   return (
     `${C4_CONTENT_PREFIX}[Browser task ended ${endpointId}/${taskId}]\n` +
     `status: ${status}\nreason: ${reason}\n` +
+    (END_REASON_WORDS[cause] ? `cause: ${END_REASON_WORDS[cause]} (${cause})\n` : "") +
     (interruption ? `details: ${JSON.stringify(interruption)}\n` : "") +
     (text ? `extension note: ${JSON.stringify(text.slice(0, 500))}\n` : "") +
     "No reply call was open, so this notice is delivered here. The task is over: do not run its decision or reply commands again and do not replay its actions. Treat partly completed actions as uncertain. A new browser task needs a new user request.\n"
@@ -591,7 +605,7 @@ if (isMainModule()) {
   main();
 }
 
-export {
+export { endedNotice,
   main,
   start,
   isMainModule,

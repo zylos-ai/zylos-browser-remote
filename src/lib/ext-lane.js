@@ -62,6 +62,9 @@ import {
 } from "./endpoint.js";
 const HANDSHAKE_MS = 10000;
 const MAX_BROWSER_NAME = 100;
+// Why the extension ended a task (agent-turn-end.reason). Unknown -> "other".
+const END_REASONS = ["user_stop", "target_closed", "canceled_by_user", "recovery_expired",
+  "recovery_failed", "foreign_frame", "tab_closed", "tab_moved", "other"];
 
 // Owner-chosen browser name (OpenMax Workspace connect/rename). Display only:
 // it is an unverified claim of the extension and never identity or consent.
@@ -611,6 +614,8 @@ class ExtLane extends EventEmitter {
             taskId: msg.taskId,
             interrupt,
             ...(interruption ? { interruption } : {}),
+            ...(msg.reason !== undefined
+              ? { reason: END_REASONS.includes(msg.reason) ? msg.reason : "other" } : {}),
             status: ["done", "blocked", "interrupted", "stopped"].includes(
               msg.status,
             )
@@ -947,7 +952,7 @@ function clampTimeout(ms) {
   return Math.min(Math.max(Math.floor(n), 1000), MAX_COMMAND_TIMEOUT_MS);
 }
 
-export {
+export { END_REASONS,
   ExtLane,
   SUBPROTOCOL,
   LEGACY_SUBPROTOCOL,

@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `agent-turn-end.reason` from the extension (`user_stop`, `target_closed`,
+  `canceled_by_user`, `recovery_expired`, `recovery_failed`, `foreign_frame`,
+  `tab_closed`, `tab_moved`, `other`; anything else becomes `other`) is passed
+  through to the turn-end event and stated in plain words as a `cause:` line
+  in the #33 task-end notice.
 - Browser names in connection status (extension issue #34): `/status` entries
   gain `browserName`, `connectionId` and `displayName` (`<name> · <first 8 of
   connection ID>`, falling back to the key label). The extension may send an

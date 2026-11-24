@@ -356,7 +356,7 @@ once, unchanged; do not make browser decisions for the other thread.
 When no reply call is open, a recovery request is delivered as its own C4
 message (answer within 120 seconds with its replyCommands), and a task that
 ends by Stop or loss of control produces one `[Browser task ended ...]` notice
-with status and reason. A reply call made later is pointed at that message
+with status and reason (plus a `cause:` line when the extension reports why, e.g. the tab was closed or recovery expired). A reply call made later is pointed at that message
 (`deliveredViaC4`) instead of receiving the request a second time. Stop
 interrupts only the session that owns the task; if that session is not
 running, nothing is sent and the relay logs it.
