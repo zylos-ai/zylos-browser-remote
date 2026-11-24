@@ -23,13 +23,16 @@ function setup(t, opts = {}) {
   return { ext, exchange, sent, logs };
 }
 
-test("deadline is derived from declared budgets with a floor, cap and default", () => {
-  assert.equal(executionDeadlineMs({ kind: "actions" }), 180_000);
-  assert.equal(executionDeadlineMs({ timeoutMs: 1000 }), 61_000);
-  assert.equal(executionDeadlineMs({ timeoutMs: 200_000 }), 260_000);
-  assert.equal(executionDeadlineMs({ actions: [{ timeoutMs: 30_000 }, { args: { ms: 50_000 } }] }), 140_000);
-  assert.equal(executionDeadlineMs({ timeoutMs: 1e9 }), 900_000);
-  assert.equal(executionDeadlineMs({ timeoutMs: -5, actions: "x" }), 180_000);
+test("deadline mirrors the extension round watchdog plus a 60s margin, capped at 15 min", () => {
+  assert.equal(executionDeadlineMs({ kind: "actions" }), 180_000); // no actions: 120s + 60s
+  assert.equal(executionDeadlineMs({ actions: [{ method: "click" }] }), 255_000); // 120+60+15+60
+  assert.equal(executionDeadlineMs({ actions: [{ method: "read-page", timeoutMs: 30_000 }] }), 225_000);
+  assert.equal(executionDeadlineMs({ actions: [{ method: "wait-for-page", params: { timeoutMs: 8_000 } }] }), 255_000);
+  assert.equal(executionDeadlineMs({ actions: [{ method: "open", timeoutMs: 1_000 }, { method: "click", timeoutMs: 300_000 }] }), 511_000);
+  assert.equal(executionDeadlineMs({ actions: Array(5).fill({ method: "x", timeoutMs: 300_000 }) }), 900_000);
+  for (const method of ["recover-control", "inspect-recovery-frames", "use-current-tab"])
+    assert.equal(executionDeadlineMs({ actions: [{ method }] }), 900_000);
+  assert.equal(executionDeadlineMs({ timeoutMs: 1e9, actions: "x" }), 180_000); // no decision-level budget
 });
 
 test("an extension that never reports: the waiter expires with EXECUTION_TIMEOUT and agent-cancel is sent", async (t) => {

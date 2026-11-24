@@ -10,27 +10,28 @@ const TERMINAL_KINDS = ["done", "blocked"];
 // own final reply, so they never produce a notice.
 const NOTICE_STATUSES = ["stopped", "interrupted"];
 
-// Fallback deadline for one decision's execution. The extension normally
-// answers (next request, task end) long before this; the deadline only
-// guarantees that an extension which never reports cannot hold the waiter
-// forever and turn every later decision into DECISION_BUSY.
-const EXECUTION_DEFAULT_MS = 180_000;
-const EXECUTION_FLOOR_MS = 60_000;
+// Fallback deadline for one decision's execution. It must sit ABOVE the
+// extension's own round watchdog (utils/browser-loop.ts roundWatchdogMs), so
+// the extension always times a round out first and the relay only catches an
+// extension that never reports at all. Mirrors that formula:
+//   120s + sum over actions of (max(action.timeoutMs ?? 60s, params.timeoutMs) + 15s)
+// plus a 60s margin, capped at 15 minutes. Rounds with lease/consent-driven
+// methods have no extension watchdog; they get the cap, so a silent extension
+// still cannot hold the waiter forever.
+const WATCHDOG_ACTION_MS = 60_000;
+const WATCHDOG_SETTLE_MS = 15_000;
+const WATCHDOG_SLACK_MS = 120_000;
+const EXECUTION_MARGIN_MS = 60_000;
 const EXECUTION_CAP_MS = 900_000;
-const EXECUTION_SLACK_MS = 60_000;
-// Budget hints the decision itself declares (decision.timeoutMs, or per-action
-// timeoutMs / ms / args.timeoutMs / args.ms). Opaque otherwise: nothing here
-// interprets action names.
+const UNTIMED_METHODS = ["recover-control", "inspect-recovery-frames", "use-current-tab"];
 function executionDeadlineMs(decision) {
+  const actions = Array.isArray(decision?.actions) ? decision.actions : [];
+  if (actions.some((a) => UNTIMED_METHODS.includes(a?.method))) return EXECUTION_CAP_MS;
   const num = (v) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
-  let budget = num(decision?.timeoutMs);
-  if (!budget && Array.isArray(decision?.actions)) {
-    for (const a of decision.actions) {
-      budget += num(a?.timeoutMs) || num(a?.ms) || num(a?.args?.timeoutMs) || num(a?.args?.ms);
-    }
-  }
-  if (!budget) return EXECUTION_DEFAULT_MS;
-  return Math.min(EXECUTION_CAP_MS, Math.max(EXECUTION_FLOOR_MS, budget + EXECUTION_SLACK_MS));
+  const watchdog = actions.reduce((total, a) =>
+    total + Math.max(num(a?.timeoutMs) || WATCHDOG_ACTION_MS, num(a?.params?.timeoutMs)) + WATCHDOG_SETTLE_MS,
+  WATCHDOG_SLACK_MS);
+  return Math.min(EXECUTION_CAP_MS, watchdog + EXECUTION_MARGIN_MS);
 }
 
 class AgentExchange {
