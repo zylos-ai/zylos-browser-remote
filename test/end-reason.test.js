@@ -22,7 +22,7 @@ async function lane(t) {
   return { ext, ws, endpoint };
 }
 
-for (const [sent, expected] of [["tab_moved", "tab_moved"], ["something_new", "other"], [7, "other"], [undefined, undefined]])
+for (const [sent, expected] of [["tab_moved", "tab_moved"], ["transport_lost", "transport_lost"], ["something_new", "other"], [7, "other"], [undefined, undefined]])
   test(`agent-turn-end reason ${String(sent)} -> ${String(expected)}`, async (t) => {
     const { ext, ws, endpoint } = await lane(t);
     ext.conns.get(endpoint).agentTurn = "task";

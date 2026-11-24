@@ -86,6 +86,7 @@ const END_REASON_WORDS = {
   foreign_frame: "the page moved into a frame the extension may not control",
   tab_closed: "the task's tab was closed",
   tab_moved: "the task's tab was moved out of the task window",
+  transport_lost: "the extension lost its connection to the relay",
   other: "an unspecified browser-side reason",
 };
 

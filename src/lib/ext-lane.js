@@ -64,7 +64,7 @@ const HANDSHAKE_MS = 10000;
 const MAX_BROWSER_NAME = 100;
 // Why the extension ended a task (agent-turn-end.reason). Unknown -> "other".
 const END_REASONS = ["user_stop", "target_closed", "canceled_by_user", "recovery_expired",
-  "recovery_failed", "foreign_frame", "tab_closed", "tab_moved", "other"];
+  "recovery_failed", "foreign_frame", "tab_closed", "tab_moved", "transport_lost", "other"];
 
 // Owner-chosen browser name (OpenMax Workspace connect/rename). Display only:
 // it is an unverified claim of the extension and never identity or consent.
