@@ -120,3 +120,14 @@ test("timeout has unknown outcome and never retries", async t => {
   assert.ok(waited >= 900 && waited < 3000, `relay must use the configured timeout, waited ${waited}ms`);
   assert.equal(frames.length, 1);
 });
+
+test("the starting Core session is recorded for the task and not forwarded to the extension", async t => {
+  const { TaskSessions } = await import("../src/lib/task-sessions.js");
+  const taskSessions = new TaskSessions();
+  const { client, frames } = await setup(t, () => result, [TASK_START_CAPABILITY], { taskSessions });
+  assert.deepEqual(await startTask({ ...body, sessionGroup: "lark:group-x" }, client), { ok: true, endpointId: endpoint, ...result });
+  assert.deepEqual(frames[0].params, taskStartParams(body));
+  assert.deepEqual(taskSessions.get(endpoint, taskId).group, "lark:group-x");
+  assert.equal(taskSessions.get(endpoint, taskId).origin, "agent");
+  assert.equal((await client.taskStart({ ...body, sessionGroup: "not valid" })).body.code, "BAD_REQUEST");
+});

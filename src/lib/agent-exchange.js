@@ -6,9 +6,19 @@ import { controlLossReceipt } from "./control-loss.js";
 // are interpreted here. One response can carry the client's next request.
 const TERMINAL_KINDS = ["done", "blocked"];
 
+// Task ends the agent did not cause itself. done/blocked follow the agent's
+// own final reply, so they never produce a notice.
+const NOTICE_STATUSES = ["stopped", "interrupted"];
+
 class AgentExchange {
-  constructor(ext) {
+  // push(event): deliver a recovery request or a task-end notice through C4
+  // when no reply call is open. Optional; without it nothing is pushed.
+  // direct(endpointId, taskId): final replies must bypass c4-send (see
+  // scripts/reply-route.js).
+  constructor(ext, { push, direct = () => false } = {}) {
     this.ext = ext;
+    this.push = push;
+    this.direct = direct;
     // Which decision produced each receipt: only an identical retry replays it.
     this.signatures = new WeakMap();
     this.states = new Map();
@@ -32,13 +42,15 @@ class AgentExchange {
         mode: false,
         receipts: new Map(),
         attachments: new AttachmentScope(),
+        // Request IDs already delivered as a C4 message (no reply call open).
+        pushed: new Set(),
       };
       this.states.set(endpointId, state);
     }
     state.next = {
       ...request,
       endpointId,
-      replyCommands: replyCommands(endpointId, request.id),
+      replyCommands: replyCommands(endpointId, request.id, undefined, { direct: this.direct(endpointId, chatId) }),
     };
     if (!state.mode) return false; // First delivery uses the existing C4 adapter.
     if (!state.waiter && state.orphan) {
@@ -47,6 +59,14 @@ class AgentExchange {
       state.orphan = undefined;
     }
     if (state.waiter) this.deliver(state);
+    else if (this.push && request.execution?.mode === "recovery" && !state.pushed.has(request.id)) {
+      // Nobody is waiting (for example the agent is waiting on a human), and a
+      // recovery request expires: deliver it now instead of holding it.
+      state.pushed.add(request.id);
+      try {
+        this.push({ kind: "recovery", endpointId, taskId: chatId, request: state.next, attachments: state.attachments });
+      } catch { /* best effort; a later reply call still receives it */ }
+    }
     return true;
   }
   attachmentsFor({ endpointId, chatId }) {
@@ -61,12 +81,16 @@ class AgentExchange {
       response = state.terminal
         ? { ok: true, accepted: true, finished: true, status: state.terminal,
             ...(state.interruption ? { interruption: state.interruption } : {}) }
-        : {
-            ok: true,
-            accepted: true,
-            next: state.attachments.materialize(state.next),
-          };
-      if (!state.terminal) state.next = response.next;
+        : state.pushed?.has(state.next?.id)
+          // Already delivered as a C4 message: point there, never twice.
+          ? { ok: true, accepted: true, deliveredViaC4: state.next.id,
+              message: `The next request ${state.next.id} was already delivered as a separate C4 message; answer it with that message's replyCommands` }
+          : {
+              ok: true,
+              accepted: true,
+              next: state.attachments.materialize(state.next),
+            };
+      if (!state.terminal && response.next) state.next = response.next;
     } catch {
       response = {
         ok: false,
@@ -181,14 +205,26 @@ class AgentExchange {
     }
     return next;
   }
-  ended({ endpointId, taskId, status, interruption }) {
+  ended({ endpointId, taskId, status, interruption, text }) {
     const state = this.states.get(endpointId);
-    if (!state || state.taskId !== taskId) return;
+    if (!state || state.taskId !== taskId) {
+      // No request of this task reached the exchange; only a task an agent
+      // started itself is worth a notice (the push handler decides).
+      this.notifyEnd({ endpointId, taskId, status, interruption: interruption ? controlLossReceipt(interruption) : undefined, text, known: false });
+      return;
+    }
     state.terminal = status;
     state.interruption = status === "interrupted" || (status === "stopped" && interruption?.recoveryRemoval !== undefined)
       ? controlLossReceipt(interruption) : undefined;
     state.attachments.close();
     if (state.waiter) this.deliver(state);
+    else this.notifyEnd({ endpointId, taskId, status, interruption: state.interruption, text, known: true });
+  }
+  notifyEnd(event) {
+    if (!this.push || !NOTICE_STATUSES.includes(event.status)) return;
+    try {
+      this.push({ kind: "ended", ...event });
+    } catch { /* best effort */ }
   }
   disconnected(endpointId) {
     const state = this.states.get(endpointId);

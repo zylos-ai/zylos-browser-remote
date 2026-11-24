@@ -5,8 +5,23 @@
 import client from "./relay-client.js";
 import { parseReplyEndpoint } from "./reply-route.js";
 
+async function readStdin() {
+  let text = "";
+  process.stdin.setEncoding("utf8");
+  for await (const chunk of process.stdin) {
+    text += chunk;
+    if (Buffer.byteLength(text) > 64 * 1024) throw new Error("Final reply exceeds limit");
+  }
+  return text;
+}
+
 async function main() {
-  const [target, message, ...extra] = process.argv.slice(2);
+  // `--stdin <target>`: the direct final-reply route (see reply-route.js).
+  const argv = process.argv.slice(2);
+  const direct = argv[0] === "--stdin";
+  const [target, message, ...extra] = direct
+    ? [argv[1], argv.length === 2 ? await readStdin() : undefined, ...argv.slice(2)]
+    : argv;
   const { endpoint, id, status, inputId } = parseReplyEndpoint(target);
   if (
     extra.length ||

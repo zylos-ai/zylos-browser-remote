@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Multi-session Core support: each browser connection gets its own session group
+  `browser-<keyId>.<browserId>` (`src/lib/session-group.js`,
+  `scripts/session-group.js`, SKILL.md "Session Groups"). `--session-group` is
+  passed only when the installed c4-receive declares it in
+  `c4-receive-options.json` (read on every call); Core rejections are classified by
+  `error.persisted` and never resent to the overall group.
+- Tasks started with `scripts/task-start.js` record the starting session
+  (`ZYLOS_SESSION_GROUP`). On a multi-session Core their requests reach that
+  session as targeted controls, and their final replies use `send.js --stdin`
+  because Core refuses `c4-send` from a session that does not own the address.
+
+### Fixed
+- Stop reaches the session that owns the task on a Core with `session_mode` (#32):
+  `c4-control enqueue` gets `--group` (and `--target-run` in multi mode) only when
+  config has `session_mode` and c4-control accepts `--group`; installs without
+  `session_mode` send exactly the previous arguments. A session that is not
+  running gets nothing; logs now distinguish not running, Core rejection, missing
+  receipt, enqueue failure and delivery timeout.
+- With no reply call open, recovery requests are delivered immediately through C4
+  (with reply commands and the 120 s deadline), and tasks ended by Stop or loss of
+  control produce one notice with status and reason (#33). A later reply call is
+  pointed at the delivered request instead of receiving it twice.
+- On a multi-session Core the progress panel only shows output from the runtime
+  session of the group that owns the task (#14).
+
 ## [0.11.2] - 2026-11-19
 
 Requires zylos-browser-extension 0.17.7 or later for a complete fix of #29 (upgrade both together).

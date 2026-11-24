@@ -139,7 +139,8 @@ An `Extension decision request` identifies the endpoint and current request ID.
 The endpoint identifies this browser instance (`keyId.browserId`), not just
 its authentication key. Several browsers can share a key. Preserve the exact
 endpoint and request ID from the current request; never guess another browser
-or substitute the bare keyId. Agent context remains shared.
+or substitute the bare keyId. On a multi-session Core each browser connection
+has its own session (see Session Groups); otherwise agent context is shared.
 Read its attached contract and `replyCommands`. Use exactly one response route:
 
 Requests use `version: 2` with three sections: `message.content` contains the
@@ -303,6 +304,43 @@ without resume support retain terminal disconnect behavior.
 Read needed resources before ending the task; a later task needs a new upload.
 There is no startup, scheduled or age-based cleanup. The 128 MiB store limit rejects new writes
 instead of deleting active-task files.
+
+## Session Groups (multi-session Core)
+
+With a multi-session Core, each browser connection runs in its own session
+group. Core prefixes the component namespace (`browser-remote:`); the relay
+passes `--session-group` only when the installed c4-receive declares it.
+
+| Conversation | Session group | Example |
+|---|---|---|
+| Browser connection (`<keyId>.<browserId>`) | `browser-<keyId>.<browserId>` | `browser-0123456789ab.aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee` |
+| Older extension without browser instances (`<keyId>`) | `browser-<keyId>` | `browser-0123456789ab` |
+
+Final-reply addresses (`<endpoint>|req:<id>|status:<s>[|input:<id>]`) map to
+the same group as their connection. There is no overall-group traffic: an
+endpoint that cannot be mapped is rejected and logged, never sent to
+`browser-remote`. Look up the group for an endpoint (exits 1 on an invalid
+endpoint, never prints an empty name):
+
+```bash
+node ~/zylos/.claude/skills/browser-remote/scripts/session-group.js "<endpoint>"
+```
+
+A task started with `scripts/task-start.js` belongs to the session that started
+it (`ZYLOS_SESSION_GROUP`, recorded by the relay). On a multi-session Core its
+requests, recovery requests and end notices reach that session as Core
+controls, and its `replyCommands.done/blocked` call this component's
+`scripts/send.js --stdin` instead of `c4-send.js`, because Core only lets the
+owner of a browser address use `c4-send` for it. Use the commands exactly as
+supplied either way.
+
+When no reply call is open, a recovery request is delivered as its own C4
+message (answer within 120 seconds with its replyCommands), and a task that
+ends by Stop or loss of control produces one `[Browser task ended ...]` notice
+with status and reason. A reply call made later is pointed at that message
+(`deliveredViaC4`) instead of receiving the request a second time. Stop
+interrupts only the session that owns the task; if that session is not
+running, nothing is sent and the relay logs it.
 
 ## Operations
 

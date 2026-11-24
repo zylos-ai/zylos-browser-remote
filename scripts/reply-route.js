@@ -1,7 +1,11 @@
 import { ENDPOINT_SOURCE, ENDPOINT_RE } from "../src/lib/endpoint.js";
 
 // Transport addresses only: browser actions and completion remain extension-owned.
-function replyCommands(endpoint, id, inputId) {
+// direct: the task runs in a Core session that does not own this browser's
+// address (an agent-started task on multi-session Core). Core would refuse a
+// c4-send from there (CROSS_SESSION_OUTBOUND), so final replies go straight to
+// the relay through this component's send.js, reading the text from stdin.
+function replyCommands(endpoint, id, inputId, { direct = false } = {}) {
   if (
     !ENDPOINT_RE.test(endpoint) ||
     !/^[A-Za-z0-9._:-]{1,128}$/.test(id) ||
@@ -10,7 +14,7 @@ function replyCommands(endpoint, id, inputId) {
     throw new Error("Invalid reply route");
   const root = "~/zylos/.claude/skills";
   const final = (status) =>
-    `node ${root}/comm-bridge/scripts/c4-send.js browser-remote '${endpoint}|req:${id}|status:${status}${inputId ? `|input:${inputId}` : ""}'`;
+    `node ${root}/${direct ? "browser-remote/scripts/send.js --stdin" : "comm-bridge/scripts/c4-send.js browser-remote"} '${endpoint}|req:${id}|status:${status}${inputId ? `|input:${inputId}` : ""}'`;
   return {
     actions: `node ${root}/browser-remote/scripts/decision.js ${endpoint} ${id}${inputId ? ` --input-id ${inputId}` : ""}`,
     done: final("done"),

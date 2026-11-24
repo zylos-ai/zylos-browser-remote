@@ -25,6 +25,7 @@ class AgentLane {
     exchange = null,
     incidentEvidence = null,
     taskStartTimeoutMs = TASK_START_TIMEOUT_MS,
+    taskSessions = null,
   }) {
     this.ext = extLane;
     this.port = port;
@@ -33,6 +34,7 @@ class AgentLane {
     this.exchange = exchange;
     this.incidentEvidence = incidentEvidence;
     this.taskStartTimeoutMs = taskStartTimeoutMs;
+    this.taskSessions = taskSessions;
     this.server = http.createServer((req, res) => this._onHttp(req, res));
   }
 
@@ -80,8 +82,17 @@ class AgentLane {
               ? "Task did not start: the start page did not load and its tab was closed; do not retry automatically"
               : "Task start failed or outcome is unknown; do not retry automatically");
         }
-        try { return reply(200, { ok: true, endpointId: target.endpointId, ...taskStartResult(raw, params.requestId) }); }
+        let started;
+        try { started = taskStartResult(raw, params.requestId); }
         catch { return fail(502, "BAD_TASK_START_RESPONSE", "Invalid task start response; outcome is unknown"); }
+        // The starting Core session owns this task's Stop and C4 notices.
+        // An `existing` task keeps whichever owner it already has.
+        if (body.sessionGroup && this.taskSessions &&
+            !(started.status === "existing" && this.taskSessions.get(target.endpointId, started.taskId)?.group)) {
+          const entry = this.taskSessions.record(target.endpointId, started.taskId, { origin: "agent", group: body.sessionGroup });
+          if (entry) this.log(`task-start[${target.endpointId}]: task ${started.taskId} belongs to session ${entry.group}`);
+        }
+        return reply(200, { ok: true, endpointId: target.endpointId, ...started });
       }
 
       if (req.method === "POST" && url.pathname === "/diagnostics/detail") {

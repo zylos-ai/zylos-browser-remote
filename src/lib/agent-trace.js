@@ -171,7 +171,7 @@ class RolloutSession {
       const uniqueTokens = [...new Set(tokens)];
       const next = uniqueTokens.length
         ? uniqueTokens.length === 1
-          ? (this.monitor.agentActivityRun?.(uniqueTokens[0], at) ?? null)
+          ? (this.monitor.agentActivityRun?.(uniqueTokens[0], at, this.id) ?? null)
           : null
         : endpoint
           ? this.monitor.agentRun(endpoint, at)

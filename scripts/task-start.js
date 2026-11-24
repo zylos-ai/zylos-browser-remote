@@ -2,6 +2,14 @@
 import { fileURLToPath } from "node:url";
 import client from "./relay-client.js";
 import { taskStartParams, taskStartResult } from "../src/lib/task-start.js";
+import { validFullGroup } from "../src/lib/task-sessions.js";
+
+// The starting Core session (multi-session Core sets ZYLOS_SESSION_GROUP for
+// every process in a session). The relay routes this task's Stop, recovery
+// requests and end notices to it. Absent or invalid: nothing is recorded.
+export function sessionFromEnv(env = process.env) {
+  return validFullGroup(env.ZYLOS_SESSION_GROUP) ? { sessionGroup: env.ZYLOS_SESSION_GROUP } : {};
+}
 
 export function parseTaskStart(args, input) {
   if (args.length !== 2) throw new Error("Usage: task-start.js <endpoint> <requestId> < request.json");
@@ -30,7 +38,7 @@ async function main() {
       input += chunk;
       if (Buffer.byteLength(input) > 128 * 1024) throw new Error("Task start input exceeds limit");
     }
-    const result = await startTask(parseTaskStart(process.argv.slice(2), input));
+    const result = await startTask({ ...parseTaskStart(process.argv.slice(2), input), ...sessionFromEnv() });
     console.log(JSON.stringify(result));
     if (!result.ok) process.exitCode = 1;
   } catch (err) {

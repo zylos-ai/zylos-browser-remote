@@ -13,6 +13,11 @@ import {
 import { Monitor } from "../src/lib/monitor.js";
 import { RolloutSession } from "../src/lib/agent-trace.js";
 
+// Hermetic: the host's Zylos config (session_mode) must not change these cases.
+const hermeticZylos = fs.mkdtempSync(path.join(os.tmpdir(), "br-zylos-"));
+process.env.ZYLOS_DIR = hermeticZylos;
+delete process.env.BROWSER_REMOTE_AGENT_DIR;
+process.on("exit", () => fs.rmSync(hermeticZylos, { recursive: true, force: true }));
 function fixture(runtime = "codex", history = false) {
   let now = 10000;
   const frames = [];
