@@ -72,3 +72,17 @@ test("an extension without a name keeps the old status (label or id)", async (t)
   assert.equal(s.displayName, "manual");
   assert.equal(s.connectionId, null);
 });
+
+test("browser names drop C1, bidi and zero-width characters, ESC, and never split a code point", async (t) => {
+  const relay = await setup(t);
+  const { key, keyId } = newKey({ label: "x" });
+  const ws = await dial(relay, key, { browserName: "A\u001b[31mB\u0085C\u202eD\u200bE" });
+  t.after(() => ws.close());
+  const ep = `${keyId}.${A}`;
+  assert.equal(relay.ext.status()[ep].browserName, "A [31mB C D E");
+  ws.send(JSON.stringify({ type: "browser-name", browserName: "x".repeat(99) + "\u{1F600}\u{1F600}" }));
+  await until(() => relay.ext.status()[ep].browserName?.startsWith("xxx"));
+  const name = relay.ext.status()[ep].browserName;
+  assert.equal(Array.from(name).length, 100);
+  assert.ok(name.endsWith("\u{1F600}"));
+});

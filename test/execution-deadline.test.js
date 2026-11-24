@@ -30,6 +30,7 @@ test("deadline mirrors the extension round watchdog plus a 60s margin; only unti
   assert.equal(executionDeadlineMs({ actions: [{ method: "wait-for-page", params: { timeoutMs: 8_000 } }] }), 255_000);
   assert.equal(executionDeadlineMs({ actions: [{ method: "open", timeoutMs: 1_000 }, { method: "click", timeoutMs: 300_000 }] }), 511_000);
   assert.equal(executionDeadlineMs({ actions: Array(5).fill({ method: "x", timeoutMs: 300_000 }) }), 1_755_000); // no cap: stays above the watchdog
+  assert.equal(executionDeadlineMs({ actions: [{ method: "wait-for-page", timeoutMs: 1_000, params: { timeoutMs: 60_000 } }] }), 255_000);
   for (const method of ["recover-control", "inspect-recovery-frames", "use-current-tab"])
     assert.equal(executionDeadlineMs({ actions: [{ method }] }), 900_000);
   assert.equal(executionDeadlineMs({ timeoutMs: 1e9, actions: "x" }), 180_000); // no decision-level budget
@@ -71,4 +72,14 @@ test("a custom deadline function is honoured", async (t) => {
   await tick();
   t.mock.timers.tick(5_000);
   assert.equal((await pending).code, "EXECUTION_TIMEOUT");
+});
+
+test("a deadline above 2^31-1 ms is clamped instead of firing at once", async (t) => {
+  const { exchange } = setup(t, { deadlineMs: () => 3e9 });
+  let settled = false;
+  exchange.respond(EP, "r1", { kind: "actions" }).then(() => { settled = true; });
+  await tick();
+  t.mock.timers.tick(10_000);
+  await tick();
+  assert.equal(settled, false);
 });

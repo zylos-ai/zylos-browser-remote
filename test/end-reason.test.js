@@ -44,9 +44,20 @@ test("the exchange carries the reason into the end notice event", () => {
 
 test("the end notice states every known reason in plain words", () => {
   for (const reason of END_REASONS) {
-    const notice = endedNotice({ endpointId: "e", taskId: "t", status: "stopped", reason });
+    const notice = endedNotice({ endpointId: "e", taskId: "t", status: "interrupted", reason });
     assert.match(notice, new RegExp(`cause: .+ \\(${reason}\\)`));
   }
   assert.match(endedNotice({ endpointId: "e", taskId: "t", status: "interrupted", reason: "tab_closed" }), /cause: the task's tab was closed/);
   assert.doesNotMatch(endedNotice({ endpointId: "e", taskId: "t", status: "stopped" }), /cause:/);
+  assert.doesNotMatch(endedNotice({ endpointId: "e", taskId: "t", status: "stopped", reason: "user_stop" }), /cause:/);
+});
+
+test("an end of a task unknown to the exchange still carries its reason", () => {
+  const ext = new EventEmitter();
+  const pushed = [];
+  const exchange = new AgentExchange(ext, { push: (e) => pushed.push(e) });
+  ext.emit("agent-turn-end", { endpointId: "bbbbbbbbbbbb", taskId: "other", status: "stopped", reason: "tab_closed" });
+  assert.equal(pushed[0].known, false);
+  assert.equal(pushed[0].reason, "tab_closed");
+  exchange.close();
 });

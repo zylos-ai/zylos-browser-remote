@@ -102,7 +102,7 @@ function endedNotice({ endpointId, taskId, status, interruption, text, reason: c
   return (
     `${C4_CONTENT_PREFIX}[Browser task ended ${endpointId}/${taskId}]\n` +
     `status: ${status}\nreason: ${reason}\n` +
-    (END_REASON_WORDS[cause] ? `cause: ${END_REASON_WORDS[cause]} (${cause})\n` : "") +
+    (END_REASON_WORDS[cause] && END_REASON_WORDS[cause] !== reason ? `cause: ${END_REASON_WORDS[cause]} (${cause})\n` : "") +
     (interruption ? `details: ${JSON.stringify(interruption)}\n` : "") +
     (text ? `extension note: ${JSON.stringify(text.slice(0, 500))}\n` : "") +
     "No reply call was open, so this notice is delivered here. The task is over: do not run its decision or reply commands again and do not replay its actions. Treat partly completed actions as uncertain. A new browser task needs a new user request.\n"

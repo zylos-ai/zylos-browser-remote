@@ -218,7 +218,8 @@ class AgentExchange {
       state.orphan = undefined;
       state.waiter = mine = { id, resolve, signature };
       const ms = this.deadlineMs(decision);
-      mine.timer = setTimeout(() => this.expire(endpointId, id, mine, ms), ms);
+      // Node fires delays above 2^31-1 ms after 1 ms; clamp.
+      mine.timer = setTimeout(() => this.expire(endpointId, id, mine, ms), Math.min(ms, 2 ** 31 - 1));
       mine.timer.unref?.();
     });
     const previous = state.receipts.get(id);

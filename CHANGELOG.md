@@ -31,7 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   connection ID>`, falling back to the key label). The extension may send an
   optional `browserName` in `hello` and a `{type:"browser-name",browserName}`
   frame after a rename; older relays ignore both, and older extensions keep the
-  previous label-only status.
+  previous label-only status. Names are stripped of control, bidi and zero-width
+  characters and truncated by code point.
 - Execution deadline fallback (OPENM-1425): each executing decision now has a
   wall-clock deadline 60s above the extension's round watchdog (120s + per
   action max(`timeoutMs` ?? 60s, `params.timeoutMs`) + 15s), uncapped so it

@@ -70,7 +70,10 @@ const END_REASONS = ["user_stop", "target_closed", "canceled_by_user", "recovery
 // it is an unverified claim of the extension and never identity or consent.
 function browserName(value) {
   if (typeof value !== "string") return null;
-  const name = value.replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, " ").replace(/\s+/g, " ").trim().slice(0, MAX_BROWSER_NAME);
+  // C0/C1 controls, format chars (bidi overrides, zero-width), line/paragraph
+  // separators; truncate by code point so no surrogate half remains.
+  const name = Array.from(value.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, " ").replace(/\s+/g, " ").trim())
+    .slice(0, MAX_BROWSER_NAME).join("").trim();
   return name || null;
 }
 
