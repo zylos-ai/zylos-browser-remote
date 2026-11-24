@@ -10,13 +10,40 @@ const TERMINAL_KINDS = ["done", "blocked"];
 // own final reply, so they never produce a notice.
 const NOTICE_STATUSES = ["stopped", "interrupted"];
 
+// Fallback deadline for one decision's execution. It must sit ABOVE the
+// extension's own round watchdog (utils/browser-loop.ts roundWatchdogMs), so
+// the extension always times a round out first and the relay only catches an
+// extension that never reports at all. Mirrors that formula:
+//   120s + sum over actions of (max(action.timeoutMs ?? 60s, params.timeoutMs) + 15s)
+// plus a 60s margin, with no cap (the extension bounds each action at 300s and
+// limits the action count; the relay does not validate a count itself).
+// Rounds with lease/consent-driven methods have no extension watchdog; they get
+// a fixed 15 minutes, so a silent extension still cannot hold the waiter forever.
+const WATCHDOG_ACTION_MS = 60_000;
+const WATCHDOG_SETTLE_MS = 15_000;
+const WATCHDOG_SLACK_MS = 120_000;
+const EXECUTION_MARGIN_MS = 60_000;
+const UNTIMED_ROUND_MS = 900_000;
+const UNTIMED_METHODS = ["recover-control", "inspect-recovery-frames", "use-current-tab"];
+function executionDeadlineMs(decision) {
+  const actions = Array.isArray(decision?.actions) ? decision.actions : [];
+  if (actions.some((a) => UNTIMED_METHODS.includes(a?.method))) return UNTIMED_ROUND_MS;
+  const num = (v) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
+  const watchdog = actions.reduce((total, a) =>
+    total + Math.max(num(a?.timeoutMs) || WATCHDOG_ACTION_MS, num(a?.params?.timeoutMs)) + WATCHDOG_SETTLE_MS,
+  WATCHDOG_SLACK_MS);
+  return watchdog + EXECUTION_MARGIN_MS;
+}
+
 class AgentExchange {
   // push(event): deliver a recovery request or a task-end notice through C4
   // when no reply call is open. Optional; without it nothing is pushed.
   // direct(endpointId, taskId): final replies must bypass c4-send (see
   // scripts/reply-route.js).
-  constructor(ext, { push, direct = () => false } = {}) {
+  constructor(ext, { push, direct = () => false, log = () => {}, deadlineMs = executionDeadlineMs } = {}) {
     this.ext = ext;
+    this.log = log;
+    this.deadlineMs = deadlineMs;
     this.push = push;
     this.direct = direct;
     // Which decision produced each receipt: only an identical retry replays it.
@@ -31,6 +58,7 @@ class AgentExchange {
     if (!state || state.taskId !== chatId) {
       state?.attachments.close();
       if (state?.waiter) {
+        clearTimeout(state.waiter.timer);
         state.waiter.resolve({
           ok: false,
           code: "STALE_DECISION",
@@ -113,6 +141,7 @@ class AgentExchange {
     waiter.resolve(response);
   }
   release(state) {
+    clearTimeout(state.waiter?.timer);
     state.waiter = null;
   }
   // The caller stopped waiting (its HTTP client closed). Ask the
@@ -125,6 +154,18 @@ class AgentExchange {
     this.ext.request(endpointId, { method: "agent-cancel", params: { id, reason }, timeoutMs: 10000 })
       .catch(() => {}); // Older extensions reject it; the release above still holds.
     return waiter;
+  }
+  // Execution deadline passed without a report: free the waiter, ask the
+  // extension to cancel (agent-cancel, reason execution-timeout), and tell
+  // the caller. A later result for this ID stays receiptable.
+  expire(endpointId, id, waiter, ms) {
+    if (!this.abandon(endpointId, id, "execution-timeout", waiter)) return;
+    this.log(`agent[${endpointId}]: decision ${id} exceeded execution deadline ${ms}ms; sent agent-cancel`);
+    waiter.resolve({
+      ok: false,
+      code: "EXECUTION_TIMEOUT",
+      message: `The browser did not report within ${Math.round(ms / 1000)}s; the relay asked it to cancel. Actions may have partly run: do not replay them blindly. A new decision is accepted once the browser sends its next request.`,
+    });
   }
   async respond(endpointId, id, decision, inputId) {
     const state = this.states.get(endpointId);
@@ -172,10 +213,14 @@ class AgentExchange {
     let mine;
     const next = new Promise((resolve) => {
       // One waiter per endpoint, released by the next request, task end,
-      // replacement, disconnect or the caller leaving. Execution itself has
-      // no wall-clock deadline here.
+      // replacement, disconnect, the caller leaving, or the execution
+      // deadline (an extension that never reports must not block the loop).
       state.orphan = undefined;
       state.waiter = mine = { id, resolve, signature };
+      const ms = this.deadlineMs(decision);
+      // Node fires delays above 2^31-1 ms after 1 ms; clamp.
+      mine.timer = setTimeout(() => this.expire(endpointId, id, mine, ms), Math.min(ms, 2 ** 31 - 1));
+      mine.timer.unref?.();
     });
     const previous = state.receipts.get(id);
     try {
@@ -211,12 +256,12 @@ class AgentExchange {
     }
     return next;
   }
-  ended({ endpointId, taskId, status, interruption, text }) {
+  ended({ endpointId, taskId, status, interruption, text, reason }) {
     const state = this.states.get(endpointId);
     if (!state || state.taskId !== taskId) {
       // No request of this task reached the exchange; only a task an agent
       // started itself is worth a notice (the push handler decides).
-      this.notifyEnd({ endpointId, taskId, status, interruption: interruption ? controlLossReceipt(interruption) : undefined, text, known: false });
+      this.notifyEnd({ endpointId, taskId, status, interruption: interruption ? controlLossReceipt(interruption) : undefined, text, ...(reason ? { reason } : {}), known: false });
       return;
     }
     state.terminal = status;
@@ -224,7 +269,7 @@ class AgentExchange {
       ? controlLossReceipt(interruption) : undefined;
     state.attachments.close();
     if (state.waiter) this.deliver(state);
-    else this.notifyEnd({ endpointId, taskId, status, interruption: state.interruption, text, known: true });
+    else this.notifyEnd({ endpointId, taskId, status, interruption: state.interruption, text, ...(reason ? { reason } : {}), known: true });
   }
   notifyEnd(event) {
     if (!this.push || !NOTICE_STATUSES.includes(event.status)) return;
@@ -237,6 +282,7 @@ class AgentExchange {
     this.states.delete(endpointId);
     state?.attachments.close();
     if (state?.waiter) {
+      clearTimeout(state.waiter.timer);
       state.waiter.resolve({
         ok: false,
         code: "EXT_OFFLINE",
@@ -249,4 +295,4 @@ class AgentExchange {
     for (const key of this.states.keys()) this.disconnected(key);
   }
 }
-export { AgentExchange };
+export { AgentExchange, executionDeadlineMs };

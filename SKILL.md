@@ -94,7 +94,12 @@ An online browser or an advertised capability is not proof of identity or task
 permission. Preserve the requesting channel's scope, use only a browser mapped
 to that requester by explicit owner confirmation in a trusted owner context or
 an existing owner-confirmed mapping in memory, and let the extension enforce its
-session permission. Status and labels cannot supply that evidence. Without a
+session permission. Status and labels cannot supply that evidence.
+When listing connections to people, show each one's `displayName` (for a
+Workspace connection: the browser name the owner chose in OpenMax Workspace and
+the first 8 characters of its connection ID, e.g. `Work Laptop · c0ffee12`;
+renames update it live). `browserName` is reported by the extension and is
+display-only. Without a
 trusted mapping, do not start; ask the owner privately to confirm it. Ask
 only for a missing target, URL or permission; never choose an unrelated browser,
 change its permission, or mint a connection key to bypass a refusal.
@@ -213,12 +218,18 @@ and failures; a database row alone does not prove delivery. Identical retries do
 not display another reply in the extension while the receipt is retained.
 
 The extension performs browser input, observations and completion. Do not execute
-actions yourself or poll for state. Execution waits have no fixed deadline;
-do not impose a total command/task deadline. Allow enough output for the returned
+actions yourself or poll for state. Do not impose your own command/task deadline;
+the relay applies a fallback execution deadline per decision, 60s above the
+extension's own round watchdog (120s + per action max(`timeoutMs` or 60s,
+`params.timeoutMs`) + 15s), uncapped; rounds with recover-control,
+inspect-recovery-frames or use-current-tab get a fixed 15 minutes. Allow enough output for the returned
 schema/state (roughly 12,000 tokens). Prefer an initial wait of at least 10 seconds;
 if the shell yields a running process, wait on that same process until a result
 or explicit stop/disconnect. The initial shell wait is not a task duration limit.
 
+`EXECUTION_TIMEOUT` means the browser never reported within that deadline; the
+relay sent it a cancel. Actions may have partly run: do not replay them blindly.
+Retry the same ID once the browser sends its next request, or tell the owner.
 `BAD_DECISION` permits correction for the pending ID. `STALE_DECISION` means the
 request ended or was cancelled. `DECISION_CONFLICT` means the ID already belongs
 to another decision. An identical accepted decision can be resubmitted after an
@@ -345,7 +356,7 @@ once, unchanged; do not make browser decisions for the other thread.
 When no reply call is open, a recovery request is delivered as its own C4
 message (answer within 120 seconds with its replyCommands), and a task that
 ends by Stop or loss of control produces one `[Browser task ended ...]` notice
-with status and reason. A reply call made later is pointed at that message
+with status and reason (plus a `cause:` line when the extension reports why, e.g. the tab was closed or recovery expired). A reply call made later is pointed at that message
 (`deliveredViaC4`) instead of receiving the request a second time. Stop
 interrupts only the session that owns the task; if that session is not
 running, nothing is sent and the relay logs it.

@@ -61,6 +61,26 @@ import {
   INSTANCE_CAPABILITY,
 } from "./endpoint.js";
 const HANDSHAKE_MS = 10000;
+const MAX_BROWSER_NAME = 100;
+// Why the extension ended a task (agent-turn-end.reason). Unknown -> "other".
+const END_REASONS = ["user_stop", "target_closed", "canceled_by_user", "recovery_expired",
+  "recovery_failed", "foreign_frame", "tab_closed", "tab_moved", "transport_lost", "other"];
+
+// Owner-chosen browser name (OpenMax Workspace connect/rename). Display only:
+// it is an unverified claim of the extension and never identity or consent.
+function browserName(value) {
+  if (typeof value !== "string") return null;
+  // C0/C1 controls, format chars (bidi overrides, zero-width), line/paragraph
+  // separators; truncate by code point so no surrogate half remains.
+  const name = Array.from(value.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, " ").replace(/\s+/g, " ").trim())
+    .slice(0, MAX_BROWSER_NAME).join("").trim();
+  return name || null;
+}
+
+function displayName(c) {
+  const id = String(c.connectionId || c.browserId || c.keyId || "").slice(0, 8);
+  return c.browserName ? `${c.browserName} \u00b7 ${id}` : c.label || id;
+}
 const MAX_CONNECTIONS_PER_KEY = 32;
 const KEY_PROTO_PREFIX = "key.";
 const EXT_PATH = "/ext";
@@ -170,6 +190,9 @@ class ExtLane extends EventEmitter {
         connected: this.isConnected(endpointId),
         recovery: c.recoveryTimer ? { state: "reconnecting", expiresAt: c.recoveryExpiresAt } : null,
         label: c.label,
+        browserName: c.browserName || null,
+        displayName: displayName(c),
+        connectionId: c.connectionId || null,
         since: c.since,
         version: c.version || null,
         build: c.build || null,
@@ -226,12 +249,13 @@ class ExtLane extends EventEmitter {
     );
   }
 
-  _onConnected(ws, req, { keyId, label, singleBrowser = false }) {
+  _onConnected(ws, req, { keyId, label, singleBrowser = false, connectionId = null }) {
     // Register only after a valid hello. A bad or incomplete handshake must
     // never evict a working instance using the same credential.
     const conn = {
       keyId,
       label,
+      connectionId,
       singleBrowser,
       ws,
       endpointId: null,
@@ -388,12 +412,13 @@ class ExtLane extends EventEmitter {
       typeof msg.version === "string" ? msg.version.slice(0, 80) : null;
     conn.build = buildIdentity(msg.build);
     conn.capabilities = caps;
+    conn.browserName = browserName(msg.browserName);
     conn.runtimeEpoch = resumable ? msg.runtimeEpoch : null;
     conn.deliveries ||= new Map();
     conn.ready = true;
     this.conns.set(endpointId, conn);
     this.log(
-      `ext[${endpointId}]: connected${conn.label ? ` (${conn.label})` : ""}`,
+      `ext[${endpointId}]: connected (${displayName(conn)})`,
     );
     this.emit("connected", endpointId, {
       endpointId: conn.endpointId,
@@ -547,6 +572,14 @@ class ExtLane extends EventEmitter {
         return;
       case "hello":
         return this._hello(conn, msg);
+      case "browser-name": {
+        // Rename in Workspace while connected. Unacknowledged, idempotent.
+        const name = browserName(msg.browserName);
+        if (name === conn.browserName) return;
+        conn.browserName = name;
+        this.log(`ext[${conn.endpointId}]: browser name now ${displayName(conn)}`);
+        return;
+      }
       case "agent-request":
         if (!this._delivery(conn, msg)) return;
         return this._onAgentRequest(conn, msg);
@@ -584,6 +617,8 @@ class ExtLane extends EventEmitter {
             taskId: msg.taskId,
             interrupt,
             ...(interruption ? { interruption } : {}),
+            ...(msg.reason !== undefined
+              ? { reason: END_REASONS.includes(msg.reason) ? msg.reason : "other" } : {}),
             status: ["done", "blocked", "interrupted", "stopped"].includes(
               msg.status,
             )
@@ -920,7 +955,7 @@ function clampTimeout(ms) {
   return Math.min(Math.max(Math.floor(n), 1000), MAX_COMMAND_TIMEOUT_MS);
 }
 
-export {
+export { END_REASONS,
   ExtLane,
   SUBPROTOCOL,
   LEGACY_SUBPROTOCOL,

@@ -21,6 +21,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   browser's own group (unconfirmed, depends on extension ordering).
 
 ### Added
+- `agent-turn-end.reason` from the extension (`user_stop`, `target_closed`,
+  `canceled_by_user`, `recovery_expired`, `recovery_failed`, `foreign_frame`,
+  `tab_closed`, `tab_moved`, `transport_lost`, `other`; anything else becomes `other`) is passed
+  through to the turn-end event and stated in plain words as a `cause:` line
+  in the #33 task-end notice.
+- Browser names in connection status (extension issue #34): `/status` entries
+  gain `browserName`, `connectionId` and `displayName` (`<name> · <first 8 of
+  connection ID>`, falling back to the key label). The extension may send an
+  optional `browserName` in `hello` and a `{type:"browser-name",browserName}`
+  frame after a rename; older relays ignore both, and older extensions keep the
+  previous label-only status. Names are stripped of control, bidi and zero-width
+  characters and truncated by code point.
+- Execution deadline fallback (OPENM-1425): each executing decision now has a
+  wall-clock deadline 60s above the extension's round watchdog (120s + per
+  action max(`timeoutMs` ?? 60s, `params.timeoutMs`) + 15s), uncapped so it
+  always stays above the watchdog; recover-control / inspect-recovery-frames /
+  use-current-tab rounds (no extension watchdog) get a fixed 15min. On expiry the relay frees the waiter, sends
+  `agent-cancel` with reason `execution-timeout`, logs it and returns
+  `EXECUTION_TIMEOUT` to the caller, so a silent extension can no longer make
+  every later decision `DECISION_BUSY`.
 - Multi-session Core support: each browser connection gets its own session group
   `browser-<keyId>.<browserId>` (`src/lib/session-group.js`,
   `scripts/session-group.js`, SKILL.md "Session Groups"). `--session-group` is
