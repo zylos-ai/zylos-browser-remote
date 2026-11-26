@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Refer to the connected extension as Zylos Browser in the skill, docs, and package description.
+
 ## [0.12.0] - 2026-11-24
 
 Upgrade together with zylos-browser-extension 0.18.1 (end reasons, browser name and the execution deadline need both sides).

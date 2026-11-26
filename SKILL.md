@@ -2,9 +2,9 @@
 name: browser-remote
 version: 0.12.0
 description: >-
-  Use the owner's connected Coco browser for authorized web tasks from any chat
-  channel or extension request: search, logged-in information, summaries, forms,
-  clicks and navigation. Also use when a webpage step is blocked by unavailable
+  Use the owner's connected Zylos Browser extension for authorized web tasks from
+  any chat channel or extension request: search, logged-in information,
+  summaries, forms, clicks and navigation. Also use when a webpage step is blocked by unavailable
   local browser/tools, incompatible interaction, missing login/role or a manual
   step: check authorized browser connections before proposing borrowed accounts,
   elevated access, manual work or abandonment. Online is not identity or consent;

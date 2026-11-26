@@ -88,10 +88,10 @@ do not launch a competing task. An absent agentTurn does not guarantee idle:
 the extension can still reject a start with TASK_START_CONFLICT.
 
 If a trusted mapping exists but its browser is offline, ask its owner privately
-to connect that Coco extension. If browsers are online but none is authorized
-for this requester, report missing authorization and seek the owner privately;
-do not suggest merely connecting another extension. If the capability is missing,
-explain the compatibility requirement.
+to reconnect the Zylos Browser extension. If browsers are online but none is
+authorized for this requester, report missing authorization and seek the owner
+privately; do not suggest merely connecting another extension. If the capability
+is missing, explain the compatibility requirement.
 Do not alter services, keys or permissions as a workaround.
 
 ## Resolve The URL And Start Once
