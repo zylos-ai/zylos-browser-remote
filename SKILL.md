@@ -2,18 +2,19 @@
 name: browser-remote
 version: 0.12.0
 description: >-
-  Use the owner's connected Zylos Browser extension for authorized web tasks from
-  any chat channel or extension request: search, logged-in information,
-  summaries, forms, clicks and navigation. Also use when a webpage step is blocked by unavailable
-  local browser/tools, incompatible interaction, missing login/role or a manual
-  step: check authorized browser connections before proposing borrowed accounts,
-  elevated access, manual work or abandonment. Online is not identity or consent;
-  never bypass site denial, Stop or revocation. Discover first; start with
-  scripts/task-start.js only with a confirmed browser mapping, task authority,
-  target URL and browser-owner session permission. Follow supplied decision/reply
-  commands and verify outcomes. For how-to questions, answer and offer help without
-  assuming permission to change the page. The extension executes browser tools.
-  Cannot download files or capture encrypted video streams; offer alternatives.
+  Use the owner's connected Zylos Browser extension for authorized web tasks
+  from any chat channel or extension request: search, logged-in information,
+  summaries, forms, clicks and navigation. Also use when a webpage step is
+  blocked by unavailable local browser/tools, incompatible interaction, missing
+  login/role or a manual step: check authorized browser connections before
+  proposing borrowed accounts, elevated access, manual work or abandonment.
+  Online is not identity or consent; never bypass site denial, Stop or
+  revocation. Discover first; start with scripts/task-start.js only with a
+  confirmed browser mapping, task authority, target URL and browser-owner
+  session permission. Follow supplied decision/reply commands and verify
+  outcomes. For how-to questions, answer and offer help without assuming
+  permission to change the page. The extension executes browser tools. Cannot
+  download files or capture encrypted video streams; offer alternatives.
 type: communication
 lifecycle:
   npm: true
