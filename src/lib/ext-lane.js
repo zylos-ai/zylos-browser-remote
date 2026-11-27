@@ -62,6 +62,8 @@ import {
 } from "./endpoint.js";
 const HANDSHAKE_MS = 10000;
 const MAX_BROWSER_NAME = 100;
+const MAX_PLATFORM_FIELD = 32;
+const PLATFORM_FIELDS = ["os", "arch", "browser", "browserVersion"];
 // Why the extension ended a task (agent-turn-end.reason). Unknown -> "other".
 const END_REASONS = ["user_stop", "target_closed", "canceled_by_user", "recovery_expired",
   "recovery_failed", "foreign_frame", "tab_closed", "tab_moved", "transport_lost", "other"];
@@ -69,12 +71,35 @@ const END_REASONS = ["user_stop", "target_closed", "canceled_by_user", "recovery
 // Owner-chosen browser name (OpenMax Workspace connect/rename). Display only:
 // it is an unverified claim of the extension and never identity or consent.
 function browserName(value) {
+  return displayText(value, MAX_BROWSER_NAME);
+}
+
+function displayText(value, max) {
   if (typeof value !== "string") return null;
   // C0/C1 controls, format chars (bidi overrides, zero-width), line/paragraph
   // separators; truncate by code point so no surrogate half remains.
-  const name = Array.from(value.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, " ").replace(/\s+/g, " ").trim())
-    .slice(0, MAX_BROWSER_NAME).join("").trim();
-  return name || null;
+  const text = Array.from(value.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, " ").replace(/\s+/g, " ").trim())
+    .slice(0, max).join("").trim();
+  return text || null;
+}
+
+// Coarse OS / CPU arch / browser major version hint from the extension
+// (hello.platform), e.g. macOS · arm64 · Chrome 142. Display only, like the
+// browser name: an unverified claim, never identity or consent.
+function platformHint(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const hint = {};
+  for (const field of PLATFORM_FIELDS) {
+    const text = displayText(value[field], MAX_PLATFORM_FIELD);
+    if (text) hint[field] = text;
+  }
+  return Object.keys(hint).length ? hint : null;
+}
+
+function platformLabel(hint) {
+  if (!hint) return null;
+  const browser = hint.browser ? [hint.browser, hint.browserVersion].filter(Boolean).join(" ") : null;
+  return [hint.os, hint.arch, browser].filter(Boolean).join(" \u00b7 ") || null;
 }
 
 function displayName(c) {
@@ -192,6 +217,8 @@ class ExtLane extends EventEmitter {
         label: c.label,
         browserName: c.browserName || null,
         displayName: displayName(c),
+        platform: c.platform || null,
+        platformLabel: platformLabel(c.platform),
         connectionId: c.connectionId || null,
         since: c.since,
         version: c.version || null,
@@ -413,6 +440,7 @@ class ExtLane extends EventEmitter {
     conn.build = buildIdentity(msg.build);
     conn.capabilities = caps;
     conn.browserName = browserName(msg.browserName);
+    conn.platform = platformHint(msg.platform);
     conn.runtimeEpoch = resumable ? msg.runtimeEpoch : null;
     conn.deliveries ||= new Map();
     conn.ready = true;
