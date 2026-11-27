@@ -7,10 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Pairs with the zylos-browser-extension release that advertises
-`agent-task-current-tab-v1`; URL starts keep working with any extension.
-Follow-up replies need a Zylos Browser release that advertises
-`agent-task-append-v1`.
+## [0.13.0] - 2026-11-27
+
+Upgrade together with zylos-browser-extension 0.19.0 (current-tab task start and
+follow-up replies need both sides). URL starts keep working with any extension;
+with an older extension the relay refuses current-tab starts with
+`TASK_START_CURRENT_TAB_UNSUPPORTED` and follow-ups with `TASK_APPEND_UNSUPPORTED`.
 
 ### Added
 - Connection status shows the extension's optional platform hint (`hello.platform`: OS, CPU architecture, browser major version) as `platform` and `platformLabel`, e.g. `macOS · arm64 · Chrome 142`, so several browsers are easier to tell apart. It is cleaned display text only. Without the field (older extensions) both are `null`, and `displayName` is unchanged.

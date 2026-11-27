@@ -1,6 +1,6 @@
 ---
 name: browser-remote
-version: 0.12.0
+version: 0.13.0
 description: >-
   Use the owner's connected Zylos Browser extension for authorized web tasks
   from any chat channel or extension request: search, logged-in information,
