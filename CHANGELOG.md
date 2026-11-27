@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Connection status shows the extension's optional platform hint (`hello.platform`: OS, CPU architecture, browser major version) as `platform` and `platformLabel`, e.g. `macOS · arm64 · Chrome 142`, so several browsers are easier to tell apart. It is cleaned display text only. Without the field (older extensions) both are `null`, and `displayName` is unchanged.
+
 ### Changed
 - Refer to the connected extension as Zylos Browser in the skill, docs, and package description.
 
