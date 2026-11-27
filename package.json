@@ -1,6 +1,6 @@
 {
   "name": "zylos-browser-remote",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "private": true,
   "description": "Decision transport between a Zylos Agent and the Zylos Browser extension.",
   "main": "src/index.js",
