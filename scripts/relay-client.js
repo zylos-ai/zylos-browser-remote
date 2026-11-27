@@ -43,7 +43,8 @@ function createClient(deps = {}) {
       const detailed = pathname === "/diagnostics/detail";
       // /task/start waits on the relay's own 20s task-start timeout, so it must
       // not give up first.
-      const timeoutMs = pathname === "/task/start" ? 30000 : 10000;
+      // /task/append waits on the relay's 10s extension acknowledgement.
+      const timeoutMs = pathname === "/task/start" ? 30000 : pathname === "/task/append" ? 20000 : 10000;
       let timer;
       const req = httpImpl.request(
         {
@@ -134,6 +135,7 @@ function createClient(deps = {}) {
     BASE: base,
     status: () => call("GET", "/status"),
     taskStart: (body) => call("POST", "/task/start", body),
+    taskAppend: (body) => call("POST", "/task/append", body),
     diagnostics: (body) => call("POST", "/diagnostics", body),
     detailDiagnostics: (body) => call("POST", "/diagnostics/detail", body),
     decision: (body) => call("POST", "/decision", body),

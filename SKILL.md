@@ -214,7 +214,8 @@ The command waits for extension execution and returns either:
 The final send succeeds only after the extension confirms the matching terminal
 status. Final text is limited to 8,000 characters. A bare keyId is insufficient:
 this endpoint finishes a specific request, and is not an unsolicited notification
-or intermediate-progress API. C4 records outgoing send attempts, including retries
+or intermediate-progress API. To add a result after the request has ended, use a
+follow-up (below), not this endpoint. C4 records outgoing send attempts, including retries
 and failures; a database row alone does not prove delivery. Identical retries do
 not display another reply in the extension while the receipt is retained.
 
@@ -236,6 +237,38 @@ request ended or was cancelled. `DECISION_CONFLICT` means the ID already belongs
 to another decision. An identical accepted decision can be resubmitted after an
 ambiguous transport failure while its connection receipt remains available.
 Never retry uncertain browser input using a newly invented request ID.
+
+### Follow-up After the Request Ended
+
+Some work outlives the request: you told the owner "I will do X and report
+back", ended the request with `done`, and X (a review by another agent, a long
+build, a background job) finishes later. Put that result in the same task
+conversation in the extension:
+
+```bash
+cat <<'EOF_FOLLOWUP' | node ~/zylos/.claude/skills/comm-bridge/scripts/c4-send.js browser-remote '<keyId>.<browserId>|task:<taskId>|append'
+<result text>
+EOF_FOLLOWUP
+```
+
+Use the exact composite endpoint and the `taskId` from that task's requests (or
+from `task-start.js`). Rules, enforced by the browser:
+
+- Only a task you already answered with `done`/`blocked`, within 24 hours of
+  its end, at most 20 follow-ups per task, 1–8,000 characters, text only.
+- Only for that task's own outcome. Never use it for unsolicited messages,
+  reminders, marketing or anything unrelated to the task, and never to another
+  browser or another task. A still-running task uses its replyCommands.
+- Requires `agent-task-append-v1` on the browser (`TASK_APPEND_UNSUPPORTED`
+  otherwise). Exit code 0 and `delivered:true` mean it is saved and shown.
+  `EXT_OFFLINE`: not delivered; tell the owner on another channel or retry
+  later. `TASK_APPEND_UNCONFIRMED`: re-running the same command with the same
+  text is safe (shown once). `TASK_UNKNOWN`, `TASK_ACTIVE`,
+  `TASK_NOT_APPENDABLE`, `TASK_TOO_OLD`, `TASK_APPEND_LIMIT`: do not retry;
+  use another channel if the owner still needs the result.
+- For a task started from another session on multi-session Core, pipe the same
+  text into `scripts/handoff-final.js '<endpoint>|task:<taskId>|append'`, as for
+  final replies.
 
 ### Recovery Judgment
 
