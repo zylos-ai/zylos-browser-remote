@@ -86,3 +86,38 @@ test("browser names drop C1, bidi and zero-width characters, ESC, and never spli
   assert.equal(Array.from(name).length, 100);
   assert.ok(name.endsWith("\u{1F600}"));
 });
+
+test("hello.platform shows in status as a cleaned hint and 'os · arch · browser version' label", async (t) => {
+  const relay = await setup(t);
+  const { key, keyId } = newKey({ label: "x" });
+  const ws = await dial(relay, key, {
+    browserName: "Mac mini",
+    platform: { os: "macOS", arch: "arm64", browser: "Chrome", browserVersion: "142", extra: "ignored" },
+  });
+  t.after(() => ws.close());
+  const s = relay.ext.status()[`${keyId}.${A}`];
+  assert.deepEqual(s.platform, { os: "macOS", arch: "arm64", browser: "Chrome", browserVersion: "142" });
+  assert.equal(s.platformLabel, "macOS \u00b7 arm64 \u00b7 Chrome 142");
+  // The display name is unchanged by the hint.
+  assert.equal(s.displayName, "Mac mini \u00b7 aaaaaaaa");
+});
+
+test("a missing or malformed platform hint is null; fields are cleaned and bounded", async (t) => {
+  const relay = await setup(t);
+  for (const platform of [undefined, null, "macOS", ["macOS"], 42, {}, { os: 1, arch: "  " }]) {
+    const { key, keyId } = newKey({ label: "x" });
+    const ws = await dial(relay, key, platform === undefined ? {} : { platform });
+    const s = relay.ext.status()[`${keyId}.${A}`];
+    assert.equal(s.platform, null, JSON.stringify(platform));
+    assert.equal(s.platformLabel, null);
+    ws.close();
+  }
+  const { key, keyId } = newKey({ label: "x" });
+  const ws = await dial(relay, key, { platform: { os: "Linux\u202e\u0000x", browser: "y".repeat(80) } });
+  t.after(() => ws.close());
+  const s = relay.ext.status()[`${keyId}.${A}`];
+  assert.equal(s.platform.os, "Linux x");
+  assert.equal(s.platform.browser.length, 32);
+  assert.equal(s.platform.arch, undefined);
+  assert.equal(s.platformLabel, `Linux x \u00b7 ${"y".repeat(32)}`);
+});

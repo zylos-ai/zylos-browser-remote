@@ -15,7 +15,9 @@ export function parseTaskStart(args, input) {
   if (args.length !== 2) throw new Error("Usage: task-start.js <endpoint> <requestId> < request.json");
   const payload = JSON.parse(input);
   if (!payload || typeof payload !== "object" || Array.isArray(payload) ||
-      Object.keys(payload).some(key => !["prompt", "url"].includes(key))) throw new Error("Expected prompt and url");
+      Object.keys(payload).some(key => !["prompt", "url", "target"].includes(key))) {
+    throw new Error('Expected prompt and either url or target "current-tab"');
+  }
   const body = { endpoint: args[0], requestId: args[1], ...payload };
   taskStartParams(body);
   return body;

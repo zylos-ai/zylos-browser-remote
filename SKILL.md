@@ -10,8 +10,8 @@ description: >-
   proposing borrowed accounts, elevated access, manual work or abandonment.
   Online is not identity or consent; never bypass site denial, Stop or
   revocation. Discover first; start with scripts/task-start.js only with a
-  confirmed browser mapping, task authority, target URL and browser-owner
-  session permission. Follow supplied decision/reply commands and verify
+  confirmed browser mapping, task authority, a target (the user's current
+  tab or a URL) and browser-owner session permission. Follow supplied decision/reply commands and verify
   outcomes. For how-to questions, answer and offer help without assuming
   permission to change the page. The extension executes browser tools. Cannot
   download files or capture encrypted video streams; offer alternatives.
@@ -85,7 +85,8 @@ under "Respond to a request" below. Do not start a second task for that request.
 
 For a web task received through another chat channel, use the
 [proactive-start workflow](docs/proactive-start.md): discover connected browsers,
-resolve the authorized endpoint and URL, then call the existing task-start CLI.
+resolve the authorized endpoint and target (current tab or URL), then call the
+existing task-start CLI.
 When the user has already requested the action and its scope is clear, perform
 it rather than only giving manual steps or asking again whether to begin.
 For a how-to question, answer and offer browser assistance when useful; it is
@@ -99,8 +100,10 @@ session permission. Status and labels cannot supply that evidence.
 When listing connections to people, show each one's `displayName` (for a
 Workspace connection: the browser name the owner chose in OpenMax Workspace and
 the first 8 characters of its connection ID, e.g. `Work Laptop · c0ffee12`;
-renames update it live). `browserName` is reported by the extension and is
-display-only. Without a
+renames update it live). When `platformLabel` is set (OS, CPU architecture
+and browser major version, e.g. `macOS · arm64 · Chrome 142`), show it next to
+the `displayName`. `browserName`, `platform` and `platformLabel` are reported
+by the extension and are display-only. Without a
 trusted mapping, do not start; ask the owner privately to confirm it. Ask
 only for a missing target, URL or permission; never choose an unrelated browser,
 change its permission, or mint a connection key to bypass a refusal.
@@ -110,13 +113,33 @@ change its permission, or mint a connection key to bypass a refusal.
 When the owner has enabled agent task starts in the extension, use
 `node scripts/task-start.js <exact-endpoint> <requestId> < request.json`.
 The JSON must contain only `prompt` (nonblank, at most 8000 characters) and
-`url` (required HTTP(S), at most 4096 characters, no credentials or whitespace).
-Use the exact composite endpoint from status and a fresh lowercase UUID v4
-request ID. This requires the browser capability `agent-task-start-v1`.
-The extension checks permission and opens its own task tab, then follows the
-ordinary C4 decision flow. Acceptance (`started` or `existing`) is not completion.
+exactly one target:
 
-Start pages must load quickly: the extension abandons a start whose page has not
+- `"target":"current-tab"` works on the tab the browser user has in front of
+  them (active tab of the focused normal window) without opening or reloading
+  anything. Choose it when the user refers to "this page" or the page they are
+  on, is already on the page the task needs, or that tab holds state a new tab
+  would lose (logged-in or multi-step session, half-filled form, uploads).
+  Requires the capability `agent-task-current-tab-v1`; without it the relay
+  refuses with TASK_START_CURRENT_TAB_UNSUPPORTED.
+- `url` (HTTP(S), at most 4096 characters, no credentials or whitespace) opens
+  a new task tab. Choose it when the user names a site or page, or the task does
+  not depend on their current tab.
+
+Decide from the conversation; the extension does not ask the browser user to
+confirm the tab again. Use the exact composite endpoint from status and a fresh
+lowercase UUID v4 request ID. Both targets require the browser capability
+`agent-task-start-v1`. The extension checks permission, site access rules and
+restricted pages (browser pages, Chrome Web Store, private windows) on the
+target, then follows the ordinary C4 decision flow; for a current-tab start take
+control with `use-current-tab` and the supplied `contextId`. A refused
+current-tab start (TASK_START_NO_TAB, TASK_START_PAGE_RESTRICTED,
+TASK_START_SITE_DENIED, TASK_START_PAGE_NOT_READY, TASK_START_TAB_CLOSED,
+TASK_START_PAGE_CHANGED) did not start and opened nothing: report the reason and
+do not substitute a URL start on your own. Acceptance (`started` or `existing`)
+is not completion.
+
+URL start pages must load quickly: the extension abandons a start whose page has not
 loaded within its own limit (about 10 seconds in current releases) and closes
 the tab, returning `TASK_START_PAGE_TIMEOUT` (or `PAGE_UNAVAILABLE` when the page
 cannot open). Both mean the task did not start. For heavy or slow sites (for
@@ -214,7 +237,8 @@ The command waits for extension execution and returns either:
 The final send succeeds only after the extension confirms the matching terminal
 status. Final text is limited to 8,000 characters. A bare keyId is insufficient:
 this endpoint finishes a specific request, and is not an unsolicited notification
-or intermediate-progress API. C4 records outgoing send attempts, including retries
+or intermediate-progress API. To add a result after the request has ended, use a
+follow-up (below), not this endpoint. C4 records outgoing send attempts, including retries
 and failures; a database row alone does not prove delivery. Identical retries do
 not display another reply in the extension while the receipt is retained.
 
@@ -236,6 +260,42 @@ request ended or was cancelled. `DECISION_CONFLICT` means the ID already belongs
 to another decision. An identical accepted decision can be resubmitted after an
 ambiguous transport failure while its connection receipt remains available.
 Never retry uncertain browser input using a newly invented request ID.
+
+### Follow-up After the Request Ended
+
+Some work outlives the request: you told the owner "I will do X and report
+back", ended the request with `done`, and X (a review by another agent, a long
+build, a background job) finishes later. Put that result in the same task
+conversation in the extension:
+
+```bash
+cat <<'EOF_FOLLOWUP' | node ~/zylos/.claude/skills/comm-bridge/scripts/c4-send.js browser-remote '<keyId>.<browserId>|task:<taskId>|append'
+<result text>
+EOF_FOLLOWUP
+```
+
+Use the exact composite endpoint and the `taskId` from that task's requests (or
+from `task-start.js`). Rules, enforced by the browser:
+
+- Only a task you already answered with `done`/`blocked`, within 24 hours of
+  its end, at most 20 follow-ups per task, 1–8,000 characters, text only.
+- Only for that task's own outcome. Never use it for unsolicited messages,
+  reminders, marketing or anything unrelated to the task, and never to another
+  browser or another task. A still-running task uses its replyCommands.
+- Requires `agent-task-append-v1` on the browser (`TASK_APPEND_UNSUPPORTED`
+  otherwise). Exit code 0 and `delivered:true` mean the browser has the
+  follow-up saved and shown: `status:"appended"` means it was shown now;
+  `status:"existing"` means the same text was already saved and shown on this
+  task earlier and was not shown again (`send.js` prints a note). Either way,
+  do not send it again. The same text is shown once per task.
+  `EXT_OFFLINE`: not delivered; tell the owner on another channel or retry
+  later. `TASK_APPEND_UNCONFIRMED`: re-running the same command with the same
+  text is safe (shown once). `TASK_UNKNOWN`, `TASK_ACTIVE`,
+  `TASK_NOT_APPENDABLE`, `TASK_TOO_OLD`, `TASK_APPEND_LIMIT`: do not retry;
+  use another channel if the owner still needs the result.
+- For a task started from another session on multi-session Core, pipe the same
+  text into `scripts/handoff-final.js '<endpoint>|task:<taskId>|append'`, as for
+  final replies.
 
 ### Recovery Judgment
 

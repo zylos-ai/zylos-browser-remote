@@ -28,6 +28,9 @@ test("maps each browser connection to its own session group", () => {
     // Final-reply addresses Core looks up for c4-send: same connection, same group.
     [`${keyId}.${browserId}|req:r1|status:done`, `browser-${keyId}.${browserId}`],
     [`${keyId}.${browserId}|req:r1|status:blocked|input:i-2`, `browser-${keyId}.${browserId}`],
+    // Follow-up (append) address: Core asks for it on every follow-up send.
+    [`${keyId}.${browserId}|task:task-1|append`, `browser-${keyId}.${browserId}`],
+    [`${keyId}.${browserId}|task:${browserId}|append`, `browser-${keyId}.${browserId}`],
   ];
   for (const [endpoint, group] of table) {
     assert.equal(sessionGroupFromEndpoint(endpoint), group);
@@ -42,6 +45,31 @@ test("maps each browser connection to its own session group", () => {
 test("invalid endpoints throw and never map to the overall group", () => {
   for (const endpoint of ["", "all", keyId.toUpperCase(), `${keyId}.not-a-uuid`, `${keyId}|req:`, `${keyId}|`, `${keyId}|req:a b`, `../${keyId}`, null]) {
     assert.throws(() => sessionGroupFromEndpoint(endpoint), String(endpoint));
+  }
+});
+
+test("only the exact follow-up form may end in the bare |append marker", () => {
+  const connection = `${keyId}.${browserId}`;
+  for (const endpoint of [
+    `${keyId}|task:t1|append`, // follow-ups need the exact browser connection
+    `${connection}|append`,
+    `${connection}|task:|append`,
+    `${connection}|task:a b|append`,
+    `${connection}|task:${"x".repeat(129)}|append`,
+    `${connection}|task:t1|append|`,
+    `${connection}|task:t1|append|x`,
+    `${connection}|task:t1|append|req:r1`,
+    `${connection}|task:t1|appendx`,
+    `${connection}|task:t1|APPEND`,
+    `${connection}|append|task:t1`,
+    `${connection}|req:r1|append`,
+    `${connection}|req:r1|status:done|append`,
+    `${connection}|task:t1|other`,
+    `${connection}|other`,
+  ]) {
+    assert.throws(() => sessionGroupFromEndpoint(endpoint), endpoint);
+    assert.throws(() => execFileSync(process.execPath, [script, endpoint], { stdio: "pipe" }),
+      err => err.status === 1 && err.stdout.toString() === "", endpoint);
   }
 });
 

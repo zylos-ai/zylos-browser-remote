@@ -2,7 +2,13 @@
 import http from "http";
 import { sessionGroupFromEndpoint } from "./session-group.js";
 import { C4_CHANNEL } from "./c4.js";
-import { taskStartParams, taskStartResult, TASK_START_CAPABILITY, TASK_START_TIMEOUT_MS } from "./task-start.js";
+import {
+  taskStartParams, taskStartResult, TASK_START_CAPABILITY, TASK_START_CURRENT_TAB_CAPABILITY,
+  TASK_START_NOT_STARTED, TASK_START_TIMEOUT_MS,
+} from "./task-start.js";
+import {
+  taskAppendParams, taskAppendResult, appendIdFor, TASK_APPEND_CAPABILITY, TASK_APPEND_TIMEOUT_MS, TASK_APPEND_ERRORS,
+} from "./task-append.js";
 import { detailParams, detailResult, DETAIL_CAPABILITY } from "./detail-diagnostics.js";
 import { diagnosticParams, diagnosticResult, DIAGNOSTICS_CAPABILITY, DIAGNOSTICS_TIMEOUT_MS } from "./diagnostics.js";
 
@@ -27,6 +33,7 @@ class AgentLane {
     exchange = null,
     incidentEvidence = null,
     taskStartTimeoutMs = TASK_START_TIMEOUT_MS,
+    taskAppendTimeoutMs = TASK_APPEND_TIMEOUT_MS,
     taskSessions = null,
   }) {
     this.ext = extLane;
@@ -36,6 +43,7 @@ class AgentLane {
     this.exchange = exchange;
     this.incidentEvidence = incidentEvidence;
     this.taskStartTimeoutMs = taskStartTimeoutMs;
+    this.taskAppendTimeoutMs = taskAppendTimeoutMs;
     this.taskSessions = taskSessions;
     this.server = http.createServer((req, res) => this._onHttp(req, res));
   }
@@ -70,18 +78,25 @@ class AgentLane {
         catch { return fail(400, "BAD_REQUEST", "Invalid task start request"); }
         const target = this.ext.resolve(body.endpoint);
         if (target.error) return fail(RELAY_ERROR_STATUS[target.error] || 503, target.error, "Browser unavailable");
-        if (!this.ext.status()[target.endpointId]?.capabilities.includes(TASK_START_CAPABILITY)) {
+        const capabilities = this.ext.status()[target.endpointId]?.capabilities || [];
+        if (!capabilities.includes(TASK_START_CAPABILITY)) {
           return fail(409, "TASK_START_UNSUPPORTED", "This browser does not support agent task start");
+        }
+        // An older extension would reject the unknown field anyway; refuse here
+        // so the Agent learns why and never falls back to opening a new tab.
+        if (params.target && !capabilities.includes(TASK_START_CURRENT_TAB_CAPABILITY)) {
+          return fail(409, "TASK_START_CURRENT_TAB_UNSUPPORTED",
+            "This browser cannot start a task on its current tab; update the extension or start with a URL only if a new tab fits the request");
         }
         let raw;
         try {
           raw = await this.ext.request(target.endpointId, { method: "task.start", params, timeoutMs: this.taskStartTimeoutMs });
         } catch (err) {
-          const code = ["EXT_OFFLINE", "EXT_TIMEOUT", "TASK_START_DISABLED", "TASK_START_CONFLICT", "TASK_START_REVOKED", "TASK_START_UNSUPPORTED", "TASK_START_PAGE_TIMEOUT", "PAGE_UNAVAILABLE", "BAD_PARAMS"].includes(err.code) ? err.code : "TASK_START_ERROR";
-          const notStarted = code === "TASK_START_PAGE_TIMEOUT" || code === "PAGE_UNAVAILABLE";
+          const notStarted = Object.hasOwn(TASK_START_NOT_STARTED, err.code);
+          const code = notStarted || ["EXT_OFFLINE", "EXT_TIMEOUT", "TASK_START_DISABLED", "TASK_START_CONFLICT", "TASK_START_REVOKED", "TASK_START_UNSUPPORTED", "BAD_PARAMS"].includes(err.code) ? err.code : "TASK_START_ERROR";
           return fail(RELAY_ERROR_STATUS[code] || (code === "BAD_PARAMS" ? 400 : code === "TASK_START_ERROR" ? 502 : 409), code,
             notStarted
-              ? "Task did not start: the start page did not load and its tab was closed; do not retry automatically"
+              ? `Task did not start: ${TASK_START_NOT_STARTED[code]}; do not retry automatically`
               : "Task start failed or outcome is unknown; do not retry automatically");
         }
         let started;
@@ -98,6 +113,51 @@ class AgentLane {
           if (entry) this.log(`task-start[${target.endpointId}]: task ${started.taskId} belongs to session ${entry.group}`);
         }
         return reply(200, { ok: true, endpointId: target.endpointId, ...started });
+      }
+
+      if (req.method === "POST" && url.pathname === "/task/append") {
+        res.setHeader("cache-control", "no-store");
+        let params;
+        try { params = taskAppendParams(await readJson(req, 64 * 1024)); }
+        catch (err) {
+          return fail(/too large/.test(err.message) ? 413 : 400, "BAD_REQUEST",
+            /characters/.test(err.message) ? err.message : "Invalid task append request");
+        }
+        const target = this.ext.resolve(params.endpoint);
+        if (target.error) {
+          return fail(RELAY_ERROR_STATUS[target.error] || 503, target.error,
+            target.error === "EXT_OFFLINE"
+              ? "The browser is offline; the follow-up was NOT delivered. Tell the owner through another channel or retry later"
+              : "Browser unavailable; the follow-up was NOT delivered");
+        }
+        if (!this.ext.status()[target.endpointId]?.capabilities.includes(TASK_APPEND_CAPABILITY)) {
+          return fail(409, "TASK_APPEND_UNSUPPORTED", TASK_APPEND_ERRORS.TASK_APPEND_UNSUPPORTED[1]);
+        }
+        const appendId = appendIdFor(target.endpointId, params.taskId, params.text);
+        let raw;
+        try {
+          raw = await this.ext.request(target.endpointId, {
+            method: "task.append",
+            params: { taskId: params.taskId, appendId, text: params.text },
+            timeoutMs: this.taskAppendTimeoutMs,
+          });
+        } catch (err) {
+          if (err.code === "EXT_OFFLINE" && err.unsent)
+            return fail(503, "EXT_OFFLINE", "The browser is offline; the follow-up was NOT delivered");
+          if (err.code === "EXT_OFFLINE" || err.code === "EXT_TIMEOUT") {
+            this.log(`task-append[${target.endpointId}]: task ${params.taskId} outcome unknown (${err.code})`);
+            return fail(504, "TASK_APPEND_UNCONFIRMED",
+              "The browser did not confirm the follow-up. Re-running the same command with the same text is safe: the browser shows it at most once");
+          }
+          const code = Object.hasOwn(TASK_APPEND_ERRORS, err.code) ? err.code : "TASK_APPEND_FAILED";
+          this.log(`task-append[${target.endpointId}]: task ${params.taskId} refused (${code})`);
+          return fail(TASK_APPEND_ERRORS[code][0], code, TASK_APPEND_ERRORS[code][1]);
+        }
+        let appended;
+        try { appended = taskAppendResult(raw, { taskId: params.taskId, appendId }); }
+        catch { return fail(502, "BAD_TASK_APPEND_RESPONSE", "Invalid browser response; the follow-up outcome is unknown"); }
+        this.log(`task-append[${target.endpointId}]: task ${params.taskId} ${appended.status} (${appended.count}/${appended.limit})`);
+        return reply(200, { ok: true, endpointId: target.endpointId, delivered: true, ...appended });
       }
 
       if (req.method === "POST" && url.pathname === "/diagnostics/detail") {

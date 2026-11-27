@@ -39,4 +39,23 @@ function parseReplyEndpoint(value) {
   };
 }
 
-export { replyCommands, parseReplyEndpoint };
+// Follow-up reply to a task that already ended (task append): an exact browser
+// connection (keyId.browserId) and the task ID from that task's requests.
+const APPEND_RE = new RegExp(
+  `^(${ENDPOINT_SOURCE})\\|task:([A-Za-z0-9._:-]{1,128})\\|append$`,
+);
+
+/** Either a final reply route or a follow-up (append) route. */
+function parseSendTarget(value) {
+  const append = APPEND_RE.exec(value || "");
+  if (append) {
+    if (!append[1].includes("."))
+      throw new Error("A follow-up needs the exact browser endpoint <keyId>.<browserId>");
+    return { kind: "append", endpoint: append[1], taskId: append[2] };
+  }
+  if (/\|task:/.test(value || ""))
+    throw new Error("Expected <keyId>.<browserId>|task:<taskId>|append");
+  return { kind: "reply", ...parseReplyEndpoint(value) };
+}
+
+export { replyCommands, parseReplyEndpoint, parseSendTarget };
