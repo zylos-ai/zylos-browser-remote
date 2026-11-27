@@ -10,16 +10,21 @@ changes. Use only an authorized mapped browser; never bypass denial, Stop or
 revocation by changing execution paths. The workflow includes blocked-step examples.
 
 An owner can enable agent task starts in a supporting extension. The private
-loopback route `POST /task/start` requires `{endpoint, requestId, prompt, url}`.
+loopback route `POST /task/start` requires `{endpoint, requestId, prompt}` and
+exactly one target, `url` or `target: "current-tab"`.
 `endpoint` must be the exact key/browser composite address; `requestId` must be
 a lowercase UUID v4. `prompt` must be nonblank and at most 8000 characters.
-`url` is required, at most 4096 characters, and must be an explicit HTTP(S) URL
-without credentials or whitespace. Unknown fields are rejected.
+`url` must be at most 4096 characters and an explicit HTTP(S) URL without
+credentials or whitespace; the extension opens it in a new task tab.
+`target: "current-tab"` starts on the browser user's active tab instead and
+additionally requires the extension capability `agent-task-current-tab-v1`
+(otherwise `TASK_START_CURRENT_TAB_UNSUPPORTED`). Unknown fields are rejected.
 
 Use `node scripts/task-start.js <endpoint> <requestId> < request.json`, where
-the JSON contains only `prompt` and `url`. Generate the request ID once and retain
+the JSON contains only `prompt` and either `url` or `target`. Generate the request ID once and retain
 it with the exact payload. The extension must advertise `agent-task-start-v1`,
-check owner permission and start an ordinary task in its own task tab. A successful
+check owner permission, site rules and restricted pages, and start an ordinary
+task in its own task tab or on the current tab. A successful
 response contains `requestId`, `taskId`, and `status` (`started` or `existing`).
 Task acceptance does not mean task completion; the ordinary C4 decision flow follows.
 

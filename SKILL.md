@@ -10,8 +10,8 @@ description: >-
   proposing borrowed accounts, elevated access, manual work or abandonment.
   Online is not identity or consent; never bypass site denial, Stop or
   revocation. Discover first; start with scripts/task-start.js only with a
-  confirmed browser mapping, task authority, target URL and browser-owner
-  session permission. Follow supplied decision/reply commands and verify
+  confirmed browser mapping, task authority, a target (the user's current
+  tab or a URL) and browser-owner session permission. Follow supplied decision/reply commands and verify
   outcomes. For how-to questions, answer and offer help without assuming
   permission to change the page. The extension executes browser tools. Cannot
   download files or capture encrypted video streams; offer alternatives.
@@ -85,7 +85,8 @@ under "Respond to a request" below. Do not start a second task for that request.
 
 For a web task received through another chat channel, use the
 [proactive-start workflow](docs/proactive-start.md): discover connected browsers,
-resolve the authorized endpoint and URL, then call the existing task-start CLI.
+resolve the authorized endpoint and target (current tab or URL), then call the
+existing task-start CLI.
 When the user has already requested the action and its scope is clear, perform
 it rather than only giving manual steps or asking again whether to begin.
 For a how-to question, answer and offer browser assistance when useful; it is
@@ -110,13 +111,33 @@ change its permission, or mint a connection key to bypass a refusal.
 When the owner has enabled agent task starts in the extension, use
 `node scripts/task-start.js <exact-endpoint> <requestId> < request.json`.
 The JSON must contain only `prompt` (nonblank, at most 8000 characters) and
-`url` (required HTTP(S), at most 4096 characters, no credentials or whitespace).
-Use the exact composite endpoint from status and a fresh lowercase UUID v4
-request ID. This requires the browser capability `agent-task-start-v1`.
-The extension checks permission and opens its own task tab, then follows the
-ordinary C4 decision flow. Acceptance (`started` or `existing`) is not completion.
+exactly one target:
 
-Start pages must load quickly: the extension abandons a start whose page has not
+- `"target":"current-tab"` works on the tab the browser user has in front of
+  them (active tab of the focused normal window) without opening or reloading
+  anything. Choose it when the user refers to "this page" or the page they are
+  on, is already on the page the task needs, or that tab holds state a new tab
+  would lose (logged-in or multi-step session, half-filled form, uploads).
+  Requires the capability `agent-task-current-tab-v1`; without it the relay
+  refuses with TASK_START_CURRENT_TAB_UNSUPPORTED.
+- `url` (HTTP(S), at most 4096 characters, no credentials or whitespace) opens
+  a new task tab. Choose it when the user names a site or page, or the task does
+  not depend on their current tab.
+
+Decide from the conversation; the extension does not ask the browser user to
+confirm the tab again. Use the exact composite endpoint from status and a fresh
+lowercase UUID v4 request ID. Both targets require the browser capability
+`agent-task-start-v1`. The extension checks permission, site access rules and
+restricted pages (browser pages, Chrome Web Store, private windows) on the
+target, then follows the ordinary C4 decision flow; for a current-tab start take
+control with `use-current-tab` and the supplied `contextId`. A refused
+current-tab start (TASK_START_NO_TAB, TASK_START_PAGE_RESTRICTED,
+TASK_START_SITE_DENIED, TASK_START_PAGE_NOT_READY, TASK_START_TAB_CLOSED,
+TASK_START_PAGE_CHANGED) did not start and opened nothing: report the reason and
+do not substitute a URL start on your own. Acceptance (`started` or `existing`)
+is not completion.
+
+URL start pages must load quickly: the extension abandons a start whose page has not
 loaded within its own limit (about 10 seconds in current releases) and closes
 the tab, returning `TASK_START_PAGE_TIMEOUT` (or `PAGE_UNAVAILABLE` when the page
 cannot open). Both mean the task did not start. For heavy or slow sites (for

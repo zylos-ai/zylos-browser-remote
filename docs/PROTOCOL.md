@@ -163,6 +163,24 @@ The numeric `req.id` correlates socket responses. `params.id` is the pending
 Agent request ID. `taskId` groups all rounds from one user message. These are
 separate from the connection's `endpointId`.
 
+### Agent task start (`task.start`)
+
+When the extension advertises `agent-task-start-v1`, the relay forwards a
+validated `POST /task/start` as
+`{type:"req",id,method:"task.start",params:{requestId,prompt,url}}` (new task tab)
+or, only when the extension also advertises `agent-task-current-tab-v1`,
+`params:{requestId,prompt,target:"current-tab"}`. Exactly one of `url` and
+`target` is present; the relay never forwards `sessionGroup`. Without the
+current-tab capability the relay answers `TASK_START_CURRENT_TAB_UNSUPPORTED`
+and sends nothing. The extension answers `{requestId,taskId,status}` with
+`status` `started` or `existing`, or an error code. Codes that mean the task
+did not start and nothing was opened or controlled (`TASK_START_PAGE_TIMEOUT`,
+`PAGE_UNAVAILABLE`, `TASK_START_NO_TAB`, `TASK_START_PAGE_RESTRICTED`,
+`TASK_START_SITE_DENIED`, `TASK_START_PAGE_NOT_READY`, `TASK_START_TAB_CLOSED`,
+`TASK_START_PAGE_CHANGED`) reach the Agent with a fixed explanation; any
+other unknown code becomes `TASK_START_ERROR` and the extension's message is
+never forwarded.
+
 ### Optional interruption evidence
 
 For `status:"interrupted"`, an extension may include

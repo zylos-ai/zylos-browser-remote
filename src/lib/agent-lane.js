@@ -2,7 +2,10 @@
 import http from "http";
 import { sessionGroupFromEndpoint } from "./session-group.js";
 import { C4_CHANNEL } from "./c4.js";
-import { taskStartParams, taskStartResult, TASK_START_CAPABILITY, TASK_START_TIMEOUT_MS } from "./task-start.js";
+import {
+  taskStartParams, taskStartResult, TASK_START_CAPABILITY, TASK_START_CURRENT_TAB_CAPABILITY,
+  TASK_START_NOT_STARTED, TASK_START_TIMEOUT_MS,
+} from "./task-start.js";
 import { detailParams, detailResult, DETAIL_CAPABILITY } from "./detail-diagnostics.js";
 import { diagnosticParams, diagnosticResult, DIAGNOSTICS_CAPABILITY, DIAGNOSTICS_TIMEOUT_MS } from "./diagnostics.js";
 
@@ -70,18 +73,25 @@ class AgentLane {
         catch { return fail(400, "BAD_REQUEST", "Invalid task start request"); }
         const target = this.ext.resolve(body.endpoint);
         if (target.error) return fail(RELAY_ERROR_STATUS[target.error] || 503, target.error, "Browser unavailable");
-        if (!this.ext.status()[target.endpointId]?.capabilities.includes(TASK_START_CAPABILITY)) {
+        const capabilities = this.ext.status()[target.endpointId]?.capabilities || [];
+        if (!capabilities.includes(TASK_START_CAPABILITY)) {
           return fail(409, "TASK_START_UNSUPPORTED", "This browser does not support agent task start");
+        }
+        // An older extension would reject the unknown field anyway; refuse here
+        // so the Agent learns why and never falls back to opening a new tab.
+        if (params.target && !capabilities.includes(TASK_START_CURRENT_TAB_CAPABILITY)) {
+          return fail(409, "TASK_START_CURRENT_TAB_UNSUPPORTED",
+            "This browser cannot start a task on its current tab; update the extension or start with a URL only if a new tab fits the request");
         }
         let raw;
         try {
           raw = await this.ext.request(target.endpointId, { method: "task.start", params, timeoutMs: this.taskStartTimeoutMs });
         } catch (err) {
-          const code = ["EXT_OFFLINE", "EXT_TIMEOUT", "TASK_START_DISABLED", "TASK_START_CONFLICT", "TASK_START_REVOKED", "TASK_START_UNSUPPORTED", "TASK_START_PAGE_TIMEOUT", "PAGE_UNAVAILABLE", "BAD_PARAMS"].includes(err.code) ? err.code : "TASK_START_ERROR";
-          const notStarted = code === "TASK_START_PAGE_TIMEOUT" || code === "PAGE_UNAVAILABLE";
+          const notStarted = Object.hasOwn(TASK_START_NOT_STARTED, err.code);
+          const code = notStarted || ["EXT_OFFLINE", "EXT_TIMEOUT", "TASK_START_DISABLED", "TASK_START_CONFLICT", "TASK_START_REVOKED", "TASK_START_UNSUPPORTED", "BAD_PARAMS"].includes(err.code) ? err.code : "TASK_START_ERROR";
           return fail(RELAY_ERROR_STATUS[code] || (code === "BAD_PARAMS" ? 400 : code === "TASK_START_ERROR" ? 502 : 409), code,
             notStarted
-              ? "Task did not start: the start page did not load and its tab was closed; do not retry automatically"
+              ? `Task did not start: ${TASK_START_NOT_STARTED[code]}; do not retry automatically`
               : "Task start failed or outcome is unknown; do not retry automatically");
         }
         let started;

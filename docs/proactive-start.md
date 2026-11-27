@@ -80,7 +80,8 @@ If several authorized mapped browsers are possible, resolve the selection in a
 private owner context. Do not expose endpoint IDs, labels or other users' browser
 metadata in a group. Do not use a bare keyId or the first available connection.
 
-Require `connected: true` and capability `agent-task-start-v1`. The capability
+Require `connected: true` and capability `agent-task-start-v1`. Starting on
+the user's current tab also requires `agent-task-current-tab-v1`. A capability
 means implementation support, not that the session permission is enabled;
 `/status` does not report that permission. The extension checks it on start.
 If `agentTurn` indicates an active exchange, preserve it and its evidence;
@@ -94,24 +95,45 @@ privately; do not suggest merely connecting another extension. If the capability
 is missing, explain the compatibility requirement.
 Do not alter services, keys or permissions as a workaround.
 
-## Resolve The URL And Start Once
+## Choose The Target And Start Once
 
-`task-start.js` requires an explicit HTTP(S) URL and opens a new task tab. It
-cannot adopt an arbitrary existing tab, and `/status` is not a list of open
-pages. Use a URL supplied by the user or already established in this task's
-authorized context. Do not invent a URL or assume that a new tab preserves an
-unsaved form or the state of an existing tab.
+`task-start.js` starts the task on one of two targets. Decide from the
+conversation; the extension does not ask the browser user again:
 
-The one allowed substitution is for slow pages: when the authorized URL is a heavy
+- **The user's current tab** (`"target":"current-tab"`): the task works on the
+  tab the browser user is looking at when the start arrives (the active tab of
+  the focused normal Chrome window), without opening, reloading or navigating
+  it. Use it when the user refers to the page in front of them ("this page",
+  "the form I'm on", "continue here"), is already on the page the task needs,
+  or has state in that tab that a new tab would lose: a logged-in or
+  multi-step session, a half-filled form, uploaded files, a selected filter.
+- **A new tab at a URL** (`"url":"https://..."`): the extension opens its own
+  task tab. Use it when the user names a site or page to visit, the task does
+  not depend on what they are looking at now, or it should not disturb their
+  current tab. Use a URL supplied by the user or already established in this
+  task's authorized context. Do not invent a URL or assume that a new tab
+  preserves an unsaved form or the state of an existing tab.
+
+When the conversation is ambiguous (for example the user might have switched
+tabs since), ask which they mean rather than guessing. `/status` is not a list
+of open pages, and current-tab cannot pick a background tab or a tab by URL:
+the user brings the page to the front. If the browser lacks
+`agent-task-current-tab-v1`, the relay refuses with
+TASK_START_CURRENT_TAB_UNSUPPORTED; do not switch to a URL start unless a new
+tab genuinely fits the request (it will not carry the existing page's state).
+
+Every existing protection still applies to a current-tab start: the browser
+owner's "Allow Agent to start tasks" setting, site access rules (denied and
+sensitive sites), restricted pages (browser pages, the Chrome Web Store,
+private/incognito windows), the browser user's Stop at any time, and the
+session and consent rules below. The extension checks them on the tab itself
+and refuses rather than opening a new tab instead.
+
+The one allowed URL substitution is for slow pages: when the authorized URL is a heavy
 page that may not load within the extension's start limit (about 10 seconds,
 `TASK_START_PAGE_TIMEOUT`), start on a light page of the same origin, such as its
 home page, and put the authorized URL in `prompt` for the task to open. The
 origin must not change.
-
-If the user means "this page" and no URL/page context is available, ask them to
-send the request from the extension on that page, or provide its URL if a new
-task tab is acceptable. Incoming extension requests can use use-current-tab
-with their captured contextId; proactive start cannot fabricate that context.
 
 Generate one fresh lowercase UUID v4 (for example with
 `node -e 'console.log(require("node:crypto").randomUUID())'`). Substitute that ID,
@@ -123,9 +145,18 @@ node scripts/task-start.js '<endpointId>' '<requestId>' <<'EOF_TASK'
 EOF_TASK
 ```
 
-Send only `prompt` (nonblank, at most 8000 characters) and `url` (at most 4096
-characters, without credentials or whitespace) in stdin JSON. Preserve the exact
-request ID and payload for any explicit retry; never retry automatically.
+or, for the tab the user is on:
+
+```bash
+node scripts/task-start.js '<endpointId>' '<requestId>' <<'EOF_TASK'
+{"prompt":"Finish the upload form I have open: add the title and submit it for review","target":"current-tab"}
+EOF_TASK
+```
+
+Send only `prompt` (nonblank, at most 8000 characters) and exactly one of `url`
+(at most 4096 characters, without credentials or whitespace) or
+`"target":"current-tab"` in stdin JSON. Preserve the exact request ID and
+payload for any explicit retry; never retry automatically.
 
 Handle outcomes without guessing whether work ran:
 
@@ -150,6 +181,19 @@ Handle outcomes without guessing whether work ran:
   page did not load in time (or could not open) and its tab was closed. Do not
   retry automatically. With the user's go-ahead, a new start may use a light page
   of the same origin as `url` and name the authorized target in `prompt`.
+- Current-tab refusals: the task did not start, no page control was taken and
+  no tab was opened. Tell the user the specific reason; do not retry
+  automatically and do not fall back to a URL start on your own.
+  - TASK_START_NO_TAB: no focused normal Chrome window with an active tab.
+  - TASK_START_PAGE_RESTRICTED: the tab is a browser, Chrome Web Store,
+    private/incognito or other page the extension cannot operate.
+  - TASK_START_SITE_DENIED: the browser owner's site access rules deny that
+    site. Only the owner can change the rule in the extension; never reopen the
+    page elsewhere to get around it.
+  - TASK_START_PAGE_NOT_READY: the tab was still loading or could not be read
+    yet; the user can ask again once it has loaded.
+  - TASK_START_TAB_CLOSED / TASK_START_PAGE_CHANGED: the tab was closed, or it
+    navigated, reloaded or moved to another window while the start was checked.
 - RELAY_DOWN (connection refused): the start was not delivered to the relay;
   report service unavailability, not an unknown browser execution result.
 - A timeout, transport error or invalid response can have an unknown outcome.
@@ -169,8 +213,13 @@ logical start (especially an uncertain one), retain the identical ID and payload
 ## Continue To Verified Completion
 
 `started` or `existing` acknowledges acceptance, not task completion. The
-extension creates the task page and sends its first decision request through
-C4. Continue that SAME task using the delivered endpoint, current request ID,
+extension creates the task page (or pins the user's current tab) and sends its
+first decision request through C4. For a current-tab start, that request
+carries the tab's page context; take control with `use-current-tab` and its
+`contextId`, as for a request sent from the extension panel. The extension
+re-checks the tab, window, URL and document before acting; if the user closed
+or navigated the tab in the meantime, that tool call fails and the page is not
+reopened. Continue that SAME task using the delivered endpoint, current request ID,
 replyInputId when supplied, tool schemas and replyCommands. The start request ID
 is not a substitute for the subsequent decision request ID. Do not create a
 second loop or poll the browser to obtain observations.
