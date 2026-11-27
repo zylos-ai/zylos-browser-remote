@@ -2,6 +2,9 @@
 /**
  * Print the session group for a reply endpoint.
  * Usage: node scripts/session-group.js <endpoint>
+ * Core passes the exact outbound address: a connection, a final reply address
+ * (`<endpoint>|req:<id>|status:<s>[|input:<id>]`) or a follow-up address
+ * (`<keyId>.<browserId>|task:<taskId>|append`); all map to the connection's group.
  * Success: group name on stdout, exit 0. This component never uses the
  * overall group for a browser connection, so success always prints a name.
  * Failure: message on stderr, nothing on stdout, exit 1.

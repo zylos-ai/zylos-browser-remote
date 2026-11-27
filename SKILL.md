@@ -283,7 +283,11 @@ from `task-start.js`). Rules, enforced by the browser:
   reminders, marketing or anything unrelated to the task, and never to another
   browser or another task. A still-running task uses its replyCommands.
 - Requires `agent-task-append-v1` on the browser (`TASK_APPEND_UNSUPPORTED`
-  otherwise). Exit code 0 and `delivered:true` mean it is saved and shown.
+  otherwise). Exit code 0 and `delivered:true` mean the browser has the
+  follow-up saved and shown: `status:"appended"` means it was shown now;
+  `status:"existing"` means the same text was already saved and shown on this
+  task earlier and was not shown again (`send.js` prints a note). Either way,
+  do not send it again. The same text is shown once per task.
   `EXT_OFFLINE`: not delivered; tell the owner on another channel or retry
   later. `TASK_APPEND_UNCONFIRMED`: re-running the same command with the same
   text is safe (shown once). `TASK_UNKNOWN`, `TASK_ACTIVE`,

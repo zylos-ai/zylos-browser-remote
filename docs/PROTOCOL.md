@@ -378,9 +378,12 @@ relay sends one correlated request to that browser:
 | Extension → Remote | `{type:"error",id,code,message}`                                             | Refused; nothing was shown |
 
 `appendId` is the first 32 hex characters of
-`sha256(endpoint + "\n" + taskId + "\n" + text)`, so a retry with the same text
-is shown once (`status:"existing"`). The extension answers only after the reply
-is persisted; `count` is the task's follow-up count including this one.
+`sha256(endpoint + "\n" + taskId + "\n" + text)`, so the same text on the same
+task is shown once. `status:"appended"` means this request saved and showed it;
+`status:"existing"` means the same text was already saved and shown earlier and
+is not shown again (`send.js` notes this on stderr; both count as delivered).
+The extension answers only after the reply is persisted; `count` is the task's
+follow-up count including this one.
 
 The extension owns the task history and enforces the rules: the task must exist
 in that browser's history (`TASK_UNKNOWN`), must have ended (`TASK_ACTIVE`),
@@ -396,6 +399,11 @@ delivered). A lost connection or missing acknowledgement after sending is
 `TASK_APPEND_UNCONFIRMED` (504); re-running the same command with the same text
 is safe. `send.js` exits non-zero for anything but `delivered:true`. A follow-up
 never changes the task's ended status and never reopens it.
+
+Multi-session Core asks `scripts/session-group.js` for the owning thread of the
+exact outbound address, so the follow-up address maps to the same group as its
+connection, `browser-<keyId>.<browserId>`. Only this exact form may end in the
+bare `|append` marker; anything else is still an invalid address.
 
 ## Errors and retries
 

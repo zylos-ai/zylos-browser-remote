@@ -33,8 +33,11 @@ Follow-up replies need a Zylos Browser release that advertises
   acknowledges; offline is `EXT_OFFLINE`, an unconfirmed outcome is
   `TASK_APPEND_UNCONFIRMED` (same-text retry is safe). The browser allows it only
   for tasks answered with done/blocked, within 24 hours, at most 20 per task.
-  `handoff-final.js` accepts the same route. Final reply and decision behaviour
-  is unchanged.
+  `handoff-final.js` accepts the same route (with follow-up wording), and
+  `scripts/session-group.js` maps it to the connection's session group so
+  multi-session Core can send it. Resending the same text on the same task
+  returns `status:"existing"`: already saved and shown earlier, not shown again.
+  Final reply and decision behaviour is unchanged.
 
 ### Changed
 - Refer to the connected extension as Zylos Browser in the skill, docs, and package description.

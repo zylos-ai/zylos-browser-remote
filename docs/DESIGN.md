@@ -103,7 +103,7 @@ original input rather than clearing it.
 Several browsers may share one key, so a connection is identified by the full
 endpoint `keyId.browserId` — never by the bare key id.
 
-A follow-up to an ended task takes a separate path (issue #7): C4
+A follow-up reply to an ended task (task append) takes a separate path: C4
 `<endpoint>|task:<taskId>|append` → `scripts/send.js` → agent lane
 `POST /task/append` → one `task.append` request to that exact browser, which
 persists and shows the reply before it acknowledges. The relay keeps no task

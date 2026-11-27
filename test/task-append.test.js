@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { once } from "node:events";
 import { spawn } from "node:child_process";
@@ -187,6 +189,60 @@ test("handoff to the owning browser thread carries the append route unchanged", 
   assert.ok(message.includes(`c4-send.js browser-remote '${target}'`));
   assert.ok(message.includes(text));
   assert.doesNotMatch(message, /final .* reply of browser request/);
+  assert.match(handoffMessage(target, text), /<<'EOF_FOLLOWUP_[0-9a-f]{8}'/);
+});
+
+// A stand-in for Core's comm-bridge scripts: c4-db resolves the owning group,
+// and c4-send asks the component's session-group.js about the exact outbound
+// address first, as multi-session Core does, before recording the send.
+function fakeCore(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "br-handoff-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const groupScript = path.resolve(__dirname, "../scripts/session-group.js");
+  fs.writeFileSync(path.join(dir, "c4-db.js"),
+    `process.stdout.write(JSON.stringify({ ok: true, data: "browser-remote:" + process.argv[5] }));\n`);
+  fs.writeFileSync(path.join(dir, "c4-send.js"), `
+const fs = require("node:fs");
+const { execFileSync } = require("node:child_process");
+const [channel, address] = process.argv.slice(2);
+if (channel !== "internal") execFileSync(process.execPath, [${JSON.stringify(groupScript)}, address], { stdio: ["ignore", "pipe", "inherit"] });
+fs.writeFileSync(${JSON.stringify(path.join(dir, "sent.json"))}, JSON.stringify({ channel, address, text: fs.readFileSync(0, "utf8") }));
+process.stdout.write("sent\\n");
+`);
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ type: "commonjs" }));
+  return { dir, sent: () => JSON.parse(fs.readFileSync(path.join(dir, "sent.json"), "utf8")) };
+}
+
+async function runHandoff(target, input, env) {
+  const child = spawn(process.execPath, [path.resolve(__dirname, "../scripts/handoff-final.js"), target], {
+    env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"],
+  });
+  let stdout = "", stderr = "";
+  child.stdout.on("data", (c) => (stdout += c));
+  child.stderr.on("data", (c) => (stderr += c));
+  child.stdin.end(input);
+  const [code] = await once(child, "close");
+  return { code, stdout, stderr };
+}
+
+test("handoff-final.js hands off or sends a follow-up with follow-up wording", async (t) => {
+  const core = fakeCore(t);
+  const target = `${endpoint}|task:${taskId}|append`;
+  const group = `browser-remote:browser-${endpoint}`;
+  const handed = await runHandoff(target, text, { ZYLOS_C4_SCRIPTS: core.dir, ZYLOS_SESSION_GROUP: "lark:group-x" });
+  assert.equal(handed.code, 0, handed.stderr);
+  assert.equal(core.sent().channel, "internal");
+  assert.equal(core.sent().address, group);
+  assert.match(core.sent().text, /follow-up reply to the ended browser task/);
+  assert.match(handed.stderr, /The follow-up is shown when that thread runs the command/);
+  assert.doesNotMatch(handed.stderr, /task ends/);
+  // The owning thread itself: sent directly; Core's session-group query accepts the address.
+  const direct = await runHandoff(target, text, { ZYLOS_C4_SCRIPTS: core.dir, ZYLOS_SESSION_GROUP: group });
+  assert.equal(direct.code, 0, direct.stderr);
+  assert.deepEqual(core.sent(), { channel: "browser-remote", address: target, text });
+  const empty = await runHandoff(target, " ", { ZYLOS_C4_SCRIPTS: core.dir });
+  assert.equal(empty.code, 2);
+  assert.match(empty.stderr, /Follow-up must contain/);
 });
 
 async function runSend(args, base) {
@@ -219,6 +275,12 @@ test("send.js routes an append to /task/append and exits non-zero unless deliver
   const ok = await runSend([`${endpoint}|task:${taskId}|append`, `  ${text}\n`], base);
   assert.equal(ok.code, 0, ok.stderr);
   assert.deepEqual(seen[0], { path: "/task/append", body: { endpoint, taskId, text } });
+  assert.doesNotMatch(ok.stderr, /already/);
+  answer = { ...answer, status: "existing" };
+  const resend = await runSend([`${endpoint}|task:${taskId}|append`, text], base);
+  assert.equal(resend.code, 0, resend.stderr);
+  assert.match(resend.stderr, /already saved and shown .* not shown again/);
+  seen.pop();
   answer = { ok: false, code: "TASK_TOO_OLD", message: "old" };
   const refused = await runSend([`${endpoint}|task:${taskId}|append`, text], base);
   assert.equal(refused.code, 1);

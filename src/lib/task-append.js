@@ -1,4 +1,5 @@
-// Append one Agent reply to a browser task that has already ended (issue #7).
+// Append one Agent follow-up reply to a browser task that has already ended
+// (the task-append feature: `<keyId>.<browserId>|task:<taskId>|append`).
 // The relay validates and correlates; the extension owns the task history and
 // decides whether the task may still receive a follow-up (it ended with the
 // Agent's done/blocked reply, at most 24 hours ago, fewer than 20 follow-ups).

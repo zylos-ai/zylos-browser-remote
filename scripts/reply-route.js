@@ -39,7 +39,7 @@ function parseReplyEndpoint(value) {
   };
 }
 
-// Follow-up to a task that already ended (issue #7): an exact browser
+// Follow-up reply to a task that already ended (task append): an exact browser
 // connection (keyId.browserId) and the task ID from that task's requests.
 const APPEND_RE = new RegExp(
   `^(${ENDPOINT_SOURCE})\\|task:([A-Za-z0-9._:-]{1,128})\\|append$`,

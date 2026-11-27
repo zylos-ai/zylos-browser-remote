@@ -368,3 +368,102 @@ test(
   },
   (t) => finalReplyScenario(t, true),
 );
+
+// Core (multi-session releases) asks the component's scripts/session-group.js
+// which thread owns the exact outbound address before every send, including the
+// follow-up address `<keyId>.<browserId>|task:<taskId>|append`. Run with
+// ZYLOS_C4_SEND pointing at such a Core to cover that query end to end.
+test(
+  "real Core c4-send delivers a follow-up (append) reply through the channel adapter",
+  {
+    skip:
+      !fs.existsSync(coreSend) &&
+      "Core checkout unavailable; set ZYLOS_C4_SEND",
+  },
+  async (t) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "br-append-"));
+    const oldKey = process.env.BROWSER_REMOTE_KEY;
+    process.env.BROWSER_REMOTE_KEY = "ef".repeat(32);
+    const relay = await start({
+      extPort: 0,
+      agentPort: 0,
+      onRequest: async () => ({ ok: true }),
+    });
+    const ws = new WebSocket(
+      `ws://127.0.0.1:${relay.ext.server.address().port}/ext`,
+      ["zylos-browser-remote.v3", `key.${process.env.BROWSER_REMOTE_KEY}`],
+    );
+    const frames = [],
+      shown = new Map();
+    ws.on("message", (raw) => {
+      const frame = JSON.parse(raw);
+      frames.push(frame);
+      if (frame.type !== "req" || frame.method !== "task.append") return;
+      const { taskId, appendId, text } = frame.params;
+      const existing = shown.has(appendId);
+      if (!existing) shown.set(appendId, text);
+      ws.send(
+        JSON.stringify({
+          type: "resp",
+          id: frame.id,
+          result: {
+            taskId,
+            appendId,
+            status: existing ? "existing" : "appended",
+            count: shown.size,
+            limit: 20,
+          },
+        }),
+      );
+    });
+    t.after(() => {
+      ws.terminate();
+      relay.close();
+      fs.rmSync(tmp, { recursive: true, force: true });
+      if (oldKey === undefined) delete process.env.BROWSER_REMOTE_KEY;
+      else process.env.BROWSER_REMOTE_KEY = oldKey;
+    });
+    await once(ws, "open");
+    ws.send(
+      JSON.stringify({
+        type: "hello",
+        version: "fixture",
+        capabilities: [
+          "agent-loop-v1",
+          "browser-instance-v1",
+          "agent-task-append-v1",
+        ],
+        browserId: "12345678-1234-4567-89ab-123456789abc",
+      }),
+    );
+    await waitFor(() => frames.some((f) => f.type === "ready"));
+    const endpoint = relay.ext.connectedIds()[0];
+    assert.match(endpoint, /\./);
+    const skills = path.join(tmp, ".claude/skills");
+    fs.mkdirSync(skills, { recursive: true });
+    fs.symlinkSync(remote, path.join(skills, "browser-remote"), "dir");
+    const env = {
+      BROWSER_REMOTE_AGENT_URL: `http://127.0.0.1:${relay.agent.server.address().port}`,
+      ZYLOS_DIR: tmp,
+    };
+    const target = `${endpoint}|task:task-1|append`;
+    const text = "Follow-up: the export finished.";
+    // Core's session-group query, also checked directly for Cores that predate it.
+    const owner = spawnSync(
+      process.execPath,
+      [path.join(remote, "scripts/session-group.js"), target],
+      { encoding: "utf8" },
+    );
+    assert.equal(owner.status, 0, owner.stderr);
+    assert.equal(owner.stdout, `browser-${endpoint}\n`);
+    const first = await run([coreSend, "browser-remote", target], env, text);
+    assert.equal(first.code, 0, first.stdout + first.stderr);
+    assert.match(first.stdout, /"status":"appended"/);
+    assert.deepEqual([...shown.values()], [text]);
+    const again = await run([coreSend, "browser-remote", target], env, text);
+    assert.equal(again.code, 0, again.stdout + again.stderr);
+    assert.match(again.stdout, /"status":"existing"/);
+    assert.match(again.stderr, /already saved and shown .* not shown again/);
+    assert.equal(shown.size, 1, "same text is shown once");
+  },
+);
