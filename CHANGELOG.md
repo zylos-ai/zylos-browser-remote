@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Pairs with the zylos-browser-extension release that advertises
 `agent-task-current-tab-v1`; URL starts keep working with any extension.
+Follow-up replies need a Zylos Browser release that advertises
+`agent-task-append-v1`.
 
 ### Added
 - Connection status shows the extension's optional platform hint (`hello.platform`: OS, CPU architecture, browser major version) as `platform` and `platformLabel`, e.g. `macOS · arm64 · Chrome 142`, so several browsers are easier to tell apart. It is cleaned display text only. Without the field (older extensions) both are `null`, and `displayName` is unchanged.
@@ -22,6 +24,17 @@ Pairs with the zylos-browser-extension release that advertises
   `TASK_START_PAGE_CHANGED`) are passed through with a "Task did not start"
   reason. The skill and proactive-start guide explain when to use the current
   tab versus a new URL tab. URL starts are unchanged.
+- Follow-up replies to an ended task (#7): the Agent can add results to the
+  same task conversation after the request ended, through the C4 endpoint
+  `<keyId>.<browserId>|task:<taskId>|append` (`scripts/send.js` → agent lane
+  `POST /task/append` → `task.append` to that browser). Requires
+  `agent-task-append-v1` on both sides (`TASK_APPEND_UNSUPPORTED` otherwise) and
+  a Zylos Browser release that supports it. Delivered only when the browser
+  acknowledges; offline is `EXT_OFFLINE`, an unconfirmed outcome is
+  `TASK_APPEND_UNCONFIRMED` (same-text retry is safe). The browser allows it only
+  for tasks answered with done/blocked, within 24 hours, at most 20 per task.
+  `handoff-final.js` accepts the same route. Final reply and decision behaviour
+  is unchanged.
 
 ### Changed
 - Refer to the connected extension as Zylos Browser in the skill, docs, and package description.

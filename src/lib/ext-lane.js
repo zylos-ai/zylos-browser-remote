@@ -27,6 +27,7 @@ import { WebSocketServer } from "ws";
 import { verifyKey, loadKeys, touchKey, isExpired } from "./keys.js";
 import { ATTACHMENT_CAPABILITY } from "../../scripts/attachments.js";
 import { INTERRUPT_CAPABILITY } from "./agent-interrupt.js";
+import { TASK_APPEND_CAPABILITY } from "./task-append.js";
 import {
   AGENT_MESSAGE_CAPABILITY,
   STEER_CAPABILITY,
@@ -467,6 +468,8 @@ class ExtLane extends EventEmitter {
         ? [
             "agent-loop-v1",
             "agent-task-start-v1",
+            // Echoed only to an extension that can show follow-up replies.
+            ...(caps.includes(TASK_APPEND_CAPABILITY) ? [TASK_APPEND_CAPABILITY] : []),
             INSTANCE_CAPABILITY,
             RESUME_CAPABILITY,
             RECOVERY_CAPABILITY,
@@ -867,6 +870,7 @@ class ExtLane extends EventEmitter {
           !(conn.recoveryTimer && method === "agent-decision"))) {
         const err = new Error("extension not connected");
         err.code = "EXT_OFFLINE";
+        err.unsent = true; // never reached the extension
         reject(err);
         return;
       }
@@ -896,7 +900,7 @@ class ExtLane extends EventEmitter {
       if (pending.method === "agent-decision" && this._suspend(conn, 1006)) return;
       clearTimeout(pending.timer);
       conn.pending.delete(id);
-      pending.reject(Object.assign(new Error("send failed"), { code: "EXT_OFFLINE" }));
+      pending.reject(Object.assign(new Error("send failed"), { code: "EXT_OFFLINE", unsent: true }));
     }
   }
 

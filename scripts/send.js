@@ -3,19 +3,35 @@
 
 // C4 calls channel send scripts with [endpoint, message]. No browser logic here.
 import client from "./relay-client.js";
-import { parseReplyEndpoint } from "./reply-route.js";
+import { parseSendTarget } from "./reply-route.js";
 
 async function main() {
   const [target, message, ...extra] = process.argv.slice(2);
-  const { endpoint, id, status, inputId } = parseReplyEndpoint(target);
+  const route = parseSendTarget(target);
   if (
     extra.length ||
     typeof message !== "string" ||
     !message.trim() ||
     message.trim().length > 8000
   ) {
-    throw new Error("Final reply must contain 1–8000 characters");
+    throw new Error(
+      route.kind === "append"
+        ? "Follow-up must contain 1–8000 characters"
+        : "Final reply must contain 1–8000 characters",
+    );
   }
+  if (route.kind === "append") {
+    // A follow-up to an ended task: shown only once the browser confirms it.
+    const { body } = await client.taskAppend({
+      endpoint: route.endpoint,
+      taskId: route.taskId,
+      text: message.trim(),
+    });
+    process.stdout.write(JSON.stringify(body) + "\n");
+    if (!body.ok || body.delivered !== true) process.exitCode = 1;
+    return;
+  }
+  const { endpoint, id, status, inputId } = route;
   const { body } = await client.decision({
     endpoint,
     id,

@@ -5,12 +5,13 @@
 // browser thread with Core's documented internal message; that thread runs the
 // exact c4-send command below.
 // Usage: handoff-final.js '<endpoint>|req:<id>|status:<done|blocked>[|input:<id>]' < reply.txt
+//        handoff-final.js '<endpoint>|task:<taskId>|append' < follow-up.txt
 import os from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { parseReplyEndpoint } from "./reply-route.js";
+import { parseSendTarget } from "./reply-route.js";
 import { sessionGroupFromEndpoint } from "../src/lib/session-group.js";
 import { C4_CHANNEL } from "../src/lib/c4.js";
 
@@ -32,12 +33,18 @@ export function owningGroup(endpoint, run = execFileSync, env = process.env) {
 
 /** The internal message: the owning thread can act on it without other context. */
 export function handoffMessage(target, text, { sender, delimiter = `EOF_FINAL_${randomBytes(4).toString("hex")}` } = {}) {
-  const { endpoint, id, status, inputId } = parseReplyEndpoint(target);
+  const route = parseSendTarget(target);
+  const { endpoint, id, status, inputId } = route;
   while (text.includes(delimiter)) delimiter += "_X";
   return [
-    `Please deliver to ${C4_CHANNEL} ${target}: the final ${status} reply of browser request ${id} (text below).`,
-    `Why: thread ${sender || "(unknown)"} started this browser task on ${endpoint} and is answering request ${id}` +
-      `${inputId ? ` (acknowledging owner input ${inputId})` : ""}; only this thread may send to that browser address.`,
+    route.kind === "append"
+      ? `Please deliver to ${C4_CHANNEL} ${target}: a follow-up reply to the ended browser task ${route.taskId} (text below).`
+      : `Please deliver to ${C4_CHANNEL} ${target}: the final ${status} reply of browser request ${id} (text below).`,
+    route.kind === "append"
+      ? `Why: thread ${sender || "(unknown)"} started this browser task on ${endpoint} and is adding a follow-up to it; ` +
+        "only this thread may send to that browser address."
+      : `Why: thread ${sender || "(unknown)"} started this browser task on ${endpoint} and is answering request ${id}` +
+        `${inputId ? ` (acknowledging owner input ${inputId})` : ""}; only this thread may send to that browser address.`,
     "Run exactly this command once, unchanged; do not edit the text, do not run any browser decision yourself:",
     "",
     `cat <<'${delimiter}' | node ~/zylos/.claude/skills/comm-bridge/scripts/c4-send.js ${C4_CHANNEL} '${target}'`,
@@ -50,8 +57,9 @@ export function handoffMessage(target, text, { sender, delimiter = `EOF_FINAL_${
 
 async function main() {
   const args = process.argv.slice(2);
-  if (args.length !== 1) throw new Error("Usage: handoff-final.js '<endpoint>|req:<id>|status:<done|blocked>' < reply.txt");
-  parseReplyEndpoint(args[0]);
+  if (args.length !== 1)
+    throw new Error("Usage: handoff-final.js '<endpoint>|req:<id>|status:<done|blocked>' or '<endpoint>|task:<taskId>|append' < reply.txt");
+  parseSendTarget(args[0]);
   let text = "";
   process.stdin.setEncoding("utf8");
   for await (const chunk of process.stdin) {

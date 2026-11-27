@@ -103,6 +103,15 @@ original input rather than clearing it.
 Several browsers may share one key, so a connection is identified by the full
 endpoint `keyId.browserId` — never by the bare key id.
 
+A follow-up to an ended task takes a separate path (issue #7): C4
+`<endpoint>|task:<taskId>|append` → `scripts/send.js` → agent lane
+`POST /task/append` → one `task.append` request to that exact browser, which
+persists and shows the reply before it acknowledges. The relay keeps no task
+history for this; the extension is the authority on whether a task exists, how
+long ago it ended (24-hour window) and how many follow-ups it has (at most 20).
+The append path never touches the decision exchange, so `done`/`blocked`
+semantics are unchanged. See [PROTOCOL.md](PROTOCOL.md#follow-up-replies-to-an-ended-task).
+
 ## 3. Configuration
 
 ### 3.1 `config.json` is optional, and what it may contain
@@ -272,6 +281,9 @@ browser-facing *public* service either.
 The agent lane maps relay conditions onto HTTP status codes so callers can
 distinguish them without parsing prose: `EXT_OFFLINE` → 503, `EXT_TIMEOUT` →
 504, `AMBIGUOUS_ENDPOINT` / `BAD_ENDPOINT` → 400, `UNKNOWN_ENDPOINT` → 404.
+Follow-up appends add `TASK_APPEND_UNSUPPORTED` → 409, `TASK_UNKNOWN` → 404,
+`TASK_ACTIVE` / `TASK_NOT_APPENDABLE` → 409, `TASK_TOO_OLD` → 410,
+`TASK_APPEND_LIMIT` → 429 and `TASK_APPEND_UNCONFIRMED` → 504.
 
 WebSocket teardown is guarded throughout: `ws.close()` can throw when a socket
 is already torn down, and an unguarded throw inside a `message`/`connection`

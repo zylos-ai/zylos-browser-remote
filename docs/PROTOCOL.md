@@ -356,6 +356,47 @@ have outgoing audit rows even though the plugin displays only one final reply.
 Unsolicited notifications and nonterminal progress messages are not supported
 by this final-answer endpoint.
 
+## Follow-up replies to an ended task
+
+When work the Agent promised in a task finishes after that task's request has
+ended (for example a background review), the Agent can add the result to the
+same task conversation. Both sides must negotiate `agent-task-append-v1`: the
+extension lists it in `hello`, and the relay echoes it in `ready` only then.
+Without it the relay answers `TASK_APPEND_UNSUPPORTED` and sends nothing.
+
+The Agent sends through C4 with the C4 endpoint
+`<keyId>.<browserId>|task:<taskId>|append` (exact composite endpoint; a bare
+keyId is refused). `taskId` is the `taskId` of that task's requests, or the one
+`task-start.js` returned. `scripts/send.js` posts
+`{endpoint,taskId,text}` to the loopback agent lane `POST /task/append`, and the
+relay sends one correlated request to that browser:
+
+| Direction          | Frame                                                                        | Meaning                    |
+| ------------------ | ---------------------------------------------------------------------------- | -------------------------- |
+| Remote → Extension | `{type:"req",id,method:"task.append",params:{taskId,appendId,text},deadline}` | Show one follow-up reply   |
+| Extension → Remote | `{type:"resp",id,result:{taskId,appendId,status,count,limit}}`               | Saved and shown            |
+| Extension → Remote | `{type:"error",id,code,message}`                                             | Refused; nothing was shown |
+
+`appendId` is the first 32 hex characters of
+`sha256(endpoint + "\n" + taskId + "\n" + text)`, so a retry with the same text
+is shown once (`status:"existing"`). The extension answers only after the reply
+is persisted; `count` is the task's follow-up count including this one.
+
+The extension owns the task history and enforces the rules: the task must exist
+in that browser's history (`TASK_UNKNOWN`), must have ended (`TASK_ACTIVE`),
+must have ended with the Agent's `done`/`blocked` reply rather than a Stop or
+interruption (`TASK_NOT_APPENDABLE`), must have ended at most 24 hours ago
+(`TASK_TOO_OLD`), and may have at most 20 follow-ups (`TASK_APPEND_LIMIT`).
+`TASK_APPEND_FAILED` means it could not save the reply. Text is 1–8,000
+characters, rendered like an ordinary Agent reply, text only (no actions).
+
+The agent lane returns `{ok:true,delivered:true,endpointId,taskId,appendId,status,count,limit}`
+only after that acknowledgement. An offline browser is `EXT_OFFLINE` (503, not
+delivered). A lost connection or missing acknowledgement after sending is
+`TASK_APPEND_UNCONFIRMED` (504); re-running the same command with the same text
+is safe. `send.js` exits non-zero for anything but `delivered:true`. A follow-up
+never changes the task's ended status and never reopens it.
+
 ## Errors and retries
 
 Every decision requires its explicit endpoint and request ID; omitted or offline targets never fall back to another browser. The exchange permits one waiting decision per endpoint. Decision acceptance has
