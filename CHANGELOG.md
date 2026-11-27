@@ -7,8 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Pairs with the zylos-browser-extension release that advertises
+`agent-task-current-tab-v1`; URL starts keep working with any extension.
+
 ### Added
 - Connection status shows the extension's optional platform hint (`hello.platform`: OS, CPU architecture, browser major version) as `platform` and `platformLabel`, e.g. `macOS · arm64 · Chrome 142`, so several browsers are easier to tell apart. It is cleaned display text only. Without the field (older extensions) both are `null`, and `displayName` is unchanged.
+- Agent task start can target the browser user's current tab (extension issue
+  #43): `scripts/task-start.js` and `POST /task/start` accept
+  `"target":"current-tab"` instead of `url`. The relay forwards it only when the
+  extension advertises `agent-task-current-tab-v1` and otherwise refuses with
+  `TASK_START_CURRENT_TAB_UNSUPPORTED`. New extension refusals
+  (`TASK_START_NO_TAB`, `TASK_START_PAGE_RESTRICTED`, `TASK_START_SITE_DENIED`,
+  `TASK_START_PAGE_NOT_READY`, `TASK_START_TAB_CLOSED`,
+  `TASK_START_PAGE_CHANGED`) are passed through with a "Task did not start"
+  reason. The skill and proactive-start guide explain when to use the current
+  tab versus a new URL tab. URL starts are unchanged.
 
 ### Changed
 - Refer to the connected extension as Zylos Browser in the skill, docs, and package description.
