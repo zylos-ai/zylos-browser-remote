@@ -9,7 +9,7 @@
 ## 1. Overview
 
 Browser Remote is a **decision transport**, not a browser driver. It connects
-a Zylos Agent to the Coco browser extension and correlates requests with
+a Zylos Agent to the Zylos Browser extension and correlates requests with
 responses. All browser behavior — what a tab is, which tools exist, what an
 action is permitted to do, when a task is finished — lives in the extension.
 The relay deliberately knows none of it.
